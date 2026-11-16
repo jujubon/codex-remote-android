@@ -794,3 +794,6 @@ html { -webkit-text-size-adjust: 100%; }
 .code-tools button { min-height: 32px; padding-inline: 9px; border: 0; background: transparent; color: var(--ink); }
 .code-block .markdown-code { margin: 0; border: 0; border-radius: 0; overflow-x: auto; }
 .code-block .markdown-code, .code-block .markdown-code code { white-space: pre; word-break: normal; overflow-wrap: normal; }
+
+.history-visibility { display: grid; gap: 4px; margin-bottom: 10px; }
+.history-visibility select { min-height: 38px; width: 100%; }

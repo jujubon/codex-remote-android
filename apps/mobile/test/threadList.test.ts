@@ -4,6 +4,7 @@ import {
   PROJECT_COLLAPSE_STORAGE_KEY,
   defaultProjectCollapsed,
   groupThreadsByCwd,
+  visibleInHistory,
   projectCollapsed,
   readProjectCollapsePreferences,
   toggleProjectCollapsePreference,
@@ -120,5 +121,25 @@ describe('ThreadList project collapse persistence', () => {
 
     storage.setItem(PROJECT_COLLAPSE_STORAGE_KEY, '{broken');
     expect(readProjectCollapsePreferences(storage)).toEqual({});
+  });
+});
+
+describe('mobile history visibility', () => {
+  const ordinary = { ...thread('Guardian review', '/project', 1, 'not_loaded'), preview: 'Approval review' };
+  const review = { ...ordinary, source: { subAgent: { other: 'guardian' } } };
+
+  it('uses the desktop source marker and preserves normal unloaded history by default', () => {
+    expect(visibleInHistory(ordinary, 'chats')).toBe(true);
+    expect(visibleInHistory(review, 'chats')).toBe(false);
+    expect(visibleInHistory({ ...review, source: { original: review.source } }, 'chats')).toBe(false);
+    expect(visibleInHistory(ordinary, 'loaded')).toBe(false);
+    expect(visibleInHistory(review, 'all')).toBe(true);
+  });
+
+  it('keeps actionable reviews and unread messages visible', () => {
+    for (const state of ['running', 'waiting_approval', 'waiting_input', 'error'] as const) {
+      expect(visibleInHistory({ ...review, state }, 'loaded')).toBe(true);
+    }
+    expect(visibleInHistory({ ...review, unread: 1 }, 'loaded')).toBe(true);
   });
 });

@@ -14,6 +14,30 @@ export const NO_PROJECT = '无项目对话';
 const emptyChildren = new Map<string, RemoteThread[]>();
 type ProjectCollapseStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
+type HistoryVisibility = 'chats' | 'loaded' | 'all';
+const historyVisibilityKey = 'codex-mobile.history-visibility.v1';
+
+function readHistoryVisibility(): HistoryVisibility {
+  try {
+    const value = browserStorage()?.getItem(historyVisibilityKey);
+    return value === 'loaded' || value === 'all' ? value : 'chats';
+  } catch { return 'chats'; }
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
+}
+
+export function visibleInHistory(thread: RemoteThread, visibility: HistoryVisibility): boolean {
+  if (visibility === 'all' || thread.unread > 0 || ['running', 'waiting_approval', 'waiting_input', 'error'].includes(thread.state)) return true;
+  if (visibility === 'loaded' && thread.state === 'not_loaded') return false;
+  const source = asObject(thread.source);
+  return ![source, asObject(source?.original)].some(value => {
+    const agent = asObject(value?.subAgent ?? value?.subagent ?? value?.sub_agent);
+    return agent?.other === 'guardian';
+  });
+}
+
 export interface ProjectThreadGroup {
   cwd: string;
   items: RemoteThread[];
@@ -227,6 +251,7 @@ function ThreadRow({
 }
 
 export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
+  const [visibility, setVisibility] = useState(readHistoryVisibility);
   const [query, setQuery] = useState('');
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
   const [filter, setFilter] = useState('全部项目');
@@ -250,12 +275,13 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     return threads.filter(thread => {
+      if (!visibleInHistory(thread, visibility)) return false;
       if (!thread.projectless && thread.cwd && hidden.isHidden(thread.cwd)) return false;
       if (filter === '进行中' && thread.state !== 'running') return false;
       if (filter === '待处理' && thread.state !== 'waiting_approval' && thread.state !== 'waiting_input') return false;
       return !term || [thread.title, thread.cwd, thread.preview, thread.agentNickname].some(value => value?.toLocaleLowerCase().includes(term));
     });
-  }, [threads, query, filter, hidden]);
+  }, [threads, query, filter, hidden, visibility]);
   const groups = useMemo(() => groupThreadsByCwd(filtered), [filtered]);
   const flatList = filter !== '全部项目' || Boolean(query.trim());
   const recent = useMemo(() => flatList ? [...filtered].sort((a, b) => b.updatedAt - a.updatedAt) : [], [filtered, flatList]);
@@ -293,6 +319,17 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
           <button key={label} type="button" aria-pressed={label === filter} onClick={() => setFilter(label)}>{label}</button>
         )}<button type="button" aria-label="项目菜单" aria-expanded={projectMenu === 'manage'} onClick={() => setProjectMenu(projectMenu === 'manage' ? null : 'manage')}>⋯</button></nav>
         {projectMenu === 'manage' && <section className="hidden-projects">
+          <label className="history-visibility">对话显示
+            <select value={visibility} onChange={event => {
+              const next = event.target.value as HistoryVisibility;
+              setVisibility(next);
+              try { browserStorage()?.setItem(historyVisibilityKey, next); } catch { /* Keep the in-memory choice. */ }
+            }}>
+              <option value="chats">普通聊天（隐藏闲置审阅记录）</option>
+              <option value="loaded">同时隐藏未载入的历史聊天</option>
+              <option value="all">显示全部（含审阅记录）</option>
+            </select>
+          </label>
           <strong>已隐藏项目（{hidden.paths.length}）</strong>
           {hidden.paths.map(path => <div key={path}><span>{path}</span>
             <button type="button" onClick={() => hidden.setHidden(path, false)}>恢复显示</button></div>)}
@@ -307,7 +344,7 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
             <p>{phase === 'connected' ? '创建任务，或等待电脑端的任务同步到这里。' : '连接就绪后，历史任务会自动显示。'}</p>
           </div>
         ) : !filtered.length ? (
-          <div className="empty-state"><h2>没有匹配的对话</h2><button className="secondary-button" onClick={() => { setQuery(''); setFilter('全部项目'); }}>查看全部项目</button></div>
+          <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在上方「⋯」的「对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { setQuery(''); setFilter('全部项目'); }}>查看全部项目</button></div>
         ) : flatList ? recent.map(thread => (
           <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd) ? NO_PROJECT : projectName(thread.cwd)}</small>
             <ThreadRow thread={thread} childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
