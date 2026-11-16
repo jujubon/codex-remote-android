@@ -1,162 +1,87 @@
-# Codex Mobile Remote（Android）
+# Codex Remote for Android
 
-一个自托管、可直接侧载的 Android Codex 遥控器。手机连接你自己的 Host bridge；模型 endpoint、provider 和 API Key 始终留在电脑端。
+用 Android 手机继续 Windows 上的 Codex Desktop 对话。出门前在电脑上开始的任务，可以在手机上打开同一段历史、阅读长回复、追加要求或处理审批。任务在电脑上执行，沿用电脑上已登录的 Codex 账号。这个社区项目包含一个 Android App 和一个 Windows 配套服务。
 
-> 项目仍依赖 Codex Desktop 的私有 IPC 与实验性 app-server 协议。升级 Codex Desktop/CLI 后，应重新执行协议与真机回归。
+## 第一次连接
 
-```text
-Android App（Capacitor + 原生前台服务）
-        │  WebSocket/HTTP + 高熵配对令牌
-        ▼
-Host bridge（Node.js）
-        ├── Desktop IPC follower（GUI 任务历史、turn、审批与状态）
-        └── codex app-server（任务枚举、未打开任务与回退）
-                │
-                ▼
-        主机侧 Codex 配置与 API Key
+准备一台能正常使用 **Codex Desktop** 的 Windows 电脑和一部 **Android 7.0 或更高版本**的手机。先在电脑端登录 Codex、打开一个对话，并确认可以正常发送消息。
+
+1. 准备同版本的两个安装包。0.6.0 对应 `Codex-Remote-0.6.0.apk` 和 `Codex-Remote-Windows-0.6.0.zip`。可以在[仓库的 Releases 页面](https://github.com/jujubon/codex-remote-android/releases)查看已发布附件；如果没有对应版本，请按下文从源码构建。
+2. 在手机上安装 APK。把 Windows ZIP **完整解压到固定文件夹**。直接在压缩包预览里双击 `.cmd` 会让它找不到同目录的 PowerShell 脚本。
+3. 第一次建议让手机和电脑连到同一可信 Wi-Fi。在解压目录双击 **`Start.cmd`**。电脑窗口会显示 `App address` 和 `Pairing token`。启动器优先使用 Codex 附带的 Node.js；如果提示找不到 `node.exe`，安装 Node.js 22.12 或更高版本后重试。
+4. 在手机的「连接设置」分别填入这两项，点「保存并连接」。看到项目列表后，打开电脑上已有的对话并发送一条消息，在桌面核对回复。使用期间请让电脑保持唤醒，并让 Codex Desktop 和配套服务保持运行。
+
+## 出门后怎么连
+
+手机用移动数据时，需要一个它能访问的电脑地址。先关闭之前前台运行的连接服务，再按下面的方式选一个启动入口。
+
+| 使用场景 | 电脑端 | 手机填什么 |
+| --- | --- | --- |
+| 同一可信 Wi-Fi | 双击 `Start.cmd` | 窗口中的局域网地址，如 `http://192.168.1.20:8787` |
+| 蒲公英等虚拟局域网 | 手机和电脑加入同一个虚拟网络。双击 `Start-VPN.cmd`，输入分配给**电脑**的虚拟 IPv4 | 窗口中的虚拟网络地址，并保持手机端组网连接 |
+| 手机只装 Codex Remote | 双击 `Start-Tunnel.cmd`，让服务监听电脑本机，再通过支持 WebSocket 的 HTTPS 隧道或反向代理转发 | 隧道提供的 `https://` 地址，以及电脑窗口里的配对令牌 |
+
+**以 ngrok 为例**，在 Windows 完成 ngrok 自己的账号配置后，保持 `Start-Tunnel.cmd` 运行，在另一个终端执行：
+
+```powershell
+ngrok http http://127.0.0.1:8787
 ```
 
-## 功能
+等 ngrok 显示 `online`，把 `Forwarding` 左侧的 HTTPS 地址填入手机。`127.0.0.1` 是电脑端的转发目标。手机的「配对令牌」使用 Codex Remote 生成的值，ngrok 的 Authtoken 只用于电脑上的 ngrok。电脑换网络后，需要能够重新连上隧道服务。公网隧道的 TLS 在服务商处终止时，服务商有能力接触传输内容。也可以使用自己的 HTTPS 入口。参阅 [ngrok Windows 安装说明](https://ngrok.com/download/windows)和[自建反向代理说明](docs/public-reverse-proxy.md)。
 
-- 按 `cwd`/项目目录分页展示 Codex 任务，支持打开、恢复和新建任务；
-- 与 Desktop GUI 同时查看同一任务，并同步 Markdown 回复、工具调用、Subagent、TODO、思考状态、审批和 Git diff；
-- 选择 Host 返回的模型、reasoning effort 与权限/审阅预设；
-- 支持 `/status`、`/compact`、模型、effort 和 Skill 等引导命令；
-- 连续工具调用整体折叠；阅读上文时不强制跳到底部；
-- 图片/文件上传、受限下载、Android 后台前台服务与审批/完成通知；
-- IndexedDB/localStorage 增量缓存、cursor 断点续传和手动“清空缓存并全量刷新”；
-- Android Keystore + AES-GCM 保存配对令牌；
-- 生成带 debug 签名、可直接侧载的 APK，不依赖 Expo Go。
+## 在手机上工作
 
-## 安全边界
+- **继续已有对话**。在「全部项目」按目录展开，或用「最近」和搜索找到对话。可以查看 Markdown 长回复、工具调用和任务状态，向正在运行的任务追加要求，或处理它发来的问题和审批。
+- **新建任务**。首页点「新任务」，默认是「直接新聊天（无项目）」。也可以选「在已有项目中聊天」，或「新建项目并聊天」。新项目按名称保存在电脑的 `%USERPROFILE%\CodexProjects` 下，桌面确认项目后才发送首条消息。项目旁边的「＋」会预选该项目。
+- **隐藏和恢复项目**。点「隐藏」会在这部手机上收起该项目及其对话。电脑的项目、磁盘文件、历史和正在执行的任务都会保留。在「已隐藏项目」点「恢复显示」即可找回。
+- **模型和额度**。在对话输入框上方选择电脑端提供的模型和思考强度。在列表底部展开「账号与额度」，查看电脑返回的剩余比例和重置时间。可用模型和额度窗口取决于当前账号。
 
-- 手机不会获得模型 API Key；bridge 只继承电脑已有的 Codex 配置和环境；
-- WebSocket 使用至少 32 字符的随机 `CMR_TOKEN` 鉴权，令牌不放在 URL 中；
-- 默认只监听 `127.0.0.1`；远程访问优先使用 Tailscale Serve、VPN 或 HTTPS/WSS 反向代理；
-- 明文连接仅允许 localhost、Android 模拟器、RFC1918 私网和 Tailscale `100.64.0.0/10`；
-- 不要把 bridge 端口直接映射到公网；
-- 文件下载只允许 `CMR_FILE_ROOTS` 中的 canonical regular file，symlink 越界会被拒绝。
+## 后台运行与更新
 
-更多边界见 [`docs/security-and-testing.md`](docs/security-and-testing.md)。
+双击启动器时，服务在当前窗口运行，可以最小化。希望它在登录 Windows 后自动运行，先用所选模式连通一次，再双击同一文件夹里的 `Enable-Autostart.cmd`。从下次登录起，服务使用已保存的地址在后台启动。`Disable-Autostart.cmd` 用于取消登录自启。VPN、ngrok 等外部软件需要单独配置自启。
 
-## 1. 安装依赖
+更新时，用相同签名的新版 APK 覆盖安装。电脑端先停止旧服务，将同版本 ZIP 完整解压，再启动新版。如果更换了解压目录，在新目录重新运行一次 `Enable-Autostart.cmd`。配对信息保存在当前 Windows 用户的 `%LOCALAPPDATA%\CodexMobileRemote`，通常可以继续使用原令牌。
 
-```bash
-git clone <repository-url>
-cd CodexRemote
-npm install
+## 常见问题
+
+| 现象 | 检查方法 |
+| --- | --- |
+| 手机显示离线 | 在手机浏览器访问「服务器地址」加 `/health`。出现 `"ok": true` 表明 HTTP 路径已通。App 仍离线时，核对令牌，并确认代理支持 `/ws` 的 WebSocket 升级。 |
+| 同一个 Wi-Fi 也连不上 | 核对电脑窗口显示的地址。访客 Wi-Fi 或校园网可能隔离设备。若窗口只显示 `127.0.0.1`，手机需要改用可访问的局域网、组网或隧道地址。 |
+| ngrok 有地址，App 却掉线 | 检查 `Session Status`。显示 `reconnecting` 时，等待电脑恢复到 `online`。如使用代理节点，还要检查节点连接。 |
+| 新任务仍然只能填目录 | 核对 APK 和正在运行的 Windows 服务是否都已升级至 0.6.0，尤其留意登录自启是否仍指向旧目录。 |
+| Codex 升级后部分桌面操作失败 | 项目依赖 Codex Desktop 的本地 IPC。本版曾在 Windows Codex Desktop `26.1111.2228.0` 上验证真实对话读取；其他版本需要分别验证。反馈问题时请注明桌面版本、连接方式及出错的操作，截图中遮住令牌。 |
+
+## 从源码构建
+
+下面的命令在 Windows PowerShell 中执行。准备 Git、Node.js 22.12 或更高版本、JDK 21，以及安装了 Android SDK Platform 36 的 Android SDK。为命令行构建配置好 `JAVA_HOME` 和 `ANDROID_HOME`。
+
+```powershell
+git clone https://github.com/jujubon/codex-remote-android.git
+cd codex-remote-android
+npm.cmd ci
+npm.cmd run build
+npm.cmd test
 ```
 
-要求：
+**构建 Android 调试 APK**。下面同步已构建的网页资源并调用仓库内的 Gradle Wrapper。产物是 `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`。自行构建的调试包使用本机调试签名；覆盖安装要求新旧 APK 签名一致。
 
-- Node.js 22+；
-- 本机可以运行 `codex`；
-- 自定义 provider/endpoint/API Key 已在主机 Codex 中验证可用；
-- 构建 APK 需要 JDK 21 和 Android SDK。
-
-## 2. 初始化 Host
-
-```bash
-npm run host:setup
+```powershell
+cd apps/mobile
+npx.cmd cap copy android
+cd android
+.\gradlew.bat assembleDebug
+cd ../../..
 ```
 
-该命令创建权限为 `0600` 的 `.env`，并生成随机 `CMR_TOKEN`。默认配置：
+**打包 Windows 配套程序**。从 Python 官网下载并解压 Windows x64 的 Python 3.13 embeddable package。回到仓库根目录，把下面的示例路径换成实际包含 `python.exe` 的目录。脚本会收集构建好的服务、依赖和 Python 运行时，生成 `dist/Codex-Remote-Windows-0.6.0.zip`。
 
-```dotenv
-CMR_HOST=127.0.0.1
-CMR_PORT=8787
-CMR_TOKEN=<generated-random-token>
-# CMR_FILE_ROOTS=/path/to/allowed/root,/another/allowed/root
+```powershell
+.\windows\Package-Host.ps1 -PythonDirectory 'C:\tools\python-embed'
 ```
 
-启动：
+## 来源和许可证
 
-```bash
-npm run host:start
-curl http://127.0.0.1:8787/health
-```
+本仓库基于 [qy1603429908/CodexRemote](https://github.com/qy1603429908/CodexRemote) 开发。Windows 原生对话适配复用了 [IIMovoMII/Codex-QQ](https://github.com/IIMovoMII/Codex-QQ) 的部分实现。项目采用 [MIT 许可证](LICENSE)，复用代码的版权声明保存在 [Windows 适配层许可证](apps/server/windows/native/LICENSE)。
 
-### Windows Host
-
-Set the real Codex data directory explicitly so the Codex Desktop bundled CLI does not fall back to an isolated sandbox home and return an empty task list:
-
-```dotenv
-CODEX_HOME=C:\Users\<username>\.codex
-```
-
-The Server passes this value to `codex app-server` and verifies the `codexHome` returned by `initialize`. A mismatch fails startup instead of silently serving an empty history. On Windows, the Server also follows the Codex Desktop owner through the local named pipe `\\.\pipe\codex-ipc`, applies revisioned live patches in memory, and forwards canonical task snapshots over `/ws`. Set `CMR_DESKTOP_IPC=0` only when this private integration must be disabled.
-
-### 连接方式
-
-- **Tailscale Serve / HTTPS**：保持 `CMR_HOST=127.0.0.1`，把 TLS 入口反向代理到 `127.0.0.1:8787`；
-- **Tailscale IP**：绑定电脑的 `100.x.y.z` 地址，手机填写 `http://100.x.y.z:8787`；
-- **可信局域网**：绑定如 `192.168.1.20`，手机填写 `http://192.168.1.20:8787`。
-
-公网 Nginx 模板见 [`deploy/nginx/codex-mobile-remote.example.conf`](deploy/nginx/codex-mobile-remote.example.conf) 和 [`docs/public-reverse-proxy.md`](docs/public-reverse-proxy.md)。
-
-## 3. App 首次设置
-
-开源构建**不会预填任何维护者或生产服务器地址**。首次启动需要填写：
-
-- 服务器地址，例如 `https://codex.example.com`、`http://100.x.y.z:8787` 或可信 LAN 地址；
-- 主机 `.env` 中的 `CMR_TOKEN`。
-
-App 自动连接服务器的 `/ws`。Android 原生环境中，配对令牌使用 Android Keystore AES-256-GCM 加密保存；应用备份已关闭。
-
-## 4. 构建和安装 APK
-
-```bash
-npm run build:android
-```
-
-本地产物：
-
-```text
-apps/mobile/artifacts/codex-mobile-remote-v0.3.7-debug.apk
-```
-
-正式交付 APK 发布在 Gitea Releases，不提交进源码 Git。
-
-安装：
-
-```bash
-adb install -r apps/mobile/artifacts/codex-mobile-remote-v0.3.7-debug.apk
-```
-
-这是 `versionName=0.3.7`、`versionCode=11` 的 debug 签名侧载包，不是应用商店正式签名包。
-
-## 开发与验证
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run build:android
-```
-
-开发模式：
-
-```bash
-npm run host:dev
-npm run dev
-```
-
-本地增量同步回归：
-
-```bash
-npm run test:public-sync -- ws://127.0.0.1:8787/ws
-```
-
-## 文档
-
-- [`docs/requirements-and-todo.md`](docs/requirements-and-todo.md)：需求账本；
-- [`docs/desktop-ipc.md`](docs/desktop-ipc.md)：Desktop 私有 IPC 探测结果；
-- [`docs/app-server-protocol.md`](docs/app-server-protocol.md)：app-server 协议基线；
-- [`docs/incremental-sync-v0.3.md`](docs/incremental-sync-v0.3.md)：增量同步与缓存；
-- [`docs/android-background.md`](docs/android-background.md)：Android 后台与通知；
-- [`docs/file-transfer.md`](docs/file-transfer.md)：文件安全边界；
-- [`docs/test-evidence.md`](docs/test-evidence.md)：公开测试证据规则。
-
-## License
-
-MIT. See [`LICENSE`](LICENSE).
+更多实现细节见[桌面 IPC](docs/desktop-ipc.md)、[增量同步与缓存](docs/incremental-sync-v0.3.md)、[Android 后台通知](docs/android-background.md)和[文件传输](docs/file-transfer.md)。
