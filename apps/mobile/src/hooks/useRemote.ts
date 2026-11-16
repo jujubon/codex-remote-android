@@ -1,4 +1,5 @@
 import { App as CapacitorApp } from '@capacitor/app';
+import { isAbsoluteHostPath } from '../lib/hostPath';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { RemoteSocket } from '../lib/RemoteSocket';
@@ -7,6 +8,7 @@ import { downloadHostFile, saveHostFile, uploadRemoteFile } from '../lib/fileTra
 import { NotificationGenerationGuard, NotificationOperationQueue, settleGuardedNotification } from '../lib/notificationGuard';
 import { cacheScope, clearRemoteCache, loadRemoteCache, messagesForThread, saveRemoteCache, type CachedHistoryState, type RemoteCacheSnapshot } from '../lib/remoteCache';
 import type {
+  AccountUsage,
   ApprovalDecision,
   ApprovalRequest,
   CompactionStatus,
@@ -244,7 +246,7 @@ export function attachmentsFromCanonicalUserItem(itemValue: unknown): RemoteAtta
   if (!item) return [];
   const byPath = new Map<string, RemoteAttachment>();
   const add = (pathValue: unknown, nameValue?: unknown, typeValue?: unknown, mimeValue?: unknown) => {
-    if (typeof pathValue !== 'string' || !pathValue.startsWith('/')) return;
+    if (typeof pathValue !== 'string' || !isAbsoluteHostPath(pathValue)) return;
     const mimeType = typeof mimeValue === 'string' ? mimeValue : undefined;
     byPath.set(pathValue, {
       type: attachmentType(typeValue, pathValue, mimeType),
@@ -900,7 +902,8 @@ export function normalizeThreadPayload(payload: unknown): {
       agentNickname: stringValue(threadData.agentNickname) ?? subagentMetadataFromSource(threadData.source).agentNickname ?? null,
       agentRole: stringValue(threadData.agentRole) ?? subagentMetadataFromSource(threadData.source).agentRole ?? null,
       model: stringValue(record(threadData.latestThreadSettings)?.model, threadData.latestModel),
-      effort: stringValue(record(threadData.latestThreadSettings)?.effort, threadData.latestReasoningEffort),
+      effort: stringValue(record(threadData.latestThreadSettings)?.effort === null ? undefined :
+        (record(threadData.latestThreadSettings)?.effort ?? threadData.latestReasoningEffort)),
       permissionMode: permissionModeFromThread(threadData),
       source: {
         ...(record(threadData.source) ?? { original: threadData.source ?? null }),
@@ -921,7 +924,14 @@ export function normalizeThreadPayload(payload: unknown): {
 }
 
 function normalizeApproval(approval: WireApprovalRequest): ApprovalRequest {
+  const questions = record(approval.raw)?.questions;
   return {
+    questions: Array.isArray(questions) ? questions.flatMap(value => {
+      const q = record(value);
+      if (!q || typeof q.id !== 'string' || typeof q.question !== 'string') return [];
+      const options = Array.isArray(q.options) ? q.options.flatMap(o => typeof record(o)?.label === 'string' ? [String(record(o)!.label)] : []) : [];
+      return [{ id: q.id, question: q.question, secret: q.isSecret === true, options }];
+    }) : undefined,
     id: String(approval.requestId),
     wireId: approval.requestId,
     threadId: approval.threadId,
@@ -1061,8 +1071,38 @@ export function useRemote(config: RemoteConfig | null) {
   const [phase, setPhase] = useState<ConnectionPhase>('idle');
   const [phaseDetail, setPhaseDetail] = useState('');
   const [codexReady, setCodexReady] = useState(false);
+  const [desktopOnly, setDesktopOnly] = useState(false);
+  const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
+  const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
+  const [projectStatus, setProjectStatus] = useState('');
+  const projectRequest = useRef('');
+  const refreshProjects = useCallback(() => {
+    const id = createRequestId('projects');
+    projectRequest.current = id;
+    setProjectStatus(socketRef.current?.send({ type: 'projects.list', requestId: id }) ? '正在读取电脑项目…' : '电脑未连接');
+  }, []);
+  const [queueReceipt, setQueueReceipt] = useState('');
   const [models, setModels] = useState<ModelOption[]>([]);
   const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [usage, setUsage] = useState<AccountUsage | null>(null);
+  const [usageStatus, setUsageStatus] = useState('');
+  const usageRequest = useRef('');
+  const [modelPending, setModelPending] = useState(false);
+  const modelRequest = useRef<{ id: string; threadId: string; model?: string; effort?: string } | null>(null);
+  const refreshUsage = useCallback(() => {
+    const requestId = createRequestId('usage');
+    usageRequest.current = requestId;
+    setUsageStatus(socketRef.current?.send({ type: 'usage.read', requestId }) ? '正在读取额度…' : '电脑未连接');
+  }, []);
+  const changeModelSettings = useCallback((model?: string, effort?: string) => {
+    const threadId = selectedThreadRef.current;
+    if (!threadId || modelRequest.current || (!model && !effort)) return false;
+    const id = createRequestId('model-settings');
+    if (!socketRef.current?.send({ type: 'thread.settings', requestId: id, threadId, model, effort })) return false;
+    modelRequest.current = { id, threadId, model, effort };
+    setModelPending(true);
+    return true;
+  }, []);
   const [selectedModel, setSelectedModelState] = useState('');
   const [selectedEffort, setSelectedEffortState] = useState('');
   const [selectedPermissionMode, setSelectedPermissionModeState] = useState<PermissionMode>('auto');
@@ -1757,6 +1797,9 @@ export function useRemote(config: RemoteConfig | null) {
       if (typeof message.syncCursor === 'number' && message.syncCursor <= syncCursorRef.current) return;
       switch (message.type) {
         case 'welcome': {
+          setDesktopOnly(message.desktopOnly === true);
+          setDesktopProjectMenus(message.desktopOnly === true && message.projectCreation === true);
+          setDesktopProjects([]);
           setCodexReady(message.codexReady);
           setLastError('');
           setPhaseDetail(message.codexReady ? '' : 'Bridge 已连接，但 Codex app-server 尚未就绪');
@@ -1835,14 +1878,17 @@ export function useRemote(config: RemoteConfig | null) {
             false,
           ));
           break;
+        case 'usage.result':
+          if (message.requestId === usageRequest.current) { setUsage(message.usage); setUsageStatus(''); }
+          break;
+        case 'projects':
+          if (message.requestId === projectRequest.current) {
+            setDesktopProjects(message.projects);
+            setProjectStatus(message.projects.length ? '' : '电脑还没有已添加的项目。');
+          }
+          break;
         case 'models': {
           setModels(message.models);
-          setSelectedModelState((current) => current || message.models.find((model) => model.isDefault)?.model || message.models[0]?.model || '');
-          setSelectedEffortState((current) => {
-            if (current) return current;
-            const defaultModel = message.models.find((model) => model.isDefault) ?? message.models[0];
-            return defaultModel?.defaultReasoningEffort ?? '';
-          });
           break;
         }
         case 'skills':
@@ -1854,6 +1900,9 @@ export function useRemote(config: RemoteConfig | null) {
           setPromptQueueByThread(grouped);
           break;
         }
+        case 'prompt.desktopQueued':
+          setQueueReceipt('已加入桌面队列 · ' + message.queueId.slice(-8));
+          break;
         case 'prompt.queued':
           setPromptQueueByThread((current) => ({
             ...current,
@@ -1877,6 +1926,16 @@ export function useRemote(config: RemoteConfig | null) {
           updateCompactionStatus(message.threadId, { phase: 'requested', message: '上下文压缩请求已受理' });
           break;
         case 'thread.settings.updated': {
+          const change = modelRequest.current;
+          if (change && message.requestId === change.id && change.threadId === message.threadId) {
+            modelRequest.current = null;
+            setModelPending(false);
+            const confirmed = message.settings ?? change;
+            if (selectedThreadRef.current === change.threadId) {
+              if (message.settings || confirmed.model) setSelectedModelState(confirmed.model ?? '');
+              if (message.settings || confirmed.effort) setSelectedEffortState(confirmed.effort ?? '');
+            }
+          }
           const pending = message.requestId ? pendingPermissionSettingsRef.current.get(message.requestId) : undefined;
           if (message.requestId) pendingPermissionSettingsRef.current.delete(message.requestId);
           if (pending) {
@@ -1915,6 +1974,8 @@ export function useRemote(config: RemoteConfig | null) {
             message.requestId,
           );
           if (activatesThread) {
+            setSelectedModelState(normalized.thread.model ?? '');
+            setSelectedEffortState(normalized.thread.effort ?? '');
             selectedThreadRef.current = normalized.thread.id;
             setSelectedThreadId(normalized.thread.id);
           }
@@ -1971,14 +2032,15 @@ export function useRemote(config: RemoteConfig | null) {
             approvalsRef.current = next;
             return next;
           });
-          if (normalized.threadId) updateThreadState(normalized.threadId, 'waiting_approval');
+            const attention = normalized.method === 'item/tool/requestUserInput' ? 'waiting_input' : 'waiting_approval';
+            if (normalized.threadId) updateThreadState(normalized.threadId, attention);
           const notificationKey = String(message.approval.requestId);
           if (normalized.threadId) {
             notificationGuardRef.current.invalidate(`attention:${normalized.threadId}`);
             const pendingTimer = attentionNotificationTimersRef.current[normalized.threadId];
             if (pendingTimer !== undefined) window.clearTimeout(pendingTimer);
             delete attentionNotificationTimersRef.current[normalized.threadId];
-            attentionStateByThreadRef.current[normalized.threadId] = 'waiting_approval';
+              attentionStateByThreadRef.current[normalized.threadId] = attention;
             delete notifiedAttentionStateByThreadRef.current[normalized.threadId];
             // Cancel unconditionally: an older async coarse schedule may have posted before
             // its Promise callback had a chance to record notifiedAttentionState.
@@ -2025,6 +2087,18 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'error': {
+          if (message.requestId && message.requestId === projectRequest.current) {
+            setProjectStatus(message.message);
+            break;
+          }
+          if (message.requestId && message.requestId === usageRequest.current) {
+            setUsageStatus('当前无法获取额度');
+            break;
+          }
+          if (modelRequest.current && message.requestId === modelRequest.current.id) {
+            modelRequest.current = null;
+            setModelPending(false);
+          }
           const permissionSetting = message.requestId ? pendingPermissionSettingsRef.current.get(message.requestId) : undefined;
           if (message.requestId) pendingPermissionSettingsRef.current.delete(message.requestId);
           if (permissionSetting) {
@@ -2067,6 +2141,9 @@ export function useRemote(config: RemoteConfig | null) {
     cacheScopeRef.current = scope;
 
     setModels([]);
+    usageRequest.current = '';
+    setUsage(null);
+    setUsageStatus('');
     setSkills([]);
     setSelectedModelState('');
     setSelectedEffortState('');
@@ -2133,7 +2210,13 @@ export function useRemote(config: RemoteConfig | null) {
         onPhase: (nextPhase, detail) => {
           setPhase(nextPhase);
           setPhaseDetail(detail ?? '');
-          if (nextPhase !== 'connected') setCodexReady(false);
+          if (nextPhase !== 'connected') {
+            setCodexReady(false);
+            modelRequest.current = null;
+            setModelPending(false);
+            usageRequest.current = '';
+            setUsageStatus('电脑未连接');
+          }
         },
       });
       socketRef.current = socket;
@@ -2208,6 +2291,8 @@ export function useRemote(config: RemoteConfig | null) {
     if (!sent) setHistoryLoadingByThread((current) => ({ ...current, [threadId]: false }));
     socketRef.current?.send({ type: 'thread.diff.get', requestId: createRequestId('diff'), threadId });
     const thread = threads.find((candidate) => candidate.id === threadId);
+    setSelectedModelState(thread?.model ?? '');
+    setSelectedEffortState(thread?.effort ?? '');
     const override = permissionModeOverridesRef.current[threadId];
     if (override && override.expiresAt > Date.now()) setSelectedPermissionMode(override.mode);
     else setSelectedPermissionMode(thread?.permissionMode ?? 'auto');
@@ -2317,20 +2402,7 @@ export function useRemote(config: RemoteConfig | null) {
         return false;
       }
       const effort = model.defaultReasoningEffort ?? '';
-      const sent = socketRef.current?.send({
-        type: 'thread.settings',
-        requestId: createRequestId('settings'),
-        threadId,
-        model: model.model,
-        ...(effort ? { effort } : {}),
-        summary: 'concise',
-        permissionMode: selectedPermissionMode,
-      });
-      if (!sent) return false;
-      setSelectedModelState(model.model);
-      setSelectedEffortState(effort);
-      appendLocalSystemMessage('模型已切换', `${model.displayName || model.model}${effort ? ` · ${effort}` : ''}`);
-      return true;
+      return changeModelSettings(model.model, effort || undefined);
     }
 
     const effortMatch = text.match(/^\/effort(?::|\s+)([^\s]+)$/i);
@@ -2342,19 +2414,7 @@ export function useRemote(config: RemoteConfig | null) {
         setLastError(`模型 ${activeModel.displayName || activeModel.model} 不支持思考强度：${requested}`);
         return false;
       }
-      const sent = socketRef.current?.send({
-        type: 'thread.settings',
-        requestId: createRequestId('settings'),
-        threadId,
-        ...(selectedModel ? { model: selectedModel } : {}),
-        effort: requested,
-        summary: 'concise',
-        permissionMode: selectedPermissionMode,
-      });
-      if (!sent) return false;
-      setSelectedEffortState(requested);
-      appendLocalSystemMessage('思考强度已切换', requested);
-      return true;
+      return changeModelSettings(undefined, requested);
     }
 
     let prompt = text;
@@ -2403,12 +2463,11 @@ export function useRemote(config: RemoteConfig | null) {
       text: prompt || `请查看我上传的 ${attachments.length} 个文件。`,
       clientUserMessageId,
       deliveryMode,
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(!desktopOnly && selectedModel ? { model: selectedModel } : {}),
+      ...(!desktopOnly && selectedEffort ? { effort: selectedEffort } : {}),
       ...(skill ? { skill: { name: skill.name, path: skill.path } } : {}),
       ...(attachments.length ? { attachments } : {}),
-      summary: 'concise',
-      permissionMode: selectedPermissionMode,
+      ...(!desktopOnly ? { summary: 'concise', permissionMode: selectedPermissionMode } : {}),
     });
     if (!sent) {
       setLastError('当前未连接，消息没有发送');
@@ -2434,7 +2493,7 @@ export function useRemote(config: RemoteConfig | null) {
       updateThreadState(threadId, 'running');
     }
     return true;
-  }, [config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
+  }, [changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
 
   const refreshGitDiff = useCallback(() => {
     const threadId = selectedThreadRef.current;
@@ -2479,19 +2538,12 @@ export function useRemote(config: RemoteConfig | null) {
       approvalRequestId: approval.wireId,
       decision,
     });
-    if (sent) {
-      setApprovals((current) => current.filter((candidate) => candidate.id !== approvalId));
-      notifiedApprovalIdsRef.current.delete(String(approval.wireId));
-      void queueApprovalCancellation(approval.wireId);
-      if (approval.threadId && turnIdsRef.current[approval.threadId]) {
-        updateThreadState(approval.threadId, 'running');
-      }
-    }
-  }, [approvals, queueApprovalCancellation, updateThreadState]);
+    if (!sent) setLastError('连接已断开，待办仍保留。');
+  }, [approvals]);
 
-  const startThread = useCallback((cwd: string, model?: string, modelProvider?: string) => {
+  const startThread = useCallback((cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string) => {
     const normalizedCwd = cwd.trim();
-    if (!normalizedCwd.startsWith('/')) {
+    if (!destination && !isAbsoluteHostPath(normalizedCwd)) {
       setLastError('工作目录必须是电脑上的绝对路径');
       return false;
     }
@@ -2499,8 +2551,9 @@ export function useRemote(config: RemoteConfig | null) {
     pendingThreadStartRequestsRef.current.add(requestId);
     const sent = socketRef.current?.send({
       type: 'thread.start',
+      prompt,
       requestId,
-      cwd: normalizedCwd,
+      ...(destination ? { destination, projectName } : { cwd: normalizedCwd }),
       ...(model?.trim() ? { model: model.trim() } : {}),
       ...(modelProvider?.trim() ? { modelProvider: modelProvider.trim() } : {}),
     });
@@ -2509,33 +2562,13 @@ export function useRemote(config: RemoteConfig | null) {
   }, []);
 
   const selectModel = useCallback((modelId: string) => {
-    setSelectedModelState(modelId);
-    const model = models.find((candidate) => candidate.model === modelId || candidate.id === modelId);
-    const effort = model?.defaultReasoningEffort ?? '';
-    setSelectedEffortState(effort);
-    const threadId = selectedThreadRef.current;
-    if (threadId) socketRef.current?.send({
-      type: 'thread.settings',
-      requestId: createRequestId('settings'),
-      threadId,
-      model: modelId,
-      ...(effort ? { effort } : {}),
-      summary: 'concise',
-    });
-  }, [models]);
+    const model = models.find(option => option.model === modelId);
+    if (model) changeModelSettings(model.model, model.defaultReasoningEffort || undefined);
+  }, [models, changeModelSettings]);
 
   const selectEffort = useCallback((effort: string) => {
-    setSelectedEffortState(effort);
-    const threadId = selectedThreadRef.current;
-    if (threadId) socketRef.current?.send({
-      type: 'thread.settings',
-      requestId: createRequestId('settings'),
-      threadId,
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(effort ? { effort } : {}),
-      summary: 'concise',
-    });
-  }, [selectedModel]);
+    changeModelSettings(undefined, effort);
+  }, [changeModelSettings]);
 
   const selectPermissionMode = useCallback((permissionMode: PermissionMode) => {
     const threadId = selectedThreadRef.current;
@@ -2667,6 +2700,11 @@ export function useRemote(config: RemoteConfig | null) {
     phase,
     phaseDetail,
     codexReady,
+    desktopOnly,
+    desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,
+    usage, usageStatus, refreshUsage, modelPending,
+    queueReceipt,
+    dismissReceipt: () => setQueueReceipt(''),
     models,
     skills,
     selectedModel,

@@ -6,10 +6,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { MobileGateway, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
+import { MobileGateway, accountUsage, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
 import type { ServerConfig } from "../src/config.js";
 import { PromptQueueStore } from "../src/prompt-queue.js";
 
+
+it("maps account limits without duplicate buckets or inventing missing windows", () => {
+  const bucket = { limitId: "codex", planType: "plus", primary: { usedPercent: 24, windowDurationMins: 300, resetsAt: 2000000000 }, secondary: {} };
+  const usage = accountUsage({ rateLimits: bucket, rateLimitsByLimitId: { codex: bucket } });
+  expect(usage.plan).toBe("plus");
+  expect(usage.windows).toEqual([{ group: "codex", minutes: 300, remainingPercent: 76, resetsAt: 2000000000000 }]);
+  expect(accountUsage({}).windows).toEqual([]);
+});
 
 describe("Desktop live turn projection", () => {
   it("deduplicates the same active turn when Desktop exposes turnId without id", () => {

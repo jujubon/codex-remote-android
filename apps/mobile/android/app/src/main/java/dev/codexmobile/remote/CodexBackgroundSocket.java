@@ -430,7 +430,7 @@ final class CodexBackgroundSocket {
         if (notifiedApprovalIds.contains(requestId)) return;
 
         String method = approval.optString("method", "");
-        String title = method.contains("mcpServer/elicitation") ? "Codex 等待 Computer Use 确认"
+        String title = method.equals("item/tool/requestUserInput") ? "Codex 等你回答" : method.contains("mcpServer/elicitation") ? "Codex 等待 Computer Use 确认"
                 : method.contains("fileChange") ? "Codex 等待文件修改确认"
                 : method.contains("permissions") ? "Codex 请求额外权限" : "Codex 等待命令确认";
         String text = firstString(approval, "command", "reason", "detail", "title");

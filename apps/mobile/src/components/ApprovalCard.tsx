@@ -1,11 +1,24 @@
 import type { ApprovalDecision, ApprovalRequest, PermissionMode } from '../types/protocol';
 import { AlertIcon } from './Icons';
+import { useState } from 'react';
 
 function stringDecision(decision: ApprovalDecision): string | null {
   return typeof decision === 'string' ? decision : null;
 }
 
 export function ApprovalCard({ approval, permissionMode, onResolve }: { approval: ApprovalRequest; permissionMode: PermissionMode; onResolve: (approvalId: string, decision: ApprovalDecision) => void }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  if (approval.method === 'item/tool/requestUserInput') {
+    const questions = approval.questions ?? [];
+    return <form className="approval-card new-thread-form" onSubmit={event => { event.preventDefault(); onResolve(approval.id, { kind: 'answerQuestions', answers }); }}>
+      <h3>{approval.title}</h3>
+      {questions.map(q => <div key={q.id}>
+        <label><span>{q.question}</span><input required type={q.secret ? 'password' : 'text'} value={answers[q.id] ?? ''} onChange={event => setAnswers({ ...answers, [q.id]: event.target.value })} /></label>
+        {q.options.map(option => <button className="secondary-button" type="button" key={option} onClick={() => setAnswers({ ...answers, [q.id]: option })}>{option}</button>)}
+      </div>)}
+      {questions.length ? <button className="primary-button" type="submit">提交回答</button> : <p>请在电脑端查看此问题。</p>}
+    </form>;
+  }
   const findString = (value: string) => approval.availableDecisions.find((decision) => stringDecision(decision) === value);
   const execpolicy = approval.availableDecisions.find((decision) => typeof decision === 'object' && decision.kind === 'acceptWithExecpolicyAmendment');
   const networkPolicy = approval.availableDecisions.find((decision) => typeof decision === 'object' && decision.kind === 'applyNetworkPolicyAmendment');

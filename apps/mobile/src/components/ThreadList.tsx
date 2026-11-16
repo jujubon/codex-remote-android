@@ -4,11 +4,13 @@ import type { ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
 import { PlusIcon, SettingsIcon } from './Icons';
+import type { useHiddenProjects } from '../lib/hiddenProjects';
 
 export const PROJECT_COLLAPSE_STORAGE_KEY = 'codex-mobile.project-collapse.v1';
 export const PROJECT_AUTO_COLLAPSE_THRESHOLD = 6;
 
 type ProjectCollapsePreferences = Record<string, boolean>;
+const emptyChildren = new Map<string, RemoteThread[]>();
 type ProjectCollapseStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 export interface ProjectThreadGroup {
@@ -96,11 +98,13 @@ export function toggleProjectCollapsePreference(
 }
 
 interface ThreadListProps {
+  hidden: ReturnType<typeof useHiddenProjects>;
+  footer: React.ReactNode;
   threads: RemoteThread[];
   phase: ConnectionPhase;
   phaseDetail: string;
   onSelect: (threadId: string) => void;
-  onCreate: () => void;
+  onCreate: (cwd?: string) => void;
   onSettings: () => void;
   onReconnect: () => void;
 }
@@ -115,13 +119,13 @@ function relativeTime(timestamp: number): string {
 }
 
 function compactPath(path: string): string {
-  const parts = path.split('/').filter(Boolean);
+  const parts = path.split(/[\\/]/).filter(Boolean);
   if (parts.length <= 3) return path || '未指定目录';
   return `…/${parts.slice(-3).join('/')}`;
 }
 
 function projectName(path: string): string {
-  const parts = path.split('/').filter(Boolean);
+  const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || path || '未指定目录';
 }
 
@@ -217,7 +221,9 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect }: ThreadListProps) {
+export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('全部项目');
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
   const [projectCollapsePreferences, setProjectCollapsePreferences] = useState<ProjectCollapsePreferences>(
     () => readProjectCollapsePreferences(),
@@ -235,7 +241,18 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
     });
   };
 
-  const groups = useMemo(() => groupThreadsByCwd(threads), [threads]);
+  const filtered = useMemo(() => {
+    const term = query.trim().toLocaleLowerCase();
+    return threads.filter(thread => {
+      if (hidden.isHidden(thread.cwd || '未指定目录')) return false;
+      if (filter === '进行中' && thread.state !== 'running') return false;
+      if (filter === '待处理' && thread.state !== 'waiting_approval' && thread.state !== 'waiting_input') return false;
+      return !term || [thread.title, thread.cwd, thread.preview, thread.agentNickname].some(value => value?.toLocaleLowerCase().includes(term));
+    });
+  }, [threads, query, filter, hidden]);
+  const groups = useMemo(() => groupThreadsByCwd(filtered), [filtered]);
+  const flatList = filter !== '全部项目' || Boolean(query.trim());
+  const recent = useMemo(() => flatList ? [...filtered].sort((a, b) => b.updatedAt - a.updatedAt) : [], [filtered, flatList]);
 
   const toggleProject = (cwd: string, items: RemoteThread[]) => {
     setProjectCollapsePreferences((current) => toggleProjectCollapsePreference(cwd, items, current));
@@ -248,12 +265,12 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
           <img src="/logo.svg?v=4" alt="" className="top-logo" />
           <div>
             <strong>Codex Remote</strong>
-            <span>工作目录与任务</span>
+            <span>项目与对话</span>
           </div>
         </div>
         <div className="top-actions">
           <button className="icon-button" type="button" onClick={onSettings} aria-label="连接设置"><SettingsIcon /></button>
-          <button className="new-thread-button" type="button" onClick={onCreate} disabled={phase !== 'connected'}>
+          <button className="new-thread-button" type="button" onClick={() => onCreate()} disabled={phase !== 'connected'}>
             <PlusIcon /> <span>新任务</span>
           </button>
         </div>
@@ -261,7 +278,18 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
 
       <div className="status-row">
         <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
-        <span className="thread-count">{groups.length} 个目录 · {threads.length} 个任务</span>
+        <span className="thread-count">{groups.length} 个项目 · {filtered.length} 个对话</span>
+      </div>
+      <div className="thread-browser">
+        <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或最近消息" value={query} onChange={event => setQuery(event.target.value)} />
+        <nav aria-label="对话筛选">{['全部项目', '最近', '进行中', '待处理'].map(label =>
+          <button key={label} type="button" aria-pressed={label === filter} onClick={() => setFilter(label)}>{label}</button>
+        )}</nav>
+        {hidden.paths.length > 0 && <details className="hidden-projects">
+          <summary>已隐藏项目（{hidden.paths.length}）</summary>
+          {hidden.paths.map(path => <div key={path}><span>{path}</span>
+            <button type="button" onClick={() => hidden.setHidden(path, false)}>恢复显示</button></div>)}
+        </details>}
       </div>
 
       {threads.some((thread) => thread.state === 'not_loaded') && (
@@ -278,7 +306,13 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
             <h2>{phase === 'connected' ? '暂无任务' : '正在等待 Codex'}</h2>
             <p>{phase === 'connected' ? '创建任务，或等待电脑端的任务同步到这里。' : '连接就绪后，历史任务会自动显示。'}</p>
           </div>
-        ) : groups.map(({ cwd, items }) => {
+        ) : !filtered.length ? (
+          <div className="empty-state"><h2>没有匹配的对话</h2><button className="secondary-button" onClick={() => { setQuery(''); setFilter('全部项目'); }}>查看全部项目</button></div>
+        ) : flatList ? recent.map(thread => (
+          <div key={thread.id} className="recent-thread"><small>{projectName(thread.cwd)}</small>
+            <ThreadRow thread={thread} childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
+          </div>
+        )) : groups.map(({ cwd, items }) => {
           const ids = new Set(items.map((thread) => thread.id));
           const childrenByParent = new Map<string, RemoteThread[]>();
           for (const thread of items) {
@@ -292,6 +326,7 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
           return (
             <section className={`project-group ${collapsed ? 'project-group-collapsed' : ''}`} key={cwd}>
               <header className="project-heading">
+                <button className="project-new" type="button" aria-label={`在 ${projectName(cwd)} 新建对话`} disabled={phase !== 'connected'} onClick={() => onCreate(cwd === '未指定目录' ? undefined : cwd)}><PlusIcon /></button>
                 <button
                   className="project-heading-button"
                   type="button"
@@ -308,6 +343,7 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
                     <span className="project-chevron" aria-hidden="true">{collapsed ? '⌄' : '⌃'}</span>
                   </span>
                 </button>
+                <button className="project-hide" type="button" aria-label={`仅在本机隐藏 ${projectName(cwd)}`} onClick={() => hidden.setHidden(cwd, true)}>隐藏</button>
               </header>
               {!collapsed && (
                 <div className="project-threads">
@@ -320,6 +356,7 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
           );
         })}
       </section>
+      {footer}
     </main>
   );
 }

@@ -1,12 +1,19 @@
 export const WIRE_PROTOCOL = 'codex-mobile-v1' as const;
 
 export type ApprovalDecision =
+  | { kind: "answerQuestions"; answers: Record<string, string> }
   | "accept"
   | "acceptForSession"
   | "decline"
   | "cancel"
   | { kind: "acceptWithExecpolicyAmendment"; execpolicyAmendment: unknown }
   | { kind: "applyNetworkPolicyAmendment"; networkPolicyAmendment: unknown };
+
+export interface AccountUsage {
+  plan: string | null;
+  checkedAt: number;
+  windows: { group: string; minutes: number | null; remainingPercent: number; resetsAt: number | null }[];
+}
 
 export interface ThreadSummary {
   id: string;
@@ -102,16 +109,18 @@ export interface WireApprovalRequest {
 }
 
 export type ClientMessage =
+  | { type: "usage.read"; requestId: string }
   | { type: "ping"; id?: string }
   | { type: "threads.list"; requestId?: string; limit?: number }
   | { type: "threads.sync"; requestId?: string; knownVersion?: number }
   | { type: "sync.resume"; requestId?: string; syncVersion?: string; cursor?: number; threadIds?: string[] }
   | { type: "models.list"; requestId?: string }
+  | { type: "projects.list"; requestId?: string }
   | { type: "skills.list"; requestId?: string; cwd?: string }
   | { type: "thread.open"; requestId?: string; threadId: string; historyLimit?: number; knownTurnIds?: string[] }
   | { type: "thread.close"; requestId?: string; threadId: string }
   | { type: "thread.history"; requestId?: string; threadId: string; cursor?: string | null; limit?: number; knownTurnIds?: string[] }
-  | { type: "thread.start"; requestId?: string; cwd: string; model?: string; modelProvider?: string }
+  | { type: "thread.start"; requestId?: string; cwd?: string; destination?: "projectless" | "newProject"; projectName?: string; model?: string; modelProvider?: string; prompt?: string }
   | { type: "thread.compact"; requestId?: string; threadId: string }
   | { type: "thread.settings"; requestId?: string; threadId: string; model?: string; effort?: string; summary?: "auto" | "concise" | "detailed" | "none"; permissionMode?: PermissionMode; collaborationMode?: unknown }
   | { type: "prompt.queue.list"; requestId?: string; threadId?: string }
@@ -138,7 +147,7 @@ export type ClientMessage =
   | { type: "approval.resolve"; requestId?: string; approvalRequestId: number | string; decision: ApprovalDecision };
 
 export type ServerMessagePayload =
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; projectCreation?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }
@@ -146,13 +155,16 @@ export type ServerMessagePayload =
   | { type: "threads.snapshot"; requestId?: string; version: number; threads: ThreadSummary[] }
   | { type: "threads.delta"; requestId?: string; baseVersion: number; version: number; upserts: ThreadSummary[]; removedIds: string[] }
   | { type: "models"; requestId?: string; models: ModelOption[] }
+  | { type: "projects"; requestId?: string; projects: { path: string; name: string }[] }
   | { type: "skills"; requestId?: string; skills: SkillOption[] }
   | { type: "thread"; requestId?: string; thread: unknown; history?: ThreadHistoryPageInfo }
   | { type: "thread.history"; requestId?: string; threadId: string; turns: unknown[]; history: ThreadHistoryPageInfo }
   | { type: "thread.compaction.accepted"; requestId?: string; threadId: string }
-  | { type: "thread.settings.updated"; requestId?: string; threadId: string }
+  | { type: "thread.settings.updated"; requestId?: string; threadId: string; settings?: { model: string | null; effort: string | null } }
+  | { type: "usage.result"; requestId: string; usage: AccountUsage }
   | { type: "prompt.queue"; requestId?: string; items: PromptQueueItem[] }
   | { type: "prompt.queued"; requestId?: string; threadId: string; item: PromptQueueItem }
+  | { type: "prompt.desktopQueued"; requestId?: string; threadId: string; queueId: string }
   | { type: "prompt.queue.updated"; threadId: string; items: PromptQueueItem[] }
   | { type: "prompt.queue.cancelled"; requestId?: string; threadId: string; itemId: string }
   | { type: "thread.diff"; requestId?: string; snapshot: GitDiffSnapshot }
@@ -237,6 +249,7 @@ export interface RemoteMessage {
 }
 
 export interface ApprovalRequest {
+  questions?: { id: string; question: string; options: string[]; secret: boolean }[];
   id: string;
   wireId: number | string;
   threadId?: string;

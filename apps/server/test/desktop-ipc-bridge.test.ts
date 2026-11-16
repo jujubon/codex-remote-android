@@ -18,6 +18,26 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<v
   }
 }
 
+describe("Desktop model settings", () => {
+  it("uses the observed model as a write condition and requires matching readback", async () => {
+    const bridge = new DesktopIpcBridge(false);
+    const internal = bridge as unknown as { requestFollower(id: string, method: string, params: object, timeout: number, version: number): Promise<object> };
+    let model = "previous";
+    let applyChange = false;
+    internal.requestFollower = async (_id, method, params, _timeout, version) => {
+      if (method === "thread-follower-read-model-settings") return { settings: { model, reasoningEffort: null } };
+      expect(method).toBe("thread-follower-update-thread-settings");
+      expect(version).toBe(2);
+      expect(params).toMatchObject({ condition: { ifModelEquals: "previous", ifEffortEquals: null }, threadSettings: { model: "next" } });
+      if (applyChange) model = "next";
+      return { applied: true };
+    };
+    await expect(bridge.updateModelSettings("chat", "next")).rejects.toThrow("回读");
+    applyChange = true;
+    await expect(bridge.updateModelSettings("chat", "next")).resolves.toEqual({ model: "next", effort: null });
+  });
+});
+
 describe("Desktop IPC approval forwarding", () => {
   it("forwards native Computer Use elicitation responses with the Desktop follower payload", async () => {
     const bridge = new DesktopIpcBridge(false);

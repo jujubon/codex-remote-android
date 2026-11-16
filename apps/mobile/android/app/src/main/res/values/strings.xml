@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">Codex Remote</string>
     <string name="title_activity_main">Codex Remote</string>
-    <string name="package_name">dev.codexmobile.remote</string>
-    <string name="custom_url_scheme">dev.codexmobile.remote</string>
+    <string name="package_name">dev.codexmobile.companion</string>
+    <string name="custom_url_scheme">dev.codexmobile.companion</string>
     <string name="notification_channel_background">Background connection</string>
     <string name="notification_channel_background_description">Keeps the authenticated Codex remote connection available while the app is in the background.</string>
     <string name="notification_channel_approvals">Approvals</string>

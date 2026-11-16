@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const conversationSource = readFileSync(new URL('../src/components/ConversationScreen.tsx', import.meta.url), 'utf8');
 const threadListSource = readFileSync(new URL('../src/components/ThreadList.tsx', import.meta.url), 'utf8');
 const markdownSource = readFileSync(new URL('../src/components/Markdown.tsx', import.meta.url), 'utf8');

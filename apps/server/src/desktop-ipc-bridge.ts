@@ -129,6 +129,7 @@ export class DesktopIpcBridge extends EventEmitter {
   private readonly follows = new Map<string, FollowTarget>();
   private readonly conversations = new Map<string, DesktopConversation>();
   private readonly revisions = new Map<string, number>();
+  private readonly streamVersions = new Map<string, number>();
   private readonly refreshTimers = new Map<string, NodeJS.Timeout>();
   private readonly followWaiters = new Map<
     string,
@@ -230,6 +231,13 @@ export class DesktopIpcBridge extends EventEmitter {
     conversationId: string,
     turnStartParams: Record<string, unknown>,
   ): Promise<unknown> {
+    if (this.streamVersions.get(conversationId) === 13) {
+      const request = { ...turnStartParams, clientUserMessageId: turnStartParams.clientUserMessageId ?? randomUUID() };
+      const result = await this.requestFollower(conversationId, "thread-follower-start-turn", {
+        conversationId, turnStart: { request, context: { inheritThreadSettings: true } },
+      }, 120_000, 2);
+      return result.result ?? result;
+    }
     const result = await this.requestFollower(
       conversationId,
       "thread-follower-start-turn",
@@ -301,15 +309,38 @@ export class DesktopIpcBridge extends EventEmitter {
     return result.result ?? result;
   }
 
+  async readModelSettings(conversationId: string) {
+    const response = await this.requestFollower(conversationId, "thread-follower-read-model-settings", { conversationId }, 5_000, 1);
+    const settings = record(response.settings);
+    if (!settings) throw new Error("桌面没有返回模型设置。");
+    return { model: stringField(settings.model) ?? null, effort: stringField(settings.reasoningEffort) ?? null };
+  }
+
+  async updateModelSettings(conversationId: string, model?: string, effort?: string) {
+    const before = await this.readModelSettings(conversationId);
+    if ((!model || model === before.model) && (!effort || effort === before.effort)) return before;
+    const response = await this.requestFollower(conversationId, "thread-follower-update-thread-settings", {
+      conversationId,
+      threadSettings: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+      condition: { ifModelEquals: before.model, ifEffortEquals: before.effort },
+    }, 12_000, 2);
+    if (response.applied !== true) throw new Error("桌面未确认设置修改，请重新打开对话核对。");
+    const after = await this.readModelSettings(conversationId);
+    if ((model && after.model !== model) || (effort && after.effort !== effort)) throw new Error("桌面回读值已变化，请刷新对话。");
+    return after;
+  }
+
   async updateThreadSettings(
     conversationId: string,
     threadSettings: Record<string, unknown>,
   ): Promise<void> {
-    await this.requestFollower(
+    const result = await this.requestFollower(
       conversationId,
       "thread-follower-update-thread-settings",
       { conversationId, threadSettings },
+      30_000, this.streamVersions.get(conversationId) === 13 ? 2 : 1,
     );
+    if (result.applied === false) throw new Error("桌面未应用会话设置。");
   }
 
   async compactThread(conversationId: string): Promise<void> {
@@ -323,12 +354,14 @@ export class DesktopIpcBridge extends EventEmitter {
 
   async interruptTurn(
     conversationId: string,
-    mode: "user" | "system" = "user",
+    mode: "user" | "user-stop" | "system" = "user",
+    expectedTurnId?: string,
   ): Promise<unknown> {
     return this.requestFollower(
       conversationId,
       "thread-follower-interrupt-turn",
-      { conversationId, mode },
+      { conversationId, mode, ...(this.streamVersions.get(conversationId) === 13 && expectedTurnId ? { expectedTurnId } : {}) },
+      30_000, this.streamVersions.get(conversationId) === 13 && expectedTurnId ? 4 : 3,
     );
   }
 
@@ -339,6 +372,10 @@ export class DesktopIpcBridge extends EventEmitter {
     result: unknown,
   ): Promise<void> {
     const payload = record(result) ?? {};
+    if (method === "item/tool/requestUserInput") {
+      await this.requestFollower(conversationId, "thread-follower-submit-user-input", { conversationId, requestId, response: payload });
+      return;
+    }
     if (method === "item/commandExecution/requestApproval" || method === "execCommandApproval") {
       await this.requestFollower(
         conversationId,
@@ -429,6 +466,7 @@ export class DesktopIpcBridge extends EventEmitter {
     method: string,
     params: Record<string, unknown>,
     timeoutMs = 30_000,
+    version = IPC_VERSION[method] ?? 0,
   ): Promise<Record<string, unknown>> {
     let target = this.follows.get(conversationId);
     if (!target?.ownerClientId) {
@@ -464,8 +502,9 @@ export class DesktopIpcBridge extends EventEmitter {
         type: "request",
         requestId,
         method,
-        version: IPC_VERSION[method] ?? 0,
+        version,
         sourceClientId: this.clientId,
+        targetClientId: ownerClientId,
         targetClientIds: [ownerClientId],
         params,
       });
@@ -527,6 +566,7 @@ export class DesktopIpcBridge extends EventEmitter {
       for (const target of this.follows.values()) delete target.ownerClientId;
       this.conversations.clear();
       this.revisions.clear();
+      this.streamVersions.clear();
       this.emit("offline");
       this.scheduleReconnect();
     });
@@ -622,7 +662,8 @@ export class DesktopIpcBridge extends EventEmitter {
     )
       return;
     const expectedVersion = IPC_VERSION[frame.method];
-    if (expectedVersion != null && (frame.version ?? 0) !== expectedVersion) {
+    const knownStream = frame.method === "thread-stream-state-changed" && frame.version === 13;
+    if (!knownStream && expectedVersion != null && (frame.version ?? 0) !== expectedVersion) {
       this.emit(
         "diagnostic",
         new Error(
@@ -638,6 +679,7 @@ export class DesktopIpcBridge extends EventEmitter {
       for (const target of this.follows.values()) delete target.ownerClientId;
       this.conversations.clear();
       this.revisions.clear();
+      this.streamVersions.clear();
       this.emit("reset");
       for (const conversationId of this.follows.keys())
         this.announceFollow(conversationId);
@@ -698,6 +740,7 @@ export class DesktopIpcBridge extends EventEmitter {
           delete target.ownerClientId;
           this.conversations.delete(conversationId);
           this.revisions.delete(conversationId);
+          this.streamVersions.delete(conversationId);
           this.emit("ownerLost", conversationId);
         }
       }
@@ -741,6 +784,7 @@ export class DesktopIpcBridge extends EventEmitter {
           return;
         }
         existingTarget.ownerClientId = frame.sourceClientId;
+        this.streamVersions.set(conversationId, frame.version!);
         this.follows.set(conversationId, existingTarget);
         const normalized = normalizeDesktopConversation(
           conversationId,

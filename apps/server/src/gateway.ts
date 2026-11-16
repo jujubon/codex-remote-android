@@ -1,9 +1,13 @@
 import type { IncomingMessage } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { desktopAction } from "./windows-desktop.js";
 import { isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   WIRE_PROTOCOL,
+  type AccountUsage,
   type ApprovalDecision,
   type ApprovalRequest,
   type ClientMessage,
@@ -441,7 +445,9 @@ export class MobileGateway {
 
     this.send(socket, {
       type: "welcome",
-      version: "0.3.2",
+      desktopOnly: this.config.desktopOnly,
+      projectCreation: this.config.desktopOnly,
+      version: "0.6.0",
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
       syncVersion: this.syncJournal.version,
@@ -543,6 +549,11 @@ export class MobileGateway {
         case "threads.list":
           await this.listThreads(socket, message.requestId, message.limit);
           break;
+        case "usage.read": {
+          const raw = await this.bridge.request("account/rateLimits/read", {});
+          this.send(socket, { type: "usage.result", requestId: message.requestId, usage: accountUsage(raw) });
+          break;
+        }
         case "models.list": {
           const result = (await this.bridge.request("model/list", {
             limit: 100,
@@ -601,7 +612,25 @@ export class MobileGateway {
           );
           break;
         }
+        case "projects.list": {
+          if (!this.config.desktopOnly) throw new Error("当前连接不支持桌面项目目录。");
+          const source = await this.desktopProjectSource();
+          const result = await desktopAction({ action: "projects", threadId: source.id });
+          this.send(socket, { type: "projects", requestId: message.requestId, projects: result.projects ?? [] });
+          break;
+        }
         case "thread.start": {
+          if (this.config.desktopOnly) {
+            const prompt = requiredString(message.prompt, "首条任务");
+            if (message.destination !== undefined && !["projectless", "newProject"].includes(message.destination)) throw new Error("未知的对话位置。");
+            const cwd = message.destination ? undefined : requiredAbsolutePath(message.cwd, "cwd");
+            const source = await this.desktopProjectSource(cwd);
+            const created = await desktopAction({ action: "create", threadId: source.id, cwd, prompt, destination: message.destination, projectName: message.projectName });
+            if (!created.thread_id) throw new Error("桌面未返回新对话编号，请刷新列表核对。");
+            this.threadIndexLoadedAt = 0;
+            await this.openThreadPage(socket, created.thread_id, message.requestId);
+            break;
+          }
           const cwd = requiredAbsolutePath(message.cwd, "cwd");
           const result = await this.bridge.request("thread/start", {
             cwd,
@@ -626,6 +655,7 @@ export class MobileGateway {
         }
         case "thread.compact": {
           const threadId = requiredString(message.threadId, "threadId");
+          await this.ensureDesktopOwner(threadId);
           if (this.desktopIpc?.hasOwner(threadId))
             await this.desktopIpc.compactThread(threadId);
           else await this.bridge.request("thread/compact/start", { threadId });
@@ -638,6 +668,7 @@ export class MobileGateway {
         }
         case "thread.settings": {
           const threadId = requiredString(message.threadId, "threadId");
+          await this.ensureDesktopOwner(threadId);
           const threadSettings = {
             ...(message.model ? { model: message.model } : {}),
             ...(message.effort ? { effort: message.effort } : {}),
@@ -652,6 +683,12 @@ export class MobileGateway {
               ? { collaborationMode: message.collaborationMode }
               : {}),
           };
+          if (this.config.desktopOnly && !message.permissionMode && !message.collaborationMode && (message.model || message.effort)) {
+            if (!this.desktopIpc?.hasOwner(threadId)) throw new Error("桌面对话已断开。");
+            const settings = await this.desktopIpc.updateModelSettings(threadId, message.model, message.effort);
+            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings });
+            break;
+          }
           if (this.desktopIpc?.hasOwner(threadId))
             await this.desktopIpc.updateThreadSettings(
               threadId,
@@ -723,6 +760,23 @@ export class MobileGateway {
         case "turn.start": {
           const threadId = requiredString(message.threadId, "threadId");
           const text = requiredString(message.text, "text");
+          await this.ensureDesktopOwner(threadId);
+          if (this.config.desktopOnly && message.deliveryMode === "queue") {
+            if (message.attachments?.length || message.skill) throw new Error("桌面原生队列仅接受文字，附件请用立即发送。");
+            const id = requiredString(message.clientUserMessageId, "clientUserMessageId");
+            const queueId = await this.submitTurnIdempotently(threadId, id, JSON.stringify(["queue", text]), async () => {
+              let output: string;
+              try {
+                const result = await promisify(execFile)(this.config.codexBin, ["queue", "--thread", threadId, "--message", text], { windowsHide: true, timeout: 20_000, env: { ...process.env, CODEX_HOME: this.config.codexHome } });
+                output = result.stdout;
+              } catch { throw new Error("桌面排队回执不可用，请先核对桌面队列。"); }
+              const matches = [...output.matchAll(/^Queued message ([\w-]+) for thread ([\w-]+)\.\s*$/gm)];
+              if (matches.length !== 1 || matches[0]![2] !== threadId) throw new Error("未取得匹配的队列回执，请核对桌面队列。");
+              return matches[0]![1];
+            });
+            this.send(socket, { type: "prompt.desktopQueued", requestId: message.requestId, threadId, queueId: String(queueId) });
+            break;
+          }
           const input: Array<Record<string, unknown>> = [];
           const queuedUploadIds: string[] = [];
           const queuedFileNames: string[] = [];
@@ -825,6 +879,7 @@ export class MobileGateway {
         }
         case "turn.interrupt": {
           const threadId = requiredString(message.threadId, "threadId");
+          await this.ensureDesktopOwner(threadId);
           const turnId = requiredString(message.turnId, "turnId");
           if (this.desktopIpc?.hasOwner(threadId)) {
             const activeTurnId = activeConversationTurnId(
@@ -834,7 +889,7 @@ export class MobileGateway {
               throw new Error("Desktop task has no active turn to interrupt.");
             if (activeTurnId !== turnId)
               throw new Error("The requested turn is no longer the active Desktop turn.");
-            await this.desktopIpc.interruptTurn(threadId, "user");
+            await this.desktopIpc.interruptTurn(threadId, this.config.desktopOnly ? "user-stop" : "user", turnId);
           } else {
             await this.bridge.request("turn/interrupt", { threadId, turnId });
           }
@@ -888,6 +943,22 @@ export class MobileGateway {
     }
   }
 
+  private async desktopProjectSource(cwd?: string) {
+    await this.ensureThreadIndex();
+    const threads = this.threadIndex.snapshot().filter(row => !row.parentThreadId);
+    const source = threads.find(row => this.desktopIpc?.hasOwner(row.id)) ?? threads.find(row => row.cwd === cwd) ?? threads[0];
+    if (!source) throw new Error("请先在电脑 Codex 中打开一个对话。");
+    return source;
+  }
+
+  private async ensureDesktopOwner(threadId: string): Promise<void> {
+    if (!this.config.desktopOnly || this.desktopIpc?.hasOwner(threadId)) return;
+    if (!this.desktopIpc?.ready) throw new Error("电脑 Codex Desktop 当前离线。");
+    await desktopAction({ action: "open", threadId });
+    await this.desktopIpc.openConversation(threadId, "local", 8_000, false);
+    if (!this.desktopIpc.hasOwner(threadId)) throw new Error("桌面尚未加载此对话，请稍后再试。");
+  }
+
   private async submitPreparedTurn(
     threadId: string,
     turnParams: Record<string, unknown>,
@@ -896,6 +967,7 @@ export class MobileGateway {
     const clientUserMessageId = typeof turnParams.clientUserMessageId === "string" ? turnParams.clientUserMessageId : undefined;
     const desktopOwned = this.desktopIpc?.hasOwner(threadId) === true;
     const result = await this.submitTurnIdempotently(threadId, clientUserMessageId, JSON.stringify(turnParams), async () => {
+      if (this.config.desktopOnly && !this.desktopIpc?.hasOwner(threadId)) throw new Error("桌面对话已断开，请重新打开。");
       if (deliveryMode === "steer") return this.steerCurrentTurn(threadId, turnParams);
       if (!desktopOwned) return this.bridge.request("turn/start", turnParams);
       try {
@@ -1013,6 +1085,7 @@ export class MobileGateway {
   }
 
   private async drainPromptQueue(threadId: string): Promise<void> {
+    if (this.config.desktopOnly) return;
     if (!this.promptQueue || this.isThreadActive(threadId)) return;
     // Strict single-owner rule: Desktop native queue and Host queue cannot share
     // an atomic lock. Never auto-start while Desktop owns the conversation.
@@ -1054,6 +1127,7 @@ export class MobileGateway {
   }
 
   private async startQueuedTurn(threadId: string, turnParams: Record<string, unknown>): Promise<unknown> {
+    await this.ensureDesktopOwner(threadId);
     if (this.isThreadActive(threadId)) throw new GatewayRequestError("queue_turn_active", "检测到新的活动 turn，队列继续等待，未创建竞争 turn。");
     const clientUserMessageId = typeof turnParams.clientUserMessageId === "string" ? turnParams.clientUserMessageId : undefined;
     const desktopOwned = this.desktopIpc?.hasOwner(threadId) === true;
@@ -1149,10 +1223,11 @@ export class MobileGateway {
     if (this.threadIndexLoad) return this.threadIndexLoad;
     this.threadIndexLoad = (async () => {
       const data: Array<Record<string, unknown>> = [];
+      const seenCursors = new Set<string>();
       let cursor: string | null | undefined;
       do {
         const result = (await this.bridge.request("thread/list", {
-          limit: Math.min(100, 1_000 - data.length),
+          limit: 100,
           ...(cursor ? { cursor } : {}),
           sortKey: "updated_at",
           sortDirection: "desc",
@@ -1160,8 +1235,9 @@ export class MobileGateway {
         })) as ThreadListResult;
         data.push(...(result.data ?? []));
         cursor = result.nextCursor;
-        if ((result.data?.length ?? 0) === 0) break;
-      } while (cursor && data.length < 1_000);
+        if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated thread-list cursor.");
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
       const byId = new Map(data.map((thread) => {
         const summary = toThreadSummary(thread);
         return [summary.id, summary] as const;
@@ -1214,7 +1290,7 @@ export class MobileGateway {
     requestedLimit?: number,
   ): Promise<void> {
     await this.ensureThreadIndex();
-    const limit = Math.min(Math.max(requestedLimit ?? 1_000, 1), 1_000);
+    const limit = requestedLimit == null ? undefined : Math.max(requestedLimit, 1);
     this.send(socket, {
       type: "threads",
       requestId,
@@ -1276,9 +1352,16 @@ export class MobileGateway {
     let metadataPayload: unknown;
     if (desktopThread && this.desktopIpc?.hasOwner(threadId)) {
       this.desktopThreads.set(threadId, desktopThread);
-      metadataPayload = { thread: projectDesktopLiveThread(desktopThread) };
+      const projected = projectDesktopLiveThread(desktopThread);
+      if (this.config.desktopOnly) {
+        const settings = await this.desktopIpc.readModelSettings(threadId).catch(() => null);
+        if (settings) projected.latestThreadSettings = { ...asRecord(projected.latestThreadSettings), ...settings };
+      }
+      metadataPayload = { thread: projected };
     } else {
-      metadataPayload = await this.bridge.request("thread/resume", { threadId, excludeTurns: true });
+      metadataPayload = this.config.desktopOnly
+        ? await this.bridge.request("thread/read", { threadId, includeTurns: false })
+        : await this.bridge.request("thread/resume", { threadId, excludeTurns: true });
     }
     this.rememberThreadCwd(threadId, metadataPayload);
     const page = await this.readTurnsPage(threadId, null, limit, knownTurnIds);
@@ -1882,6 +1965,7 @@ function flattenSkills(result: SkillsListResult): SkillOption[] {
 
 function isApprovalMethod(method: string): boolean {
   return [
+    "item/tool/requestUserInput",
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",
     "item/permissions/requestApproval",
@@ -1965,7 +2049,7 @@ function normalizeApproval(
         : typeof params.callId === "string"
           ? params.callId
           : undefined,
-    title: isMcpElicitation
+    title: message.method === "item/tool/requestUserInput" ? "Codex 等你回答" : isMcpElicitation
       ? `允许 ${connectorName} 操作？`
       : isPermissions
       ? "允许额外权限？"
@@ -1983,7 +2067,7 @@ function normalizeApproval(
     command,
     cwd,
     reason,
-    availableDecisions: isMcpElicitation
+    availableDecisions: message.method === "item/tool/requestUserInput" ? [] : isMcpElicitation
       ? ["decline", "accept", ...(persistentChoices.includes("session") ? ["acceptForSession" as const] : [])]
       : rawDecisions?.length
       ? rawDecisions
@@ -2041,11 +2125,44 @@ function permissionSettings(
   };
 }
 
+export function accountUsage(raw: unknown): AccountUsage {
+  const reply = asRecord(raw);
+  const primary = asRecord(reply?.rateLimits);
+  const buckets = new Map(Object.entries(asRecord(reply?.rateLimitsByLimitId) ?? {}));
+  if (primary) buckets.set(typeof primary.limitId === "string" ? primary.limitId : "codex", primary);
+  const windows: AccountUsage["windows"] = [];
+  for (const [id, entry] of buckets) {
+    const bucket = asRecord(entry);
+    for (const key of ["primary", "secondary"]) {
+      const window = asRecord(bucket?.[key]);
+      if (typeof window?.usedPercent !== "number" || !Number.isFinite(window.usedPercent)) continue;
+      windows.push({
+        group: typeof bucket?.limitName === "string" ? bucket.limitName : id,
+        minutes: typeof window.windowDurationMins === "number" ? window.windowDurationMins : null,
+        remainingPercent: Math.max(0, Math.min(100, 100 - window.usedPercent)),
+        resetsAt: typeof window.resetsAt === "number" && window.resetsAt > 0 ? window.resetsAt * 1000 : null,
+      });
+    }
+  }
+  return { plan: typeof primary?.planType === "string" ? primary.planType : null, checkedAt: Date.now(), windows };
+}
+
 function approvalResult(
   method: string,
   decision: ApprovalDecision,
   params?: Record<string, unknown>,
 ): unknown {
+  if (method === "item/tool/requestUserInput") {
+    if (!decision || typeof decision !== "object" || decision.kind !== "answerQuestions" || !Array.isArray(params?.questions) || !params.questions.length) throw new Error("请回答当前问题。");
+    const answers = Object.fromEntries(params.questions.map(question => {
+      const id = asRecord(question)?.id;
+      const value = typeof id === "string" ? decision.answers?.[id] : undefined;
+      if (typeof value !== "string" || !value.trim()) throw new Error("请补全所有问题的答案。");
+      return [id, { answers: [value.trim()] }];
+    }));
+    return { answers };
+  }
+  if (typeof decision === "object" && decision.kind === "answerQuestions") throw new Error("该请求需要审批决定。");
   if (method === "mcpServer/elicitation/request") {
     if (decision === "accept" || decision === "acceptForSession") {
       const persistForSession = decision === "acceptForSession";

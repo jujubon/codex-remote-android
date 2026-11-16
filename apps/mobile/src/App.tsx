@@ -6,6 +6,8 @@ import { ConversationScreen } from './components/ConversationScreen';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
 import { ThreadList } from './components/ThreadList';
+import { AccountUsagePanel } from './components/AccountUsagePanel';
+import { useHiddenProjects } from './lib/hiddenProjects';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
@@ -20,10 +22,12 @@ export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [showNewThread, setShowNewThread] = useState(false);
+  const [newDirectory, setNewDirectory] = useState<string>();
   const [backgroundError, setBackgroundError] = useState('');
   const [selectedAgentByThread, setSelectedAgentByThread] = useState<Record<string, string | null>>({});
   const threadBackStackRef = useRef<string[]>([]);
   const remote = useRemote(config ?? null);
+  const hidden = useHiddenProjects(remote.serverId ?? config?.serverUrl ?? '');
 
   const openRootThread = useCallback((threadId: string) => {
     threadBackStackRef.current = [];
@@ -179,6 +183,7 @@ export function App() {
           models={remote.models}
           skills={remote.skills}
           selectedModel={remote.selectedModel}
+          modelPending={remote.modelPending}
           selectedEffort={remote.selectedEffort}
           selectedPermissionMode={remote.selectedPermissionMode}
           permissionModeStatus={remote.permissionModeStatus}
@@ -211,20 +216,29 @@ export function App() {
         />
       ) : (
         <ThreadList
+          hidden={hidden}
           threads={remote.threads}
           phase={remote.phase}
           phaseDetail={remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? 'Bridge 已连接，但 Codex app-server 尚未就绪' : '')}
           onSelect={openRootThread}
-          onCreate={() => setShowNewThread(true)}
+          onCreate={cwd => { setNewDirectory(cwd); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
+          footer={<AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />}
           onSettings={() => setShowSettings(true)}
           onReconnect={remote.reconnect}
         />
       )}
 
       {showNewThread && (
-        <NewThreadSheet models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
+        <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
+          projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}
+          directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(p => !hidden.isHidden(p)) :
+            [...new Set(remote.threads.map(thread => thread.cwd).filter(p => p && !hidden.isHidden(p)))]}
+          models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
       )}
 
+      {!remote.lastError && !backgroundError && remote.queueReceipt && (
+        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" onClick={remote.dismissReceipt}>×</button></div>
+      )}
       {(remote.lastError || backgroundError) && (
         <div className="error-toast" role="alert">
           <span>{remote.lastError || backgroundError}</span>

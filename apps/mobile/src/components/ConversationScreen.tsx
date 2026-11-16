@@ -22,6 +22,7 @@ interface ConversationScreenProps {
   gitDiff: GitDiffSnapshot | null;
   models: ModelOption[];
   skills: SkillOption[];
+  modelPending: boolean;
   selectedModel: string;
   selectedEffort: string;
   selectedPermissionMode: PermissionMode;
@@ -308,7 +309,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
+export function ConversationScreen({ thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -491,37 +492,7 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
         <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
       </header>
 
-      <section className="session-toolbar" aria-label="任务设置">
-        <label>
-          <span>模型</span>
-          <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={phase !== 'connected'}>
-            <option value="">主机默认</option>
-            {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>思考强度</span>
-          <select value={selectedEffort} onChange={(event) => onSelectEffort(event.target.value)} disabled={phase !== 'connected' || effortOptions.length === 0}>
-            <option value="">默认</option>
-            {effortOptions.map((effort) => <option key={effort.reasoningEffort} value={effort.reasoningEffort}>{effort.reasoningEffort}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>权限 / 审阅</span>
-          <select value={selectedPermissionMode} onChange={(event) => onSelectPermissionMode(event.target.value as PermissionMode)} disabled={phase !== 'connected'}>
-            <option value="auto">自动 · 工作区</option>
-            <option value="granular">严格确认</option>
-            <option value="read-only">严格审阅 · 只读</option>
-            <option value="guardian-approvals">替我审阅</option>
-            <option value="full-access">完全访问</option>
-          </select>
-        </label>
-        <div className={`run-indicator ${running ? 'is-running' : ''}`}>
-          <span />
-          <strong>{running ? <>执行中{thread.currentTurnStartedAt && <> · <ElapsedTime startedAt={thread.currentTurnStartedAt} /></>}</> : thread.state === 'waiting_approval' ? '等待授权' : thread.state === 'waiting_input' ? '等待输入' : thread.state === 'error' ? '异常' : thread.state === 'idle' ? '可继续' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}</strong>
-        </div>
-        {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
-      </section>
+
 
       {subagents.length > 0 && (
         <nav className="agent-strip" aria-label="协作 Subagent">
@@ -654,6 +625,39 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
       <PromptQueuePanel items={promptQueue} onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
+      <section className="session-toolbar" aria-label="任务设置">
+        <label>
+          <span>模型</span>
+          <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={phase !== 'connected' || modelPending}>
+            <option value="" disabled>等待桌面设置</option>
+            {selectedModel && !activeModel && <option value={selectedModel}>{selectedModel}</option>}
+            {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>思考强度</span>
+          <select value={selectedEffort} onChange={(event) => onSelectEffort(event.target.value)} disabled={phase !== 'connected' || modelPending || effortOptions.length === 0}>
+            <option value="" disabled>桌面默认</option>
+            {selectedEffort && !effortOptions.some(e => e.reasoningEffort === selectedEffort) && <option value={selectedEffort}>{selectedEffort}</option>}
+            {effortOptions.map((effort) => <option key={effort.reasoningEffort} value={effort.reasoningEffort}>{effort.reasoningEffort}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>权限 / 审阅</span>
+          <select value={selectedPermissionMode} onChange={(event) => onSelectPermissionMode(event.target.value as PermissionMode)} disabled={phase !== 'connected'}>
+            <option value="auto">自动 · 工作区</option>
+            <option value="granular">严格确认</option>
+            <option value="read-only">严格审阅 · 只读</option>
+            <option value="guardian-approvals">替我审阅</option>
+            <option value="full-access">完全访问</option>
+          </select>
+        </label>
+        <div className={`run-indicator ${running ? 'is-running' : ''}`}>
+          <span />
+          <strong>{running ? <>执行中{thread.currentTurnStartedAt && <> · <ElapsedTime startedAt={thread.currentTurnStartedAt} /></>}</> : thread.state === 'waiting_approval' ? '等待授权' : thread.state === 'waiting_input' ? '等待输入' : thread.state === 'error' ? '异常' : thread.state === 'idle' ? '可继续' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}</strong>
+        </div>
+        {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
+      </section>
       <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>

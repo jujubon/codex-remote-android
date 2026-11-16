@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { mkdir } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
 import { buildCodexEnvironment, loadConfig } from "./config.js";
@@ -19,6 +20,7 @@ const desktopIpc = new DesktopIpcBridge(
   config.desktopIpcEndpoint,
 );
 const promptQueue = await PromptQueueStore.create(config.promptQueueFile);
+if (config.fileRoots.includes(config.uploadDirectory)) await mkdir(config.uploadDirectory, { recursive: true, mode: 0o700 });
 const files = await FileTransferManager.create({ allowedRoots: config.fileRoots, uploadDirectory: config.uploadDirectory });
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue);
@@ -37,7 +39,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.3.2",
+      version: "0.6.0",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,

@@ -19,6 +19,7 @@ export interface ServerConfig {
   codexHome: string;
   serverId: string;
   desktopIpc: boolean;
+  desktopOnly?: boolean;
   desktopIpcEndpoint?: string;
   fileRoots: string[];
   uploadDirectory: string;
@@ -73,6 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     codexHome,
     serverId: env.CMR_SERVER_ID ?? `${hostname()}-${randomUUID().slice(0, 8)}`,
     desktopIpc: env.CMR_DESKTOP_IPC !== "0",
+    desktopOnly: env.CMR_DESKTOP_ONLY === "1",
     desktopIpcEndpoint: env.CMR_DESKTOP_IPC_ENDPOINT?.trim() || undefined,
     fileRoots,
     uploadDirectory,

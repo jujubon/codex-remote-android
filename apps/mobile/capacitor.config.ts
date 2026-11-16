@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'dev.codexmobile.remote',
+  appId: 'dev.codexmobile.companion',
   appName: 'Codex Remote',
   webDir: 'dist',
   android: {
