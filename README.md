@@ -54,11 +54,13 @@ ngrok http http://127.0.0.1:8787
 
 ## 从源码构建
 
-下面的命令在 Windows PowerShell 中执行。准备 Git、Node.js 22.12 或更高版本、JDK 21，以及安装了 Android SDK Platform 36 的 Android SDK。为命令行构建配置好 `JAVA_HOME` 和 `ANDROID_HOME`。
+下面的命令在 Windows PowerShell 中执行。准备 Git 和 Git LFS（用于下载通知音等资源）、Node.js 22.12 或更高版本、JDK 21，以及安装了 Android SDK Platform 36 的 Android SDK。为命令行构建配置好 `JAVA_HOME` 和 `ANDROID_HOME`。
 
 ```powershell
+git lfs install
 git clone https://github.com/jujubon/codex-remote-android.git
 cd codex-remote-android
+git lfs pull
 npm.cmd ci
 npm.cmd run build
 npm.cmd test
