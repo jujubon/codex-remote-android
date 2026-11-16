@@ -1,4 +1,4 @@
-import { Fragment, memo, type ReactNode } from 'react';
+import { Fragment, memo, useState, type ReactNode } from 'react';
 
 interface InlineOptions {
   keyPrefix: string;
@@ -43,6 +43,22 @@ function listItemText(line: string): { ordered: boolean; text: string } {
   return { ordered, text: line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, '') };
 }
 
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  const [feedback, setFeedback] = useState('');
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code);
+      setFeedback('已复制');
+    } catch {
+      setFeedback('请长按代码复制');
+    }
+  }
+  return <div className="code-block">
+    <div className="code-tools"><span>{language}</span><button type="button" onClick={copy} aria-live="polite">{feedback || '复制'}</button></div>
+    <pre className="markdown-code"><code>{code}</code></pre>
+  </div>;
+}
+
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const lines = content.replace(/\r\n?/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
@@ -66,7 +82,7 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
         cursor += 1;
       }
       if (cursor < lines.length) cursor += 1;
-      blocks.push(<pre className="markdown-code" key={`block-${blockIndex++}`} data-language={language}><code>{code.join('\n')}</code></pre>);
+      blocks.push(<CodeBlock key={`block-${blockIndex++}`} language={language} code={code.join('\n')} />);
       continue;
     }
 

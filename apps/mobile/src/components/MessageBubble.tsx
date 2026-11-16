@@ -144,9 +144,9 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
 }
 
 export const MessageBubble = memo(function MessageBubble({ message, agentTargets = [], onOpenAgent, onLoadAttachment, onDownloadAttachment }: MessageBubbleProps) {
-  const [detailsOpen, setDetailsOpen] = useState(message.status === 'streaming');
+  const [detailsOpen, setDetailsOpen] = useState(message.status === 'failed');
   useEffect(() => {
-    if (message.status === 'streaming') setDetailsOpen(true);
+    if (message.status === 'failed') setDetailsOpen(true);
   }, [message.status]);
 
   const isUser = message.role === 'user';

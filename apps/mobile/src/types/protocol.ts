@@ -16,6 +16,7 @@ export interface AccountUsage {
 }
 
 export interface ThreadSummary {
+  projectless?: boolean;
   id: string;
   name: string | null;
   preview: string;
@@ -202,6 +203,7 @@ export interface CompactionStatus {
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface RemoteThread {
+  projectless?: boolean;
   id: string;
   title: string;
   preview: string;

@@ -147,6 +147,7 @@ function normalizeSummary(thread: ThreadSummary): RemoteThread {
     title: visibleUserText(thread.name || thread.preview || '未命名任务'),
     preview: visibleUserText(thread.preview),
     cwd: thread.cwd,
+    projectless: Boolean(thread.projectless),
     modelProvider: thread.modelProvider,
     updatedAt: timestamp(thread.updatedAt),
     state: stateFromStatus(thread.status),
@@ -348,6 +349,9 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
   } else if (normalizedType.includes('agentmessage') || normalizedType.includes('assistant')) {
     role = 'assistant';
     content = textFromContent(item.text ?? item.content ?? item.message);
+  } else if (isContextCompactionItem(item)) {
+    role = 'system';
+    content = item.completed === true ? '上下文压缩完成' : item.completed === false ? '已开始压缩上下文' : '上下文压缩';
   } else if (normalizedType.includes('reasoning')) {
     role = 'system';
     toolName = '思考梗概';

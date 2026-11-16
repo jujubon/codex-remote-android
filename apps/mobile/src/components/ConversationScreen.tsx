@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption } from '../types/protocol';
 import { ApprovalCard } from './ApprovalCard';
 import { CompactionStatusBar } from './CompactionStatusBar';
+import { isContextCompactionItem } from '../hooks/useRemote';
 import { Composer } from './Composer';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ConversationContextPanel, isContextMessage, latestReasoning } from './ConversationContextPanel';
-import { ArrowLeftIcon } from './Icons';
+import { ArrowLeftIcon, ShieldIcon, CloseIcon } from './Icons';
 import { MessageBubble } from './MessageBubble';
 import { GitDiffPanel } from './GitDiffPanel';
 import { PromptQueuePanel } from './PromptQueuePanel';
@@ -13,6 +14,8 @@ import { TransientActivity } from './TransientActivity';
 import { ElapsedTime } from './ElapsedTime';
 
 interface ConversationScreenProps {
+  accountPanel: React.ReactNode;
+  notice: React.ReactNode;
   thread: RemoteThread;
   messages: RemoteMessage[];
   subagents: RemoteThread[];
@@ -201,7 +204,7 @@ export function groupConsecutiveToolMessages(messages: RemoteMessage[]): Convers
     pending = [];
   };
   for (const message of messages) {
-    if (message.role === 'tool') pending.push(message);
+    if (message.role === 'tool' && message.status !== 'failed') pending.push(message);
     else { flush(); entries.push(messageEntry(message)); }
   }
   flush();
@@ -309,7 +312,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
+export function ConversationScreen({ accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -319,13 +322,29 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
   const suppressNextContentNotificationRef = useRef(false);
   const followScrollFrameRef = useRef<number | null>(null);
   const previousEntryCountRef = useRef(0);
+  const settingsRef = useRef<HTMLDialogElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [hasNewContent, setHasNewContent] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [renderedEntryLimit, setRenderedEntryLimit] = useState(DEFAULT_RENDERED_ENTRY_LIMIT);
   const [frozenEntryEnd, setFrozenEntryEnd] = useState<number | null>(null);
   const [expandedToolGroupIds, setExpandedToolGroupIds] = useState<Set<string>>(() => new Set());
 
-  const visibleMessages = useMemo(() => messages.filter((message) => !isContextMessage(message)), [messages]);
+  const visibleMessages = useMemo(() => {
+    const visible = messages.filter(message => message.status === 'failed' || !isContextMessage(message));
+    if (compaction?.phase !== 'succeeded') return visible;
+    const existing = visible.map(message => message.turnId === compaction.turnId && isContextCompactionItem({ type: message.itemType })).lastIndexOf(true);
+    if (existing >= 0) {
+      visible[existing] = { ...visible[existing]!, role: 'system', collapsible: false, content: '上下文压缩完成' };
+    } else {
+      const next = visible.findIndex(message => message.createdAt > compaction.updatedAt);
+      visible.splice(next === -1 ? visible.length : next, 0, {
+        id: 'compaction:' + compaction.startedAt, threadId: thread.id, turnId: compaction.turnId,
+        role: 'system', status: 'complete', content: '上下文压缩完成', createdAt: compaction.updatedAt,
+      });
+    }
+    return visible;
+  }, [messages, compaction, thread.id]);
   const reasoning = useMemo(() => latestReasoning(messages, currentTurnId), [currentTurnId, messages]);
   const conversationEntries = useMemo(
     () => resolveConversationEntryAgentNames(groupConsecutiveToolMessages(visibleMessages), threadSubagents),
@@ -466,6 +485,7 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
       if (followingRef.current) scheduleFollowScroll();
     });
     observer.observe(content);
+    observer.observe(stream);
     return () => {
       observer.disconnect();
       if (followScrollFrameRef.current != null) {
@@ -487,7 +507,14 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
         <button className="back-button" type="button" onClick={onBack} aria-label="返回任务列表"><ArrowLeftIcon /></button>
         <div className="conversation-title">
           <h1>{thread.title}</h1>
-          <p>{thread.cwd || thread.modelProvider || 'Codex 任务'}</p>
+          <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
+            setSettingsOpen(true);
+            settingsRef.current?.showModal();
+          }}>
+            <span>{thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}</span>
+            <b>{activeModel?.displayName || selectedModel || '模型'} ▾</b>
+            {selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
+          </button>
         </div>
         <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
       </header>
@@ -612,19 +639,26 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
             {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />)}
           </div>
         </section>
-        {hasNewContent && (
+        {(hasNewContent || frozenEntryEnd != null) && (
           <button className="new-content-button" type="button" onClick={scrollToBottom}>
-            <span>有新内容</span>
-            <strong>回到底部 ↓</strong>
+            {hasNewContent && <span>有新内容</span>}
+            <strong>↓ 回到最新</strong>
           </button>
         )}
       </div>
 
       <TransientActivity running={running} content={reasoning?.content} startedAt={thread.currentTurnStartedAt} />
-      <CompactionStatusBar status={compaction} onDismiss={onDismissCompaction} />
+      <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
       <PromptQueuePanel items={promptQueue} onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
+      <dialog className="session-dialog" ref={settingsRef} aria-labelledby="session-options" onClose={() => setSettingsOpen(false)} onClick={event => {
+        if (event.target === event.currentTarget) settingsRef.current?.close();
+      }}>
+        {settingsOpen && <div className="session-sheet">
+          <header className="sheet-title-row"><h2 id="session-options">对话设置</h2>
+            <button type="button" className="icon-button" aria-label="关闭对话设置" onClick={() => settingsRef.current?.close()}><CloseIcon /></button>
+          </header>
       <section className="session-toolbar" aria-label="任务设置">
         <label>
           <span>模型</span>
@@ -652,12 +686,18 @@ export function ConversationScreen({ thread, messages, subagents: threadSubagent
             <option value="full-access">完全访问</option>
           </select>
         </label>
-        <div className={`run-indicator ${running ? 'is-running' : ''}`}>
-          <span />
-          <strong>{running ? <>执行中{thread.currentTurnStartedAt && <> · <ElapsedTime startedAt={thread.currentTurnStartedAt} /></>}</> : thread.state === 'waiting_approval' ? '等待授权' : thread.state === 'waiting_input' ? '等待输入' : thread.state === 'error' ? '异常' : thread.state === 'idle' ? '可继续' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}</strong>
-        </div>
         {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
       </section>
+          {accountPanel}
+          {notice}
+        </div>}
+      </dialog>
+      {(running || thread.state !== 'idle' || phase !== 'connected') && <div className="composer-status" role="status">
+        {phase !== 'connected' ? '连接中断，等待恢复' : running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
+          thread.state === 'waiting_approval' ? '等待审批' : thread.state === 'waiting_input' ? '等待输入' :
+          thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
+      </div>}
+      {!settingsOpen && notice}
       <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>

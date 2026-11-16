@@ -43,7 +43,10 @@ describe('GitDiffPanel visibility', () => {
     })).toBe(false);
     expect(shouldShowGitDiff({
       threadId: 'thread', cwd: '/repo', repositoryRoot: '/repo', diff: '', files: 0, additions: 0, deletions: 0, truncated: false, generatedAt: 1,
-    })).toBe(true);
+    })).toBe(false);
+    const changed = { threadId: 'thread', cwd: '/repo', repositoryRoot: '/repo', diff: '', files: 1, additions: 0, deletions: 0, truncated: false, generatedAt: 1 };
+    expect(shouldShowGitDiff(changed)).toBe(true);
+    expect(shouldShowGitDiff({ ...changed, files: 0, error: 'timeout' })).toBe(true);
   });
 });
 

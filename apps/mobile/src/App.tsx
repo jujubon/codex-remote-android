@@ -111,7 +111,9 @@ export function App() {
     if (!Capacitor.isNativePlatform()) return;
     let listener: { remove: () => Promise<void> } | null = null;
     void CapacitorApp.addListener('backButton', () => {
-      if (showNewThread) setShowNewThread(false);
+      const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+      if (dialog) dialog.close();
+      else if (showNewThread) setShowNewThread(false);
       else if (showSettings) setShowSettings(false);
       else if (remote.selectedThreadId) navigateBack();
       else void CapacitorApp.exitApp();
@@ -168,11 +170,26 @@ export function App() {
     );
   }
 
+  const notice = <>
+      {!remote.lastError && !backgroundError && remote.queueReceipt && (
+        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" onClick={remote.dismissReceipt}>×</button></div>
+      )}
+      {(remote.lastError || backgroundError) && (
+        <div className="error-toast" role="alert">
+          <span>{remote.lastError || backgroundError}</span>
+          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} aria-label="关闭错误提示">×</button>
+        </div>
+      )}
+  </>;
+  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />;
+
   return (
     <>
       {remote.selectedThread ? (
         <ConversationScreen
           key={remote.selectedThread.id}
+          accountPanel={accountPanel}
+          notice={notice}
           thread={remote.selectedThread}
           messages={remote.selectedMessages}
           subagents={remote.selectedSubagents}
@@ -222,7 +239,7 @@ export function App() {
           phaseDetail={remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? 'Bridge 已连接，但 Codex app-server 尚未就绪' : '')}
           onSelect={openRootThread}
           onCreate={cwd => { setNewDirectory(cwd); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
-          footer={<AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />}
+          footer={accountPanel}
           onSettings={() => setShowSettings(true)}
           onReconnect={remote.reconnect}
         />
@@ -236,15 +253,7 @@ export function App() {
           models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
       )}
 
-      {!remote.lastError && !backgroundError && remote.queueReceipt && (
-        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" onClick={remote.dismissReceipt}>×</button></div>
-      )}
-      {(remote.lastError || backgroundError) && (
-        <div className="error-toast" role="alert">
-          <span>{remote.lastError || backgroundError}</span>
-          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} aria-label="关闭错误提示">×</button>
-        </div>
-      )}
+      {!remote.selectedThread && notice}
     </>
   );
 }

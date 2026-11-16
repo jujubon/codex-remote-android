@@ -45,11 +45,12 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
       <section className="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="new-thread-title" onClick={(event) => event.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-title-row">
-          <h2 id="new-thread-title">新建任务</h2>
+          <h2 id="new-thread-title">新聊天</h2>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
-          {projectMenus && <label><span>聊天位置</span><select value={mode} onChange={event => {
+          {desktopOnly && <label><span>首条消息</span><textarea required placeholder="给 Codex 发消息…" rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
+          {projectMenus && <label><span>项目（可选）</span><select value={mode} onChange={event => {
             setMode(event.target.value as typeof mode); setError('');
           }}>
             <option value="projectless">直接新聊天（无项目）</option>
@@ -70,7 +71,6 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
             <input value={projectName} onChange={event => setProjectName(event.target.value)} maxLength={100} required />
             <small>保存到电脑个人文件夹的 CodexProjects 目录下。</small>
           </label>}
-          {desktopOnly && <label><span>首条任务</span><textarea required rows={4} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
           {!desktopOnly && <button className="advanced-toggle" type="button" onClick={() => setShowAdvanced((value) => !value)}>
             <span>模型高级设置</span>{showAdvanced ? <ChevronUpIcon /> : <ChevronDownIcon />}
           </button>}
@@ -89,7 +89,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
           {error && <div className="form-error">{error}</div>}
           <div className="sheet-actions">
             <button className="secondary-button" type="button" onClick={onClose}>取消</button>
-            <button className="primary-button" type="submit">创建任务</button>
+            <button className="primary-button" type="submit">开始聊天</button>
           </div>
         </form>
       </section>

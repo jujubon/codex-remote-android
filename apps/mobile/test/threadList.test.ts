@@ -59,17 +59,18 @@ describe('ThreadList project grouping', () => {
       thread('a-old', '/work/a', 10),
       thread('b-new', '/work/b', 30),
       thread('a-new', '/work/a', 20),
-      thread('without-cwd', '', 5),
+      thread('without-cwd', '', 50),
+      { ...thread('desktop-projectless', '/work/b', 60), projectless: true },
     ]);
 
     expect(groups).toHaveLength(3);
     expect(groups.map((group) => [group.cwd, group.items.length])).toEqual([
       ['/work/b', 1],
       ['/work/a', 2],
-      ['未指定目录', 1],
+      ['无项目对话', 2],
     ]);
     expect(groups[1]?.items.map((item) => item.id)).toEqual(['a-new', 'a-old']);
-    expect(groups.reduce((total, group) => total + group.items.length, 0)).toBe(4);
+    expect(groups.reduce((total, group) => total + group.items.length, 0)).toBe(5);
   });
 });
 

@@ -16,6 +16,7 @@ export interface AccountUsage {
 }
 
 export interface ThreadSummary {
+  projectless?: boolean;
   id: string;
   name: string | null;
   preview: string;

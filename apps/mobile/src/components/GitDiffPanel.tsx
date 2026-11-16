@@ -8,7 +8,7 @@ interface GitDiffPanelProps {
 }
 
 export function shouldShowGitDiff(snapshot: GitDiffSnapshot | null): boolean {
-  return Boolean(snapshot?.repositoryRoot);
+  return Boolean(snapshot?.repositoryRoot && (snapshot.files > 0 || snapshot.error || snapshot.truncated));
 }
 
 export function GitDiffPanel({ snapshot, onRefresh }: GitDiffPanelProps) {

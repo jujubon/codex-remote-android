@@ -766,3 +766,31 @@ html { -webkit-text-size-adjust: 100%; }
     contain-intrinsic-block-size: auto 132px;
   }
 }
+
+/* Project navigation and the compact conversation header. */
+.app-identity .home-title { display: flex; align-items: center; gap: 6px; }
+.home-title .status-copy { display: none; }
+.thread-browser nav button:last-child { flex: 0 0 36px; }
+.project-menu-actions, .thread-state-help { padding: 5px 14px; font-size: 12px; color: var(--muted); }
+.project-menu-actions button { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; min-height: 38px; }
+.hidden-projects { padding: 8px; }
+.thread-state-help summary { cursor: pointer; }
+.session-summary { display: flex; align-items: center; gap: 7px; max-width: 100%; min-height: 26px; width: fit-content; padding: 0; background: transparent; border: 0; font-size: 11px; color: var(--muted); }
+.session-summary span, .session-summary b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-summary b { color: var(--ink); font-weight: 550; }
+.session-summary svg { width: 14px; height: 14px; flex: none; color: #916121; }
+.session-dialog { position: fixed; inset: auto 0 0; margin: 0 auto; padding: 0; width: min(100%, 720px); max-width: 100%; max-height: 85dvh; overflow: auto; border: 1px solid var(--line); border-radius: 16px 16px 0 0; background: var(--surface); }
+.session-dialog::backdrop { background: rgb(22 24 21 / 34%); }
+.session-sheet { padding: 16px max(16px, var(--app-safe-right)) max(16px, var(--app-safe-bottom)) max(16px, var(--app-safe-left)); }
+.session-sheet .session-toolbar { background: transparent; padding: 12px 0; border: 0; grid-template-columns: 1fr; }
+.session-sheet .session-toolbar label { padding-inline: 12px; }
+.session-sheet .session-toolbar select { min-height: 42px; font-size: 14px; }
+.session-sheet .session-toolbar label > span { font-size: 12px; }
+.session-sheet .account-usage { padding: 8px 0; max-height: none; }
+.composer-status { padding: 4px 16px; font-size: 11px; color: var(--muted); }
+.conversation-screen .error-toast { position: static; flex: none; }
+.code-block { margin-block: 10px; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #f2f2ef; }
+.code-tools { display: flex; justify-content: space-between; align-items: center; padding: 0 8px; font: 11px monospace; color: var(--muted); }
+.code-tools button { min-height: 32px; padding-inline: 9px; border: 0; background: transparent; color: var(--ink); }
+.code-block .markdown-code { margin: 0; border: 0; border-radius: 0; overflow-x: auto; }
+.code-block .markdown-code, .code-block .markdown-code code { white-space: pre; word-break: normal; overflow-wrap: normal; }

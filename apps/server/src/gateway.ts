@@ -2,7 +2,8 @@ import type { IncomingMessage } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { desktopAction } from "./windows-desktop.js";
-import { isAbsolute } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -390,7 +391,7 @@ export class MobileGateway {
     this.broadcast({
       type: "threads.snapshot",
       version: this.threadIndex.currentVersion,
-      threads: this.threadIndex.snapshot(),
+      threads: this.withMembership(this.threadIndex.snapshot()),
     });
   }
 
@@ -628,6 +629,7 @@ export class MobileGateway {
             const created = await desktopAction({ action: "create", threadId: source.id, cwd, prompt, destination: message.destination, projectName: message.projectName });
             if (!created.thread_id) throw new Error("桌面未返回新对话编号，请刷新列表核对。");
             this.threadIndexLoadedAt = 0;
+            if (message.destination === "projectless") this.projectlessIds.add(created.thread_id);
             await this.openThreadPage(socket, created.thread_id, message.requestId);
             break;
           }
@@ -1213,6 +1215,23 @@ export class MobileGateway {
     }
   }
 
+  private projectlessIds = new Set<string>();
+
+  private withMembership(threads: ThreadSummary[]): ThreadSummary[] {
+    return threads.map(thread => this.projectlessIds.has(thread.id) ? { ...thread, projectless: true } : thread);
+  }
+
+  private async refreshProjectMembership(): Promise<void> {
+    if (!this.config.desktopOnly) return;
+    try {
+      const state = JSON.parse(await readFile(join(this.config.codexHome, ".codex-global-state.json"), "utf8"));
+      const ids = state["projectless-thread-ids"];
+      if (Array.isArray(ids)) this.projectlessIds = new Set(ids.filter((id): id is string => typeof id === "string"));
+    } catch {
+      // Desktop may be replacing this file. Keep the last successful snapshot.
+    }
+  }
+
   private async ensureThreadIndex(): Promise<void> {
     if (this.threadIndex.isInitialized) {
       const ttl = this.threadIndex.snapshot().length === 0
@@ -1246,6 +1265,7 @@ export class MobileGateway {
         const summary = toThreadSummary(desktopThread);
         if (summary.id) byId.set(summary.id, summary);
       }
+      await this.refreshProjectMembership();
       this.threadIndex.replace([...byId.values()].map((thread) => ({
         ...thread,
         status: this.mergedThreadStatus(thread.id, thread.status),
@@ -1270,7 +1290,7 @@ export class MobileGateway {
           requestId,
           baseVersion: knownVersion,
           version: delta.version,
-          upserts: delta.upserts,
+          upserts: this.withMembership(delta.upserts),
           removedIds: delta.removedIds,
         });
         return;
@@ -1280,7 +1300,7 @@ export class MobileGateway {
       type: "threads.snapshot",
       requestId,
       version: this.threadIndex.currentVersion,
-      threads: this.threadIndex.snapshot(),
+      threads: this.withMembership(this.threadIndex.snapshot()),
     });
   }
 
@@ -1294,7 +1314,7 @@ export class MobileGateway {
     this.send(socket, {
       type: "threads",
       requestId,
-      threads: this.threadIndex.snapshot().slice(0, limit),
+      threads: this.withMembership(this.threadIndex.snapshot().slice(0, limit)),
       nextCursor: null,
     });
   }
@@ -1308,7 +1328,7 @@ export class MobileGateway {
       type: "threads.delta",
       baseVersion: change.version - 1,
       version: change.version,
-      upserts: change.upserts,
+      upserts: this.withMembership(change.upserts),
       removedIds: change.removedIds,
     });
   }
@@ -1335,7 +1355,7 @@ export class MobileGateway {
     else if (method === "turn/completed") patch.status = this.mergedThreadStatus(threadId, { type: "idle" });
     else return;
     const change = this.threadIndex.patch(threadId, patch);
-    if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version, upserts: change.upserts, removedIds: [] });
+    if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version, upserts: this.withMembership(change.upserts), removedIds: [] });
   }
 
   private async openThreadPage(

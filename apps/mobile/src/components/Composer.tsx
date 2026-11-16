@@ -112,7 +112,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
     : !connected ? '等待重新连接…'
       : deliveryMode === 'queue' ? '输入下一轮任务；当前执行不会被打断…'
         : deliveryMode === 'steer' ? '补充要求，引导当前执行…'
-          : '向 Codex 下达任务；输入 / 查看命令…';
+          : '给 Codex 发消息…';
   const sendLabel = deliveryMode === 'queue' ? '排队' : deliveryMode === 'steer' ? '引导' : '发送';
 
   return (
