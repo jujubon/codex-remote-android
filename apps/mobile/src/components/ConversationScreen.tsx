@@ -178,17 +178,18 @@ function nearBottom(element: HTMLElement): boolean {
 
 export type ConversationEntry =
   | { type: 'message'; message: RemoteMessage; agentTargets: AgentTarget[] }
-  | { type: 'tool-group'; id: string; messages: RemoteMessage[]; agentTargets: AgentTarget[]; agentTargetsByMessage: Record<string, AgentTarget[]> };
+  | { type: 'tool-group' | 'process'; id: string; messages: RemoteMessage[]; agentTargets: AgentTarget[]; agentTargetsByMessage: Record<string, AgentTarget[]> };
 
-export function groupConsecutiveToolMessages(messages: RemoteMessage[]): ConversationEntry[] {
+export function groupConversationMessages(messages: RemoteMessage[]): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
   let pending: RemoteMessage[] = [];
   const messageEntry = (message: RemoteMessage): ConversationEntry => ({
     type: 'message', message, agentTargets: subagentsFromMessage(message),
   });
   const flush = () => {
-    if (pending.length === 1) entries.push(messageEntry(pending[0]!));
-    else if (pending.length > 1) {
+    const process = !!pending[0]?.turnId;
+    if (!process && pending.length === 1) entries.push(messageEntry(pending[0]!));
+    else if (pending.length) {
       const targetsByMessage: Record<string, AgentTarget[]> = {};
       const targets = new Map<string, AgentTarget>();
       for (const message of pending) {
@@ -197,7 +198,7 @@ export function groupConsecutiveToolMessages(messages: RemoteMessage[]): Convers
         for (const target of messageTargets) mergeAgentTarget(targets, target);
       }
       entries.push({
-        type: 'tool-group', id: `tools:${pending[0]!.id}`, messages: pending,
+        type: process ? 'process' : 'tool-group', id: `${process ? 'process' : 'tools'}:${pending[0]!.id}`, messages: pending,
         agentTargets: targets.size > 0 ? [...targets.values()] : EMPTY_AGENT_TARGETS,
         agentTargetsByMessage: targetsByMessage,
       });
@@ -205,11 +206,22 @@ export function groupConsecutiveToolMessages(messages: RemoteMessage[]): Convers
     pending = [];
   };
   for (const message of messages) {
-    if (message.role === 'tool' && message.status !== 'failed') pending.push(message);
+    if (pending.length && pending[0]!.turnId !== message.turnId) flush();
+    const isProcess = message.role === 'tool' || (message.role === 'assistant' && message.assistantPhase === 'commentary' && !!message.turnId);
+    if (isProcess && message.status !== 'failed') pending.push(message);
     else { flush(); entries.push(messageEntry(message)); }
   }
   flush();
   return entries;
+}
+
+export function processLabel(messages: RemoteMessage[], currentTurnId?: string): string {
+  if (currentTurnId && messages[0]?.turnId === currentTurnId) return '执行中';
+  const duration = messages.find(message => message.turnDurationMs != null)?.turnDurationMs;
+  if (duration == null) return '执行过程';
+  const seconds = Math.floor(duration / 1000);
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `用时 ${minutes} 分钟 ${seconds % 60} 秒` : `用时 ${seconds} 秒`;
 }
 
 function isOpaqueAgentLabel(label: string, id: string): boolean {
@@ -348,7 +360,7 @@ export function ConversationScreen({ onArchive, accountPanel, notice, thread, me
   }, [messages, compaction, thread.id]);
   const reasoning = useMemo(() => latestReasoning(messages, currentTurnId), [currentTurnId, messages]);
   const conversationEntries = useMemo(
-    () => resolveConversationEntryAgentNames(groupConsecutiveToolMessages(visibleMessages), threadSubagents),
+    () => resolveConversationEntryAgentNames(groupConversationMessages(visibleMessages), threadSubagents),
     [threadSubagents, visibleMessages],
   );
   const historyEntryGrowth = historyAnchorRef.current
@@ -607,7 +619,7 @@ export function ConversationScreen({ onArchive, accountPanel, notice, thread, me
               <MessageBubble key={entry.message.id} message={entry.message} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} />
             ) : (
               <details
-                className={`tool-call-group${entry.messages.some((message) => message.status === 'streaming') ? ' is-streaming' : ''}`}
+                className={`tool-call-group${entry.type === 'process' ? ' turn-process' : ''}${entry.messages.some((message) => message.status === 'streaming') ? ' is-streaming' : ''}`}
                 key={entry.id}
                 open={expandedToolGroupIds.has(entry.id)}
                 onToggle={(event) => {
@@ -624,11 +636,13 @@ export function ConversationScreen({ onArchive, accountPanel, notice, thread, me
               >
                 <summary>
                   <span className="tool-group-disclosure" aria-hidden="true">›</span>
-                  <strong>工具调用 · {entry.messages.length}</strong>
-                  <small>{entry.messages.map((message) => message.toolName || '工具').slice(0, 3).join('、')}{entry.messages.length > 3 ? '…' : ''}</small>
-                  <span className="tool-group-summary-actions">
-                    <span className="tool-group-action">展开</span>
-                  </span>
+                  {entry.type === 'process' ? <span className="process-label">{processLabel(entry.messages, currentTurnId)}</span> : <>
+                    <strong>工具调用 · {entry.messages.length}</strong>
+                    <small>{entry.messages.map((message) => message.toolName || '工具').slice(0, 3).join('、')}{entry.messages.length > 3 ? '…' : ''}</small>
+                    <span className="tool-group-summary-actions">
+                      <span className="tool-group-action">展开</span>
+                    </span>
+                  </>}
                 </summary>
                 {expandedToolGroupIds.has(entry.id) && (
                   <div className="tool-call-group-items">

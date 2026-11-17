@@ -416,7 +416,8 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
     collapsible = role === 'tool';
   }
 
-  if (!content && attachments.length === 0) return null;
+  const assistantPhase = role === 'assistant' && (item.phase === 'commentary' || item.phase === 'final_answer') ? item.phase : undefined;
+  if (!content && attachments.length === 0 && !(assistantPhase && turnInProgress)) return null;
   if (!content && attachments.length > 0) content = attachments.every((attachment) => attachment.type === 'image')
     ? `发送了 ${attachments.length} 张图片`
     : `发送了 ${attachments.length} 个附件`;
@@ -428,6 +429,7 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
     turnId,
     role,
     content,
+    ...(assistantPhase ? { assistantPhase } : {}),
     ...(attachments.length ? { attachments } : {}),
     createdAt: itemCreatedAt ?? fallbackCreatedAt,
     timestampSource: itemCreatedAt != null ? 'item' : 'turn',
@@ -488,6 +490,8 @@ function withoutProjectedMessageAliases(
 
 function preserveFresherLiveMessage(current: RemoteMessage | undefined, incoming: RemoteMessage): RemoteMessage {
   if (!current) return incoming;
+  if (current.assistantPhase && !incoming.assistantPhase) incoming = { ...incoming, assistantPhase: current.assistantPhase };
+  if (current.turnDurationMs != null && incoming.turnDurationMs == null) incoming = { ...incoming, turnDurationMs: current.turnDurationMs };
   const preserveObservedTimestamp = current.timestampSource != null && current.timestampSource !== 'turn' && incoming.timestampSource === 'turn';
   const incomingType = incoming.itemType?.toLowerCase() ?? '';
   // Reasoning summaries are replaceable activity labels, not append-only answer text.
@@ -568,6 +572,8 @@ function sameRemoteMessage(left: RemoteMessage, right: RemoteMessage): boolean {
     && left.createdAt === right.createdAt
     && left.completedAt === right.completedAt
     && left.durationMs === right.durationMs
+    && left.turnDurationMs === right.turnDurationMs
+    && left.assistantPhase === right.assistantPhase
     && left.status === right.status
     && left.toolName === right.toolName
     && left.itemType === right.itemType
@@ -897,6 +903,18 @@ function permissionModeFromThread(data: UnknownRecord): PermissionMode {
   return 'auto';
 }
 
+function reportedTurnDuration(turn?: UnknownRecord | null): number | undefined {
+  if (!turn) return undefined;
+  const desktopStart = parsedTimestamp(turn.turnStartedAtMs ?? turn.startedAt);
+  const finalStart = parsedTimestamp(turn.finalAssistantStartedAtMs);
+  if (!isActiveTurnStatus(String(turn.status ?? '').toLowerCase()) && desktopStart != null && finalStart != null && finalStart >= desktopStart) return finalStart - desktopStart;
+  if (typeof turn.durationMs === 'number' && Number.isFinite(turn.durationMs) && turn.durationMs >= 0) return turn.durationMs;
+  const start = parsedTimestamp(turn.startedAt ?? turn.turnStartedAtMs ?? turn.startedAtMs);
+  const end = parsedTimestamp(turn.completedAt ?? turn.turnCompletedAtMs ?? turn.completedAtMs);
+  if (start != null && end != null && start > 0 && end >= start) return end - start;
+  return undefined;
+}
+
 export function normalizeThreadPayload(payload: unknown): {
   thread: RemoteThread | null;
   messages: RemoteMessage[];
@@ -923,10 +941,14 @@ export function normalizeThreadPayload(payload: unknown): {
       const itemOwner = explicitThreadOwner(item);
       return !itemOwner || itemOwner === id;
     });
+    const turnDurationMs = reportedTurnDuration(turn);
     const items = canonicalProjectedItems(ownedItems);
     items.forEach((item, itemIndex) => {
       const message = itemToMessage(item, id, turnId, itemIndex, timestamp(turn.startedAt ?? turn.turnStartedAtMs ?? turn.startedAtMs, 0), isActiveTurnStatus(turnStatus));
-      if (message) messages.push(message);
+      if (message) {
+        if (turnDurationMs != null) message.turnDurationMs = turnDurationMs;
+        messages.push(message);
+      }
     });
   });
 
@@ -1607,7 +1629,7 @@ export function useRemote(config: RemoteConfig | null) {
           delete next[threadId];
           return next;
         });
-        const durationMs = typeof turn?.durationMs === 'number' ? turn.durationMs : undefined;
+        const durationMs = reportedTurnDuration(turn);
         const completedThreadState: ThreadState = failed ? 'error' : 'idle';
         setThreads((current) => {
           const updated = current.map((thread) => thread.id === threadId ? {
@@ -1621,11 +1643,14 @@ export function useRemote(config: RemoteConfig | null) {
           return updated;
         });
         setMessagesByThread((current) => {
-          const completed = messagesForThread(threadId, current[threadId] ?? []).map((message) =>
-            message.status === 'streaming'
+          const completed = messagesForThread(threadId, current[threadId] ?? []).map((message) => {
+            if (turnId && message.turnId && message.turnId !== turnId) return message;
+            const finished = message.status === 'streaming'
               ? { ...message, status: failed ? ('failed' as const) : ('complete' as const), completedAt: Date.now() }
-              : message,
-          );
+              : message;
+            return durationMs != null && turnId && message.turnId === turnId
+              ? { ...finished, turnDurationMs: durationMs } : finished;
+          });
           if (failed && errorText) {
             completed.push({
               id: `${turnId ?? 'turn'}_error`,
@@ -1788,7 +1813,7 @@ export function useRemote(config: RemoteConfig | null) {
           }
           return;
         }
-        const normalized = itemToMessage(item, threadId, turnId ?? 'turn', 0);
+        const normalized = itemToMessage(item, threadId, turnId ?? 'turn', 0, Date.now(), method === 'item/started');
         const timingKey = `${threadId}:${turnId ?? 'turn'}:${itemId}`;
         if (method === 'item/started') {
           itemStartedAtRef.current[timingKey] = typeof params?.startedAtMs === 'number' ? params.startedAtMs : Date.now();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { agentStatePresentation, conversationEntryWindow, DEFAULT_RENDERED_ENTRY_LIMIT, groupConsecutiveToolMessages, resolveConversationEntryAgentNames, subagentsFromMessages, visibleConversationContentKey } from '../src/components/ConversationScreen';
+import { agentStatePresentation, conversationEntryWindow, DEFAULT_RENDERED_ENTRY_LIMIT, groupConversationMessages, processLabel, resolveConversationEntryAgentNames, subagentsFromMessages, visibleConversationContentKey } from '../src/components/ConversationScreen';
+import { normalizeThreadPayload } from '../src/hooks/useRemote';
 import { latestReasoning } from '../src/components/ConversationContextPanel';
 import type { RemoteMessage, RemoteThread } from '../src/types/protocol';
 
@@ -98,7 +99,7 @@ describe('Subagent presentation', () => {
 
   it('resolves opaque ids to live agent nicknames and hides unresolved identifiers', () => {
     const cached = collab({ receiverThreadIds: ['019f99bb-d520-7431-83cc-6636fdcf61b3'] });
-    const rawEntries = groupConsecutiveToolMessages([cached]);
+    const rawEntries = groupConversationMessages([cached]);
     const thread: RemoteThread = {
       id: '019f99bb-d520-7431-83cc-6636fdcf61b3', title: 'Audit worker', preview: '', updatedAt: 1,
       state: 'running', unread: 0, cwd: '/tmp', modelProvider: '', parentThreadId: 'parent',
@@ -122,7 +123,7 @@ describe('Consecutive tool grouping', () => {
   const message = (id: string, role: RemoteMessage['role']): RemoteMessage => ({ id, threadId: 'thread', role, content: id, createdAt: 1, status: 'complete' });
 
   it('folds only adjacent tools and keeps user/assistant boundaries', () => {
-    const entries = groupConsecutiveToolMessages([
+    const entries = groupConversationMessages([
       message('user', 'user'),
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
@@ -143,7 +144,7 @@ describe('Consecutive tool grouping', () => {
       receiverThreadIds: ['child-thread'],
       agentsStates: { 'child-thread': { nickname: 'Worker', status: 'running' } },
     };
-    const entries = groupConsecutiveToolMessages([message('tool-1', 'tool'), agent, message('tool-2', 'tool')]);
+    const entries = groupConversationMessages([message('tool-1', 'tool'), agent, message('tool-2', 'tool')]);
     expect(entries.map((entry) => entry.type === 'message' ? entry.message.id : entry.messages.map((item) => item.id)))
       .toEqual([['tool-1', 'agent', 'tool-2']]);
     expect(entries[0]?.type === 'tool-group' ? entries[0].agentTargets : []).toEqual([
@@ -156,11 +157,11 @@ describe('Consecutive tool grouping', () => {
   });
 
   it('keeps a stable group identity while later tool calls join the same run', () => {
-    const first = groupConsecutiveToolMessages([
+    const first = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
     ])[0];
-    const later = groupConsecutiveToolMessages([
+    const later = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
       message('tool-3', 'tool'),
@@ -172,11 +173,11 @@ describe('Consecutive tool grouping', () => {
   });
 
   it('does not report hidden updates inside a closed tool group as visible new content', () => {
-    const before = groupConsecutiveToolMessages([
+    const before = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
     ]);
-    const after = groupConsecutiveToolMessages([
+    const after = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
       message('tool-3', 'tool'),
@@ -186,11 +187,11 @@ describe('Consecutive tool grouping', () => {
   });
 
   it('does report updates that are visible inside an expanded tool group', () => {
-    const before = groupConsecutiveToolMessages([
+    const before = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
     ]);
-    const after = groupConsecutiveToolMessages([
+    const after = groupConversationMessages([
       message('tool-1', 'tool'),
       message('tool-2', 'tool'),
       message('tool-3', 'tool'),
@@ -200,6 +201,38 @@ describe('Consecutive tool grouping', () => {
       .not.toBe(visibleConversationContentKey(after, expanded, []));
   });
 
+});
+
+describe('turn process disclosure', () => {
+  const items = [
+    { type: 'userMessage', id: 'user', content: [{ type: 'text', text: '请继续' }] },
+    { type: 'agentMessage', id: 'progress', phase: 'commentary', text: '我继续核对安装包' },
+    { type: 'commandExecution', id: 'tool', command: 'build' },
+    { type: 'agentMessage', id: 'answer', phase: 'final_answer', text: '已发布' },
+  ];
+  const snapshot = (turn: Record<string, unknown> = {}) => normalizeThreadPayload({
+    id: 'thread', turns: [{ id: 'turn', status: 'completed', items, ...turn }],
+  }).messages;
+  const layout = (messages: RemoteMessage[]) => groupConversationMessages(messages).map(entry =>
+    entry.type === 'message' ? entry.message.id : entry.messages.map(item => item.id));
+
+  it('folds commentary with its tools, retaining the same layout after caching without raw detail', () => {
+    const messages = snapshot({ turnStartedAtMs: 1_700_000_000_000, finalAssistantStartedAtMs: 1_700_000_285_000, durationMs: 303_104 });
+    expect(layout(messages.map(({ detail, ...message }) => message))).toEqual(['user', ['progress', 'tool'], 'answer']);
+    expect(processLabel(messages)).toBe('用时 4 分钟 45 秒');
+    expect(processLabel(snapshot({ durationMs: 3_000 }))).toBe('用时 3 秒');
+    expect(processLabel(snapshot())).toBe('执行过程');
+    expect(processLabel(snapshot(), 'turn')).toBe('执行中');
+  });
+
+  it('leaves unmarked answers, user follow-ups and failed tools visible and separates turns', () => {
+    const [, progress, tool, answer] = snapshot();
+    const legacy = { ...answer!, id: 'legacy', assistantPhase: undefined };
+    const failed = { ...tool!, id: 'error', status: 'failed' as const };
+    const followup = { ...snapshot()[0]!, id: 'followup' };
+    expect(layout([progress!, legacy, tool!, followup, progress!, failed, tool!, { ...progress!, turnId: 'another' }, answer!]))
+      .toEqual([['progress'], 'legacy', ['tool'], 'followup', ['progress'], 'error', ['tool'], ['progress'], 'answer']);
+  });
 });
 
 describe('Transient reasoning selection', () => {
@@ -227,7 +260,7 @@ function performanceMessage(id: string, role: RemoteMessage['role']): RemoteMess
 
 describe('Long conversation performance guards', () => {
   it('mounts only the configured tail window while retaining an explicit older-entry count', () => {
-    const entries = groupConsecutiveToolMessages(Array.from({ length: 1_000 }, (_, index) => (
+    const entries = groupConversationMessages(Array.from({ length: 1_000 }, (_, index) => (
       performanceMessage(`message-${index}`, index % 2 === 0 ? 'user' : 'assistant')
     )));
     const window = conversationEntryWindow(entries, DEFAULT_RENDERED_ENTRY_LIMIT);
@@ -238,10 +271,10 @@ describe('Long conversation performance guards', () => {
   });
 
   it('keeps a frozen reading window bounded while new tail entries accumulate', () => {
-    const initial = groupConsecutiveToolMessages(Array.from({ length: 80 }, (_, index) => (
+    const initial = groupConversationMessages(Array.from({ length: 80 }, (_, index) => (
       performanceMessage(`frozen-${index}`, index % 2 === 0 ? 'user' : 'assistant')
     )));
-    const appended = groupConsecutiveToolMessages([
+    const appended = groupConversationMessages([
       ...Array.from({ length: 80 }, (_, index) => performanceMessage(`frozen-${index}`, index % 2 === 0 ? 'user' : 'assistant')),
       ...Array.from({ length: 500 }, (_, index) => performanceMessage(`new-${index}`, index % 2 === 0 ? 'user' : 'assistant')),
     ]);
@@ -254,8 +287,8 @@ describe('Long conversation performance guards', () => {
   it('detects a non-tail visible message replacement without scanning hidden history', () => {
     const first = performanceMessage('visible-first', 'assistant');
     const last = performanceMessage('visible-last', 'assistant');
-    const before = groupConsecutiveToolMessages([first, last]);
-    const after = groupConsecutiveToolMessages([{ ...first, content: 'same length!!!' }, last]);
+    const before = groupConversationMessages([first, last]);
+    const after = groupConversationMessages([{ ...first, content: 'same length!!!' }, last]);
     expect(visibleConversationContentKey(after, new Set(), []))
       .not.toBe(visibleConversationContentKey(before, new Set(), []));
   });
@@ -267,8 +300,8 @@ describe('Long conversation performance guards', () => {
       receiverThreadIds: ['child-stable'],
       agentsStates: { 'child-stable': { nickname: 'Stable', status: 'running' } },
     };
-    const first = groupConsecutiveToolMessages([agent])[0];
-    const second = groupConsecutiveToolMessages([agent])[0];
+    const first = groupConversationMessages([agent])[0];
+    const second = groupConversationMessages([agent])[0];
     expect(first?.type).toBe('message');
     expect(second?.type).toBe('message');
     if (first?.type === 'message' && second?.type === 'message') {
@@ -283,7 +316,7 @@ describe('Long conversation performance guards', () => {
       return item;
     });
     const startedAt = performance.now();
-    const entries = groupConsecutiveToolMessages(history);
+    const entries = groupConversationMessages(history);
     const elapsedMs = performance.now() - startedAt;
     expect(entries.length).toBeGreaterThan(0);
     expect(elapsedMs).toBeLessThan(500);

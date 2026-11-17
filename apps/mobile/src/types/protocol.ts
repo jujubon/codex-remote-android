@@ -251,6 +251,8 @@ export interface RemoteMessage {
   timestampSource?: 'item' | 'live' | 'observed' | 'turn';
   completedAt?: number;
   durationMs?: number;
+  turnDurationMs?: number;
+  assistantPhase?: 'commentary' | 'final_answer';
   status: 'streaming' | 'complete' | 'failed';
   toolName?: string;
   itemType?: string;

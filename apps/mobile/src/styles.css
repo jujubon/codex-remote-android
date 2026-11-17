@@ -804,3 +804,10 @@ html { -webkit-text-size-adjust: 100%; }
 .archive-row > div { flex: 1; min-width: 0; }
 .archive-row strong, .archive-row small { display: block; overflow-wrap: anywhere; }
 .archive-row small { color: var(--muted); }
+
+.turn-process { border-bottom: 0; }
+.turn-process > summary { display: flex; width: fit-content; min-height: 44px; gap: 6px; padding: 6px 8px 6px 0; color: #63635d; font-size: 12px; }
+.turn-process .process-label { order: -1; }
+.turn-process .tool-call-group-items { margin-bottom: 8px; }
+.message-row.is-progress .message-bubble { color: #63635d; }
+.message-row.is-progress .markdown-content, .message-row.is-progress .markdown-content p { font-size: 12px; line-height: 1.55; }

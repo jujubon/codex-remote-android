@@ -133,7 +133,7 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
     && left.status === right.status && left.createdAt === right.createdAt
     && left.timestampSource === right.timestampSource
     && left.completedAt === right.completedAt && left.durationMs === right.durationMs
-    && left.itemType === right.itemType && left.toolName === right.toolName
+    && left.assistantPhase === right.assistantPhase && left.itemType === right.itemType && left.toolName === right.toolName
     && left.collapsible === right.collapsible && left.detail === right.detail
     && sameAttachments(left.attachments, right.attachments)
   );
@@ -156,7 +156,8 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
   const isSubagent = normalizedType.includes('subagent')
     || normalizedType.includes('collabagent')
     || normalizedName.includes('subagent');
-  const author = isUser ? '你' : isTool ? message.toolName || '工具' : message.role === 'system' ? message.toolName || '系统' : 'Codex';
+  const isProgress = message.role === 'assistant' && message.assistantPhase === 'commentary';
+  const author = isProgress ? '进度说明' : isUser ? '你' : isTool ? message.toolName || '工具' : message.role === 'system' ? message.toolName || '系统' : 'Codex';
   const duration = formatDuration(message.durationMs);
   const isDiff = message.toolName === '本轮 Diff' || /^diff --git /m.test(message.content);
   const inspectable = message.collapsible || isTool || isSubagent;
@@ -173,7 +174,7 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
   </>;
 
   return (
-    <article className={`message-row role-${message.role} ${isSubagent ? 'is-subagent' : ''} ${message.status === 'failed' ? 'is-failed' : ''}`}>
+    <article className={`message-row role-${message.role} ${isProgress ? 'is-progress' : ''} ${isSubagent ? 'is-subagent' : ''} ${message.status === 'failed' ? 'is-failed' : ''}`}>
       <div className="message-column">
         {inspectable ? (
           <details
