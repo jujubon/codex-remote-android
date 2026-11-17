@@ -123,6 +123,7 @@ export function toggleProjectCollapsePreference(
 }
 
 interface ThreadListProps {
+  onArchives?: () => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   footer: React.ReactNode;
   threads: RemoteThread[];
@@ -250,7 +251,7 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
+export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const [query, setQuery] = useState('');
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
@@ -319,6 +320,7 @@ export function ThreadList({ threads, phase, phaseDetail, onSelect, onCreate, on
           <button key={label} type="button" aria-pressed={label === filter} onClick={() => setFilter(label)}>{label}</button>
         )}<button type="button" aria-label="项目菜单" aria-expanded={projectMenu === 'manage'} onClick={() => setProjectMenu(projectMenu === 'manage' ? null : 'manage')}>⋯</button></nav>
         {projectMenu === 'manage' && <section className="hidden-projects">
+          {onArchives && <button type="button" className="secondary-button" onClick={onArchives}>已归档对话</button>}
           <label className="history-visibility">对话显示
             <select value={visibility} onChange={event => {
               const next = event.target.value as HistoryVisibility;

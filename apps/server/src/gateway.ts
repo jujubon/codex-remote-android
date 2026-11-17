@@ -89,6 +89,8 @@ export class MobileGateway {
   private readonly wss: WebSocketServer;
   private readonly approvals = new Map<number | string, RpcEnvelope>();
   private readonly desktopApprovalKeys = new Set<number | string>();
+  private readonly archivedIds = new Set<string>();
+  private readonly changingArchive = new Set<string>();
   private readonly turnDiffs = new Map<string, string>();
   private readonly desktopThreads = new Map<string, Record<string, unknown>>();
   private readonly threadCwds = new Map<string, string>();
@@ -243,7 +245,7 @@ export class MobileGateway {
     );
     desktopIpc?.on("snapshot", (thread: Record<string, unknown>) => {
       const id = typeof thread.id === "string" ? thread.id : null;
-      if (!id) return;
+      if (!id || this.archivedIds.has(id)) return;
       const wasDesktopActive = conversationIsActive(this.desktopThreads.get(id));
       this.desktopThreads.set(id, thread);
       if (!conversationIsActive(thread)) {
@@ -305,17 +307,11 @@ export class MobileGateway {
           ? params.threadId
           : null;
       if (!threadId) return;
-      const change = this.threadIndex.remove(threadId);
-      if (change)
-        this.broadcast({
-          type: "threads.delta",
-          baseVersion: change.version - 1,
-          version: change.version,
-          upserts: [],
-          removedIds: [threadId],
-        });
+      this.markArchived(threadId);
     });
-    desktopIpc?.on("threadUnarchived", () => {
+    desktopIpc?.on("threadUnarchived", (params: Record<string, unknown>) => {
+      const id = params.conversationId ?? params.threadId;
+      if (typeof id === "string") this.archivedIds.delete(id);
       void this.refreshThreadIndexBroadcast().catch((error) =>
         console.warn("[desktop-ipc] failed to refresh unarchived thread", error),
       );
@@ -337,7 +333,7 @@ export class MobileGateway {
         2_500,
         false,
       );
-      if (!thread || !this.desktopIpc.hasOwner(threadId)) return;
+      if (!thread || this.archivedIds.has(threadId) || !this.desktopIpc.hasOwner(threadId)) return;
       this.desktopThreads.set(threadId, thread);
       const liveThread = projectDesktopLiveThread(
         this.projectThreadRuntimeStatus(thread),
@@ -448,7 +444,8 @@ export class MobileGateway {
       type: "welcome",
       desktopOnly: this.config.desktopOnly,
       projectCreation: this.config.desktopOnly,
-      version: "0.6.0",
+      archiveManagement: true,
+      version: "0.8.0",
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
       syncVersion: this.syncJournal.version,
@@ -581,6 +578,42 @@ export class MobileGateway {
             requestId: message.requestId,
             skills: flattenSkills(result),
           });
+          break;
+        }
+        case "archive.list": {
+          const page = await this.bridge.request("thread/list", { archived: true, limit: 50,
+            cursor: message.cursor ?? null, sourceKinds: THREAD_SOURCE_KINDS, sortKey: "updated_at", sortDirection: "desc" }) as ThreadListResult;
+          this.send(socket, { type: "archive.result", requestId: message.requestId, threads: (page.data ?? []).map(toThreadSummary), nextCursor: page.nextCursor ?? null });
+          break;
+        }
+        case "archive.set": {
+          const id = requiredString(message.threadId, "threadId");
+          if (typeof message.archived !== "boolean") throw new Error("无效的归档操作。");
+          if (this.changingArchive.has(id)) throw new Error("电脑正在处理这段对话的归档操作。");
+          this.changingArchive.add(id);
+          try {
+            const current = message.archived
+              ? asRecord(asRecord(await this.bridge.request("thread/read", { threadId: id, includeTurns: false }))?.thread)
+              : null;
+            if (message.archived && current?.id !== id) throw new Error("电脑未确认目标对话，请刷新后再试。");
+            if (message.archived && (conversationIsActive(current) || this.isThreadActive(id) || (this.desktopQueuedFollowUps.get(id) ?? 0) > 0
+                || this.promptQueue?.list(id).some(item => ["queued", "sending", "paused", "uncertain"].includes(item.status))
+                || [...this.approvals.values()].some(request => request.params?.threadId === id))) {
+              throw new Error("请在任务和待处理操作结束后归档。");
+            }
+            const result = await this.bridge.request(message.archived ? "thread/archive" : "thread/unarchive", { threadId: id });
+            if (message.archived) this.markArchived(id);
+            else {
+              this.archivedIds.delete(id);
+              const thread = asRecord(asRecord(result)?.thread);
+              if (thread) this.upsertThreadSummary(toThreadSummary(thread));
+            }
+            this.threadIndexLoadedAt = 0;
+            this.desktopIpc?.announceArchiveState(id, message.archived);
+            this.send(socket, { type: "archive.result", requestId: message.requestId, threadId: id, archived: message.archived });
+          } finally {
+            this.changingArchive.delete(id);
+          }
           break;
         }
         case "thread.open": {
@@ -760,6 +793,8 @@ export class MobileGateway {
           break;
         }
         case "turn.start": {
+          if (this.changingArchive.has(message.threadId) || this.archivedIds.has(message.threadId))
+            throw new Error("对话已归档或正在更改归档状态，请刷新后再发送。");
           const threadId = requiredString(message.threadId, "threadId");
           const text = requiredString(message.text, "text");
           await this.ensureDesktopOwner(threadId);
@@ -1215,6 +1250,14 @@ export class MobileGateway {
     }
   }
 
+  private markArchived(threadId: string): void {
+    this.archivedIds.add(threadId);
+    for (const socket of this.wss.clients) this.socketThreads.get(socket)?.delete(threadId);
+    this.desktopThreads.delete(threadId);
+    const change = this.threadIndex.remove(threadId);
+    if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version, upserts: [], removedIds: [threadId] });
+  }
+
   private projectlessIds = new Set<string>();
 
   private withMembership(threads: ThreadSummary[]): ThreadSummary[] {
@@ -1266,7 +1309,7 @@ export class MobileGateway {
         if (summary.id) byId.set(summary.id, summary);
       }
       await this.refreshProjectMembership();
-      this.threadIndex.replace([...byId.values()].map((thread) => ({
+      this.threadIndex.replace([...byId.values()].filter(thread => !this.archivedIds.has(thread.id)).map((thread) => ({
         ...thread,
         status: this.mergedThreadStatus(thread.id, thread.status),
       })));
@@ -1320,7 +1363,7 @@ export class MobileGateway {
   }
 
   private upsertThreadSummary(summary: ThreadSummary): void {
-    if (!summary.id) return;
+    if (!summary.id || this.archivedIds.has(summary.id)) return;
     if (isAbsoluteHostPath(summary.cwd)) this.threadCwds.set(summary.id, summary.cwd);
     const change = this.threadIndex.upsert(summary);
     if (!change) return;
@@ -1343,7 +1386,16 @@ export class MobileGateway {
     }
     const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
     if (!threadId) return;
-    if (method === "thread/deleted" || method === "thread/archived") {
+    if (method === "thread/archived") {
+      this.markArchived(threadId);
+      return;
+    }
+    if (method === "thread/unarchived") {
+      this.archivedIds.delete(threadId);
+      this.threadIndexLoadedAt = 0;
+      return;
+    }
+    if (method === "thread/deleted") {
       const change = this.threadIndex.remove(threadId);
       if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version, upserts: [], removedIds: [threadId] });
       return;
@@ -1388,6 +1440,7 @@ export class MobileGateway {
     const metadata = threadMetadataFromPayload(metadataPayload, threadId);
     const liveTurns = desktopThread ? canonicalTurns(projectDesktopLiveThread(desktopThread)) : [];
     const turns = mergeTurns(page.turns, liveTurns);
+    if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
     const thread = { ...metadata, turns };
     await this.trustDesktopAttachments(thread);
     const summary = toThreadSummary(thread);

@@ -797,3 +797,10 @@ html { -webkit-text-size-adjust: 100%; }
 
 .history-visibility { display: grid; gap: 4px; margin-bottom: 10px; }
 .history-visibility select { min-height: 38px; width: 100%; }
+
+.archive-sheet { display: grid; gap: 12px; }
+.archive-sheet p { margin: 0; overflow-wrap: anywhere; }
+.archive-row { display: flex; align-items: center; gap: 10px; padding-block: 8px; border-bottom: 1px solid var(--line); }
+.archive-row > div { flex: 1; min-width: 0; }
+.archive-row strong, .archive-row small { display: block; overflow-wrap: anywhere; }
+.archive-row small { color: var(--muted); }

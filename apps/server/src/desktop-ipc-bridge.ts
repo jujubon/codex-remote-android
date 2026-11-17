@@ -879,6 +879,13 @@ export class DesktopIpcBridge extends EventEmitter {
   }
 
 
+  announceArchiveState(conversationId: string, archived: boolean): void {
+    if (!this.clientId || !this.ready) return;
+    const method = archived ? "thread-archived" : "thread-unarchived";
+    this.write({ type: "broadcast", method, sourceClientId: this.clientId, targetClientIds: null,
+      version: IPC_VERSION[method], params: { conversationId, hostId: "local" } });
+  }
+
   private requestFollowingStatus(): void {
     if (!this.clientId) return;
     this.write({

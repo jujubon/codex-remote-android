@@ -9,6 +9,8 @@ import { NotificationGenerationGuard, NotificationOperationQueue, settleGuardedN
 import { cacheScope, clearRemoteCache, loadRemoteCache, messagesForThread, saveRemoteCache, type CachedHistoryState, type RemoteCacheSnapshot } from '../lib/remoteCache';
 import type {
   AccountUsage,
+  ArchiveResult,
+  ArchiveRequest,
   ApprovalDecision,
   ApprovalRequest,
   CompactionStatus,
@@ -638,6 +640,20 @@ export interface PendingMessageDelta {
   createdAt: number;
 }
 
+function liveInsertIndex(items: RemoteMessage[], turnId?: string): number {
+  if (!turnId || items.at(-1)?.turnId === turnId) return items.length;
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (items[index]!.turnId === turnId) return index + 1;
+  }
+  return items.length;
+}
+
+function upsertLiveItem(items: RemoteMessage[], message: RemoteMessage): RemoteMessage[] {
+  if (items.some(item => item.id === message.id)) return upsertById(items, message);
+  const index = liveInsertIndex(items, message.turnId);
+  return [...items.slice(0, index), message, ...items.slice(index)];
+}
+
 export function applyPendingMessageDeltas(
   current: Record<string, RemoteMessage[]>,
   pending: PendingMessageDelta[],
@@ -667,8 +683,10 @@ export function applyPendingMessageDeltas(
           ...(delta.itemType ? { itemType: delta.itemType } : {}),
         };
       } else {
-        indexById.set(delta.itemId, items.length);
-        items.push({
+        const insertAt = liveInsertIndex(items, delta.turnId);
+        for (let i = insertAt; i < items.length; i++) indexById.set(items[i]!.id, i + 1);
+        indexById.set(delta.itemId, insertAt);
+        items.splice(insertAt, 0, {
           id: delta.itemId,
           threadId,
           turnId: delta.turnId,
@@ -694,19 +712,42 @@ function latestPlanMessage(messages: RemoteMessage[]): RemoteMessage | undefined
   });
 }
 
-function withoutOptimisticMatches(messages: RemoteMessage[], authoritative: RemoteMessage[]): RemoteMessage[] {
-  const canonicalUsers = authoritative.filter((message) => message.role === 'user' && !message.id.startsWith('local_'));
-  if (canonicalUsers.length === 0) return messages;
-  const normalizedContent = (message: RemoteMessage) => message.content.trim().replace(/\s+/g, ' ');
-  return messages.filter((message) => {
-    if (message.role !== 'user' || !message.id.startsWith('local_')) return true;
-    const normalized = normalizedContent(message);
-    if (!normalized) return true;
-    return !canonicalUsers.some((candidate) =>
-      normalizedContent(candidate) === normalized
-      && Math.abs(candidate.createdAt - message.createdAt) <= 5 * 60_000,
-    );
-  });
+function pendingUser(message: RemoteMessage): boolean {
+  return message.role === 'user' && message.id.startsWith('local_');
+}
+
+// Replace each local echo in its existing slot. A replay of an already known
+// user item is never evidence that a second, identical prompt was delivered.
+function matchPendingUsers(current: RemoteMessage[], incoming: RemoteMessage[], allowTextMatch = true): RemoteMessage[] {
+  if (!current.some(pendingUser)) return current;
+  const existingIds = new Set(current.map(message => message.id));
+  const result = [...current];
+  for (const canonical of incoming) {
+    if (canonical.role !== 'user' || pendingUser(canonical)) continue;
+    const keys = messageCorrelationIds(canonical);
+    const index = result.findIndex(local => {
+      if (!pendingUser(local)) return false;
+      const localKeys = messageCorrelationIds(local);
+      if (keys.length && localKeys.length) return localKeys.some(key => keys.includes(key));
+      if (!allowTextMatch || existingIds.has(canonical.id) || (local.turnId && canonical.turnId && local.turnId !== canonical.turnId)) return false;
+      const text = local.content.trim().replace(/\s+/g, ' ');
+      return Boolean(text) && text === canonical.content.trim().replace(/\s+/g, ' ')
+        && Math.abs(local.createdAt - canonical.createdAt) <= 300_000;
+    });
+    if (index >= 0) result[index] = canonical;
+  }
+  return result;
+}
+
+function insertHistoryBeforePending(current: RemoteMessage[], incoming: RemoteMessage[]): RemoteMessage[] {
+  const index = current.findIndex(pendingUser);
+  if (index < 0) return [...current, ...incoming];
+  // Disjoint history has no common item to anchor it. Compare turn starts to
+  // the local send only at this boundary, keeping wire order within each turn.
+  const pendingAt = current[index]!.createdAt;
+  const newer = incoming.findIndex(item => item.createdAt > pendingAt);
+  const split = newer < 0 ? incoming.length : newer;
+  return [...current.slice(0, index), ...incoming.slice(0, split), ...current.slice(index), ...incoming.slice(split)];
 }
 
 function knownTurnIds(messages: RemoteMessage[]): string[] {
@@ -735,9 +776,9 @@ export function reconcileMessages(
   const incomingCorrelations = new Set(authoritative.flatMap(messageCorrelationIds));
   const overlaps = (message: RemoteMessage) => incomingIds.has(message.id)
     || messageCorrelationIds(message).some((id) => incomingCorrelations.has(id));
-  const overlapIndexes = ownedCurrent.flatMap((message, index) => overlaps(message) ? [index] : []);
-  const withoutReplacedCanonical = ownedCurrent.filter((message) => !overlaps(message));
-  const preserved = withoutOptimisticMatches(withoutReplacedCanonical, authoritative);
+  const aligned = matchPendingUsers(ownedCurrent, authoritative, placement !== 'prepend');
+  const overlapIndexes = aligned.flatMap((message, index) => overlaps(message) ? [index] : []);
+  const preserved = aligned.filter(message => !overlaps(message));
 
   // The wire arrays are the canonical order. Timestamps are turn-level fallbacks and
   // may be identical for every item, so sorting ties by item id can invert user/assistant
@@ -745,9 +786,9 @@ export function reconcileMessages(
   // window in place, keeping previously loaded older history before it and local/newer
   // state after it.
   if (placement === 'prepend') return dedupeMessages([...authoritative, ...preserved]);
-  if (overlapIndexes.length === 0) return dedupeMessages([...preserved, ...authoritative]);
+  if (overlapIndexes.length === 0) return dedupeMessages(insertHistoryBeforePending(preserved, authoritative));
   const firstOverlap = Math.min(...overlapIndexes);
-  const beforeIds = new Set(ownedCurrent.slice(0, firstOverlap).map((message) => message.id));
+  const beforeIds = new Set(aligned.slice(0, firstOverlap).map((message) => message.id));
   const before = preserved.filter((message) => beforeIds.has(message.id));
   const after = preserved.filter((message) => !beforeIds.has(message.id));
   return dedupeMessages([...before, ...authoritative, ...after]);
@@ -783,7 +824,7 @@ export function reconcileThreadSnapshot(
   const overlaps = (message: RemoteMessage) => incomingIds.has(message.id)
     || messageCorrelationIds(message).some((id) => incomingCorrelations.has(id));
   const cleanedCurrent = withoutProjectedMessageAliases(
-    withoutOptimisticMatches(ownedCurrent, authoritative),
+    matchPendingUsers(ownedCurrent, authoritative),
     authoritative,
   );
   const covered = new Set(coveredTurnIds);
@@ -829,22 +870,19 @@ export function reconcileThreadSnapshot(
   }
 
   const result: RemoteMessage[] = [];
-  const emitted = new Set<string>();
+  const turnIndex = new Map(coveredTurnIds.map((id, index) => [id, index]));
+  let cursor = 0;
   for (const message of cleanedCurrent) {
-    const turnId = message.turnId;
-    if (!turnId || !covered.has(turnId)) {
+    const index = message.turnId ? turnIndex.get(message.turnId) : undefined;
+    if (index === undefined) {
       if (!overlaps(message)) result.push(message);
       continue;
     }
-    if (emitted.has(turnId)) continue;
-    result.push(...(mergedByTurn.get(turnId) ?? []));
-    emitted.add(turnId);
+    // Anchor missing earlier turns before the first known later turn.
+    while (cursor <= index) result.push(...mergedByTurn.get(coveredTurnIds[cursor++]!)!);
   }
-  for (const turnId of coveredTurnIds) {
-    if (emitted.has(turnId)) continue;
-    result.push(...(mergedByTurn.get(turnId) ?? []));
-  }
-  return dedupeMessages(result);
+  const remaining = coveredTurnIds.slice(cursor).flatMap(id => mergedByTurn.get(id)!);
+  return dedupeMessages(insertHistoryBeforePending(result, remaining));
 }
 
 
@@ -1060,6 +1098,24 @@ export function compactionStatusFromThreadPayload(payload: unknown, now = Date.n
 
 export function useRemote(config: RemoteConfig | null) {
   const socketRef = useRef<RemoteSocket | null>(null);
+  const [archiveSupported, setArchiveSupported] = useState(false);
+  const archiveRequests = useRef(new Map<string, { resolve: (value: ArchiveResult) => void; reject: (err: Error) => void }>());
+  const archiveRequest = useCallback((request: ArchiveRequest): Promise<ArchiveResult> => {
+    const requestId = createRequestId('archive');
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        archiveRequests.current.delete(requestId);
+        reject(new Error('电脑回执超时，请重新打开已归档列表核对。'));
+      }, 45_000);
+      const finish = () => { window.clearTimeout(timer); archiveRequests.current.delete(requestId); };
+      const entry = {
+        resolve: (value: ArchiveResult) => { finish(); resolve(value); },
+        reject: (error: Error) => { finish(); reject(error); },
+      };
+      archiveRequests.current.set(requestId, entry);
+      if (!socketRef.current?.send({ ...request, requestId })) entry.reject(new Error('电脑未连接。'));
+    });
+  }, []);
   const selectedThreadRef = useRef<string | null>(null);
   const turnIdsRef = useRef<Record<string, string>>({});
   const approvalsRef = useRef<ApprovalRequest[]>([]);
@@ -1672,7 +1728,7 @@ export function useRemote(config: RemoteConfig | null) {
           setTodoByThread((current) => ({ ...current, [threadId]: planMessage }));
           setMessagesByThread((current) => ({
             ...current,
-            [threadId]: upsertById(messagesForThread(threadId, current[threadId] ?? []), planMessage),
+            [threadId]: upsertLiveItem(messagesForThread(threadId, current[threadId] ?? []), planMessage),
           }));
         }
         return;
@@ -1696,7 +1752,7 @@ export function useRemote(config: RemoteConfig | null) {
           normalized.status = 'streaming';
           setMessagesByThread((current) => ({
             ...current,
-            [threadId]: dedupeMessages(upsertById(messagesForThread(threadId, current[threadId] ?? []), normalized)),
+            [threadId]: dedupeMessages(upsertLiveItem(messagesForThread(threadId, current[threadId] ?? []), normalized)),
           }));
         }
         return;
@@ -1753,9 +1809,9 @@ export function useRemote(config: RemoteConfig | null) {
           }
           setMessagesByThread((current) => ({
             ...current,
-            [threadId]: dedupeMessages(upsertById(
+            [threadId]: dedupeMessages(upsertLiveItem(
               normalized.role === 'user'
-                ? withoutOptimisticMatches(messagesForThread(threadId, current[threadId] ?? []), [normalized])
+                ? matchPendingUsers(messagesForThread(threadId, current[threadId] ?? []), [normalized])
                 : messagesForThread(threadId, current[threadId] ?? []),
               normalized,
             )),
@@ -1801,6 +1857,7 @@ export function useRemote(config: RemoteConfig | null) {
       if (typeof message.syncCursor === 'number' && message.syncCursor <= syncCursorRef.current) return;
       switch (message.type) {
         case 'welcome': {
+          setArchiveSupported(message.archiveManagement === true);
           setDesktopOnly(message.desktopOnly === true);
           setDesktopProjectMenus(message.desktopOnly === true && message.projectCreation === true);
           setDesktopProjects([]);
@@ -1881,6 +1938,18 @@ export function useRemote(config: RemoteConfig | null) {
             message.upserts,
             false,
           ));
+          break;
+        case 'archive.result':
+          archiveRequests.current.get(message.requestId)?.resolve(message);
+          if (message.threadId && typeof message.archived === 'boolean') {
+            setQueueReceipt(message.archived ? '电脑已归档这段对话' : '电脑已恢复这段对话');
+            if (message.archived && selectedThreadRef.current === message.threadId) {
+              socketRef.current?.send({ type: 'thread.close', threadId: message.threadId });
+              selectedThreadRef.current = null;
+              setSelectedThreadId(null);
+            }
+            socketRef.current?.send({ type: 'threads.sync', requestId: createRequestId('threads-sync') });
+          }
           break;
         case 'usage.result':
           if (message.requestId === usageRequest.current) { setUsage(message.usage); setUsageStatus(''); }
@@ -2091,6 +2160,8 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'error': {
+          const archive = message.requestId && archiveRequests.current.get(message.requestId);
+          if (archive) { archive.reject(new Error(message.message)); break; }
           if (message.requestId && message.requestId === projectRequest.current) {
             setProjectStatus(message.message);
             break;
@@ -2215,6 +2286,8 @@ export function useRemote(config: RemoteConfig | null) {
           setPhase(nextPhase);
           setPhaseDetail(detail ?? '');
           if (nextPhase !== 'connected') {
+            setArchiveSupported(false);
+            for (const request of archiveRequests.current.values()) request.reject(new Error('连接已断开，请重连后查看已归档列表核对。'));
             setCodexReady(false);
             modelRequest.current = null;
             setModelPending(false);
@@ -2241,6 +2314,7 @@ export function useRemote(config: RemoteConfig | null) {
 
     return () => {
       cancelled = true;
+      for (const request of archiveRequests.current.values()) request.reject(new Error('连接已关闭。'));
       socket?.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
       void appListener?.remove();
@@ -2481,7 +2555,7 @@ export function useRemote(config: RemoteConfig | null) {
       const optimistic: RemoteMessage = {
         id: `local_${requestId}`,
         threadId,
-        turnId: turnIdsRef.current[threadId],
+        turnId: deliveryMode === 'steer' ? turnIdsRef.current[threadId] : undefined,
         role: 'user',
         content: prompt || `请查看我上传的 ${attachments.length} 个文件。`,
         createdAt: Date.now(),
@@ -2705,6 +2779,7 @@ export function useRemote(config: RemoteConfig | null) {
     phaseDetail,
     codexReady,
     desktopOnly,
+    archiveSupported, archiveRequest,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,
     usage, usageStatus, refreshUsage, modelPending,
     queueReceipt,

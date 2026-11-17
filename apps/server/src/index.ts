@@ -39,7 +39,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.6.0",
+      version: "0.8.0",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,

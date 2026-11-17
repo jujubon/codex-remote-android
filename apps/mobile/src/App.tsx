@@ -2,6 +2,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
@@ -21,6 +22,7 @@ export function popThreadBackStack(stack: string[]): { previousThreadId: string 
 export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
   const [backgroundError, setBackgroundError] = useState('');
@@ -188,6 +190,7 @@ export function App() {
       {remote.selectedThread ? (
         <ConversationScreen
           key={remote.selectedThread.id}
+          onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
           notice={notice}
           thread={remote.selectedThread}
@@ -233,6 +236,7 @@ export function App() {
         />
       ) : (
         <ThreadList
+          onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           hidden={hidden}
           threads={remote.threads}
           phase={remote.phase}
@@ -245,6 +249,7 @@ export function App() {
         />
       )}
 
+      {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
           projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}

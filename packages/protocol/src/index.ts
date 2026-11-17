@@ -109,7 +109,14 @@ export interface ApprovalRequest {
   raw: unknown;
 }
 
+export type ArchiveRequest =
+  | { type: "archive.list"; cursor?: string }
+  | { type: "archive.set"; threadId: string; archived: boolean };
+
+export type ArchiveResult = { type: "archive.result"; requestId: string; threads?: ThreadSummary[]; nextCursor?: string | null; threadId?: string; archived?: boolean };
+
 export type ClientMessage =
+  | (ArchiveRequest & { requestId: string })
   | { type: "usage.read"; requestId: string }
   | { type: "ping"; id?: string }
   | { type: "threads.list"; requestId?: string; limit?: number }
@@ -148,7 +155,8 @@ export type ClientMessage =
   | { type: "approval.resolve"; requestId?: string; approvalRequestId: number | string; decision: ApprovalDecision };
 
 export type ServerMessagePayload =
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; projectCreation?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | ArchiveResult
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; projectCreation?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }

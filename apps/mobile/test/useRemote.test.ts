@@ -186,6 +186,34 @@ describe('Selected message reference stability', () => {
 });
 
 describe('Desktop/mobile reconciliation', () => {
+  it('keeps a pending send after history that arrives late, for both open pages and live snapshots', () => {
+    const pending = user('local_send', 'new', 20);
+    const old = { ...user('old', 'previous reply', 10), role: 'assistant' as const, turnId: 'old-turn' };
+    expect(reconcileMessages([pending], [old])).toEqual([old, pending]);
+    expect(reconcileThreadSnapshot([pending], [old])).toEqual([old, pending]);
+  });
+
+  it('keeps late deltas in their original turn and new replies after the pending send', () => {
+    const old = { ...user('old', 'old', 10), turnId: 'previous' };
+    const pending = user('local_send', 'new', 20);
+    const delta = { threadId: 'thread', turnId: 'previous', itemId: 'late', delta: 'tail', role: 'assistant' as const, createdAt: 21 };
+    expect(applyPendingMessageDeltas({ thread: [old, pending] }, [delta]).thread.map(m => m.id)).toEqual(['old', 'late', 'local_send']);
+    const answer = { ...user('next', 'reply', 25), role: 'assistant' as const, turnId: 'next' };
+    expect(reconcileThreadSnapshot([pending], [answer])).toEqual([pending, answer]);
+  });
+
+  it('preserves the position of missing older turns in an overlapping Desktop snapshot', () => {
+    const old = { ...user('old', 'old', 10), turnId: 'old' };
+    const next = { ...user('new', 'new', 15), turnId: 'new' };
+    expect(reconcileThreadSnapshot([next], [old, next])).toEqual([old, next]);
+  });
+
+  it('does not consume a fresh identical prompt when a previous turn is replayed', () => {
+    const old = { ...user('old', '继续', 10), turnId: 'old' };
+    const pending = { ...user('local_send', '继续', 20), detail: { clientUserMessageId: 'new-send' } };
+    expect(reconcileThreadSnapshot([old, pending], [old])).toEqual([old, pending]);
+  });
+
   it('does not reactivate a task when a delayed open response arrives after returning to the list', () => {
     const pendingStarts = new Set(['thread-start-request']);
     expect(consumeThreadActivationIntent(pendingStarts, 'stale-open-request')).toBe(false);

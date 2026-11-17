@@ -6,7 +6,7 @@
 
 准备一台能正常使用 **Codex Desktop** 的 Windows 电脑和一部 **Android 7.0 或更高版本**的手机。先在电脑端登录 Codex、打开一个对话，并确认可以正常发送消息。
 
-1. 准备 Android 0.7.1 和 Windows 0.7.0，分别为 `Codex-Remote-0.7.1.apk` 和 `Codex-Remote-Windows-0.7.0.zip`。可以在[仓库的 Releases 页面](https://github.com/jujubon/codex-remote-android/releases)查看已发布附件；如果没有对应版本，请按下文从源码构建。
+1. 准备 Android 0.8.0 和 Windows 0.8.0，分别为 `Codex-Remote-0.8.0.apk` 和 `Codex-Remote-Windows-0.8.0.zip`。可以在[仓库的 Releases 页面](https://github.com/jujubon/codex-remote-android/releases)查看已发布附件；如果没有对应版本，请按下文从源码构建。
 2. 在手机上安装 APK。把 Windows ZIP **完整解压到固定文件夹**。直接在压缩包预览里双击 `.cmd` 会让它找不到同目录的 PowerShell 脚本。
 3. 第一次建议让手机和电脑连到同一可信 Wi-Fi。在解压目录双击 **`Start.cmd`**。电脑窗口会显示 `App address` 和 `Pairing token`。启动器优先使用 Codex 附带的 Node.js；如果提示找不到 `node.exe`，安装 Node.js 22.12 或更高版本后重试。
 4. 在手机的「连接设置」分别填入这两项，点「保存并连接」。看到项目列表后，打开电脑上已有的对话并发送一条消息，在桌面核对回复。使用期间请让电脑保持唤醒，并让 Codex Desktop 和配套服务保持运行。
@@ -33,6 +33,7 @@ ngrok http http://127.0.0.1:8787
 
 - **继续已有对话**。在「全部项目」按目录展开，或用「最近」和搜索找到对话。可以查看 Markdown 长回复、工具调用和任务状态，向正在运行的任务追加要求，或处理它发来的问题和审批。
 - **筛选历史**。手机默认隐藏闲置的 Guardian 自动审阅记录。筛选栏的「⋯ → 对话显示」可进一步隐藏未载入的历史，或恢复显示全部。筛选只改变手机列表。
+- **归档与恢复**。手机和 Windows 服务均升级到 0.8.0 后，点聊天标题下的模型名，在「对话设置」选择「归档这段对话」并确认。在首页「⋯ → 已归档对话」点「恢复」可放回。操作同步到电脑，保留对话历史。
 - **新聊天**。首页点「＋ 新聊天」，默认是「直接新聊天（无项目）」。也可以选「在已有项目中聊天」，或「新建项目并聊天」。新项目按名称保存在电脑的 `%USERPROFILE%\CodexProjects` 下，桌面确认项目后才发送首条消息。项目旁边的「＋」会预选该项目。已同步的无项目聊天集中在列表末尾的「无项目对话」。
 - **隐藏和恢复项目**。在项目行的「⋯」选择「仅在本机隐藏此项目」，会在这部手机上收起该项目及其对话。电脑的项目、磁盘文件、历史和正在执行的任务都会保留。打开筛选栏右侧的「⋯」项目菜单，在「已隐藏项目」点「恢复显示」即可找回。
 - **模型和额度**。点聊天标题下方的模型名称，打开「对话设置」选择模型、思考强度和权限。展开「账号与额度」可查看剩余额度和重置时间，首页底部也能查看额度。可用模型和额度窗口取决于当前账号。
@@ -80,7 +81,7 @@ cd android
 cd ../../..
 ```
 
-**打包 Windows 配套程序**。从 Python 官网下载并解压 Windows x64 的 Python 3.13 embeddable package。回到仓库根目录，把下面的示例路径换成实际包含 `python.exe` 的目录。脚本会收集构建好的服务、依赖和 Python 运行时，生成 `dist/Codex-Remote-Windows-0.7.0.zip`。
+**打包 Windows 配套程序**。从 Python 官网下载并解压 Windows x64 的 Python 3.13 embeddable package。回到仓库根目录，把下面的示例路径换成实际包含 `python.exe` 的目录。脚本会收集构建好的服务、依赖和 Python 运行时，生成 `dist/Codex-Remote-Windows-0.8.0.zip`。
 
 ```powershell
 .\windows\Package-Host.ps1 -PythonDirectory 'C:\tools\python-embed'
