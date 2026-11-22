@@ -23,12 +23,11 @@ function Get-ReaderDevices([string]$Output) {
         $serial = $Matches[1]
         $state = $Matches[2]
         $details = $Matches[3]
+        if ($serial -match '^emulator-|\._adb-tls-pairing\._tcp') { continue }
+        if ($serial -notmatch ':|\._adb-tls-connect\._tcp') { continue }
         $model = if ($details -match '(?:^|\s)model:([^\s]+)') { $Matches[1].Replace('_', ' ') } else { '' }
-        $mode = if ($serial -match '^emulator-') { '模拟器' }
-        elseif ($serial -match ':|\._adb-tls-connect\._tcp') { 'Wi-Fi' }
-        else { 'USB' }
-        $label = if ($model) { "$model · $mode" } else { "$serial · $mode" }
-        [pscustomobject]@{ Serial = $serial; State = $state; Mode = $mode; Label = $label }
+        $label = if ($model) { "$model · Wi-Fi" } else { "$serial · Wi-Fi" }
+        [pscustomobject]@{ Serial = $serial; State = $state; Label = $label }
     }
 }
 
@@ -51,7 +50,7 @@ function Get-ReaderArguments([string]$Serial, [bool]$Topmost, [bool]$ScreenOff) 
     if ($Serial -notmatch '^[A-Za-z0-9._:\[\]%-]+$') { throw '请选择一个有效的手机。' }
     @(
         "--serial=$Serial"
-        '--window-title=Codex Remote - Phone Reader'
+        '--window-title=Codex Remote - Phone Reader (Wi-Fi)'
         '--window-width=360'
         '--max-size=1600'
         '--max-fps=24'

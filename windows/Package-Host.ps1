@@ -1,12 +1,13 @@
 param([Parameter(Mandatory=$true)][string]$PythonDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$stage = Join-Path $root 'dist\Windows-0.9.3'
+$stage = Join-Path $root 'dist\Windows-0.9.5'
 $target = Join-Path $stage 'apps\server'
 $modules = Join-Path $stage 'node_modules'
 $protocol = Join-Path $modules '@codex-mobile\protocol'
 foreach ($dir in @($stage, $target, $modules, $protocol)) { New-Item -Force -ItemType Directory $dir | Out-Null }
-foreach ($name in @('Start.cmd','Start-VPN.cmd','Start-Tunnel.cmd','Start-CodexMobile.ps1','Enable-Autostart.cmd','Disable-Autostart.cmd','Cross-Network-Reader.cmd')) {
+foreach ($name in @('Start.cmd','Start-VPN.cmd','Start-Tunnel.cmd','Start-CodexMobile.ps1','Enable-Autostart.cmd','Disable-Autostart.cmd',
+    'Phone-Reading-Window.cmd','Phone-Reading-Window.ps1','PhoneReader.Core.ps1','PhoneReader.xaml')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $stage -Force
 }
 Copy-Item "$root\apps\server\dist" -Destination $target -Recurse -Force
@@ -17,4 +18,4 @@ Copy-Item "$root\packages\protocol\dist","$root\packages\protocol\package.json" 
 Copy-Item "$root\LICENSE" -Destination $stage -Force
 New-Item -ItemType Directory -Force "$stage\python" | Out-Null
 Copy-Item "$PythonDirectory\*" -Destination "$stage\python" -Recurse -Force
-Compress-Archive -Path "$stage\*" -DestinationPath "$root\dist\Codex-Remote-Windows-0.9.3.zip" -Force
+Compress-Archive -Path "$stage\*" -DestinationPath "$root\dist\Codex-Remote-Windows-0.9.5.zip" -Force

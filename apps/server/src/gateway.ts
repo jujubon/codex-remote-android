@@ -447,7 +447,7 @@ export class MobileGateway {
       desktopOnly: this.config.desktopOnly,
       projectCreation: this.config.desktopOnly,
       archiveManagement: true,
-      version: "0.9.3",
+      version: "0.9.5",
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
       syncVersion: this.syncJournal.version,

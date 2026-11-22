@@ -49,7 +49,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.9.3",
+      version: "0.9.5",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,
@@ -148,7 +148,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === "GET" && request.url === "/api/device/status") {
-    json(response, 200, await device.status());
+    json(response, 200, { ...await device.status(), reader: reader.status() });
     return;
   }
   if (!device.supported || request.method !== "POST") {

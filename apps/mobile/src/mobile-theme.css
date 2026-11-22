@@ -371,3 +371,6 @@
 .computer-reader h2 { margin: 0; color: var(--ink); font-size: 1rem; }
 .computer-reader p { margin: 0; color: var(--muted); font-size: .8125rem; line-height: 1.55; }
 .computer-reader button { min-height: 44px; }
+.computer-reader-controls, .computer-reader-target { display: grid; gap: 8px; }
+.computer-reader-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.computer-reader-target select { min-height: 44px; width: 100%; }

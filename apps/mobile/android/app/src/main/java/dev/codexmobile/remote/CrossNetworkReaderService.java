@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
+import okhttp3.Callback;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -54,6 +55,8 @@ public class CrossNetworkReaderService extends Service {
     private static final MediaType JPEG = MediaType.get("image/jpeg");
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
             .followRedirects(false).followSslRedirects(false).callTimeout(4, TimeUnit.SECONDS).build();
+    private static final OkHttpClient CONTROL_HTTP = HTTP.newBuilder().callTimeout(12, TimeUnit.SECONDS).build();
+    private static final RequestBody EMPTY = RequestBody.create(new byte[0], null);
     private static volatile String currentState = "idle";
     private static volatile String currentDetail = "";
 
@@ -71,11 +74,13 @@ public class CrossNetworkReaderService extends Service {
     private HttpUrl address;
     private String token;
     private String session;
+    private String target;
     private byte[] lastFrame;
     private int density;
     private long lastSend;
     private volatile boolean stopping;
     private volatile Call inFlight;
+    private Call controlCall;
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
@@ -88,6 +93,7 @@ public class CrossNetworkReaderService extends Service {
 
         Intent consent = IntentCompat.getParcelableExtra(intent, "consent", Intent.class);
         String endpoint = intent.getStringExtra("address");
+        target = intent.getStringExtra("target");
         address = endpoint == null ? null : HttpUrl.parse(endpoint);
         if (consent == null || address == null || !address.isHttps()) {
             currentDetail = "请重新授权后开始投屏。";
@@ -124,7 +130,7 @@ public class CrossNetworkReaderService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_codex_notification)
                 .setContentTitle("正在共享屏幕到电脑")
-                .setContentText("可在这里结束跨网投屏。")
+                .setContentText(target == null ? "可在这里结束跨网投屏。" : "电脑可在所选阅读 App 内滑动翻页。")
                 .setOngoing(true)
                 .addAction(0, "停止投屏", stop)
                 .build();
@@ -146,9 +152,11 @@ public class CrossNetworkReaderService extends Service {
         @Override public void onStop() { finish("屏幕共享已结束。"); }
 
         @Override public void onCapturedContentResize(int width, int height) {
-            if (stopping || display == null) return;
-            try { resize(width, height); }
-            catch (RuntimeException error) { finish("屏幕尺寸变化后无法继续投屏，请重新开始。"); }
+            worker.post(() -> {
+                if (stopping || display == null) return;
+                try { resize(width, height); }
+                catch (RuntimeException error) { finish("屏幕尺寸变化后无法继续投屏，请重新开始。"); }
+            });
         }
     };
 
@@ -157,22 +165,74 @@ public class CrossNetworkReaderService extends Service {
         try {
             token = SecureTokenPlugin.readStoredValue(this, "codex.remote.pairing-token");
             if (token == null || token.isBlank()) throw new SessionEnded("请先完成 Codex Remote 配对。");
-            try (Response result = execute("start", RequestBody.create(new byte[0], null))) {
+            try (Response result = execute("start", EMPTY)) {
                 if (result.code() == 404) throw new SessionEnded("请更新 Windows 配套服务到 0.9.3。");
                 if (result.code() == 401) throw new SessionEnded("配对令牌失效，请检查连接设置。");
                 if (!result.isSuccessful()) throw new SessionEnded(replyError(result));
-                session = new JSONObject(result.peekBody(4096).string()).getString("id");
+                JSONObject reply = new JSONObject(result.peekBody(4096).string());
+                session = reply.getString("id");
                 if (!session.matches("[a-f0-9-]{36}")) throw new IOException("Invalid session");
+                if (target != null && !reply.optBoolean("controls"))
+                    throw new SessionEnded("请将 Windows 配套服务更新到 0.9.4 后再开启电脑翻页。");
             }
             if (stopping) return;
-            projection.registerCallback(callback, worker);
+            projection.registerCallback(callback, main);
             resize(bounds.getWidth(), bounds.getHeight());
             lastSend = android.os.SystemClock.elapsedRealtime();
             worker.post(this::frame);
+            if (target != null) main.post(() -> pollControls(null, null));
         } catch (SessionEnded error) {
             finish(error.getMessage());
         } catch (Exception error) {
             finish("无法连接电脑的跨网阅读窗，请检查隧道和电脑状态。");
+        }
+    }
+
+    private void pollControls(String acknowledged, String status) {
+        if (stopping) return;
+        Request.Builder poll = request("control", EMPTY).newBuilder();
+        if (acknowledged != null) {
+            poll.header("X-CMR-Reader-Command", acknowledged);
+            poll.header("X-CMR-Reader-Result", status);
+        }
+        controlCall = CONTROL_HTTP.newCall(poll.build());
+        controlCall.enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException error) {
+                main.postDelayed(() -> pollControls(acknowledged, status), 750);
+            }
+
+            @Override public void onResponse(Call call, Response response) {
+                try (response) {
+                    if (response.code() == 410 || response.code() == 401) {
+                        finish(replyError(response));
+                    } else if (response.code() == 204) {
+                        main.post(() -> pollControls(null, null));
+                    } else if (response.code() == 200) {
+                        JSONObject command = new JSONObject(response.peekBody(1024).string());
+                        String id = command.getString("id");
+                        String action = command.getString("action");
+                        if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid gesture ID");
+                        main.post(() -> runGesture(id, action));
+                    } else {
+                        onFailure(call, new IOException("Control poll not accepted"));
+                    }
+                } catch (Exception error) {
+                    onFailure(call, new IOException(error));
+                }
+            }
+        });
+    }
+
+    private void runGesture(String id, String action) {
+        if (stopping) return;
+        if (!"sharing".equals(currentState)) {
+            pollControls(id, "interrupted");
+            return;
+        }
+        try {
+            ReaderGestureService.send(target, action, result -> pollControls(id, result));
+        } catch (RuntimeException error) {
+            pollControls(id, "unavailable");
         }
     }
 
@@ -275,6 +335,7 @@ public class CrossNetworkReaderService extends Service {
         Request.Builder result = new Request.Builder().url(address.resolve("/api/reader/" + action))
                 .header("Authorization", "Bearer " + token).header("ngrok-skip-browser-warning", "1").post(body);
         if (session != null) result.header("X-CMR-Reader-Session", session);
+        if (target != null && "start".equals(action)) result.header("X-CMR-Reader-Controls", "1");
         return result.build();
     }
 
@@ -305,6 +366,7 @@ public class CrossNetworkReaderService extends Service {
         stopping = true;
         currentState = "idle";
         if (inFlight != null) inFlight.cancel();
+        if (controlCall != null) controlCall.cancel();
         if (worker != null) {
             worker.removeCallbacksAndMessages(null);
             worker.post(() -> {
@@ -316,7 +378,7 @@ public class CrossNetworkReaderService extends Service {
                     projection.stop();
                 }
                 if (session != null) {
-                    try (Response ignored = HTTP.newCall(request("stop", RequestBody.create(new byte[0], null))).execute()) {}
+                    try (Response ignored = HTTP.newCall(request("stop", EMPTY)).execute()) {}
                     catch (IOException ignored) {}
                 }
                 thread.quitSafely();

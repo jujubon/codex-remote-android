@@ -1,6 +1,8 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">Codex Remote</string>
+    <string name="reader_gesture_label">Codex Remote 阅读窗翻页</string>
+    <string name="reader_gesture_description">在你开启跨网投屏并选定阅读 App 后，允许已配对电脑滑动翻页。仅在所选 App 位于前台且手机解锁时生效。</string>
     <string name="title_activity_main">Codex Remote</string>
     <string name="package_name">dev.codexmobile.companion</string>
     <string name="custom_url_scheme">dev.codexmobile.companion</string>

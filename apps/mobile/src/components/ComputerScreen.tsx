@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import type { ConnectionPhase } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
-import { CrossNetworkReader } from './CrossNetworkReader';
+import { PhoneReader } from './CrossNetworkReader';
 import { DeviceTools } from './DeviceTools';
 import { MonitorIcon, SettingsIcon } from './Icons';
 
@@ -27,7 +27,7 @@ export function ComputerScreen({ config, phase, detail, onReconnect, onSettings,
         <ConnectionStatus phase={phase} detail={detail} onReconnect={onReconnect} />
         {endpoint && <span>{endpoint}</span>}
       </section>
-      <CrossNetworkReader config={config} />
+      <PhoneReader config={config} connected={phase === 'connected'} />
       <DeviceTools config={config} phase={phase} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}

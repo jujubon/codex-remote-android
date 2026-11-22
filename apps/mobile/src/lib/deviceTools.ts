@@ -12,6 +12,7 @@ export interface DeviceStatus {
   shareError?: string;
   autoOpen: boolean;
   awakeUntil: number | null;
+  reader?: { localActive: boolean; remoteReady: boolean };
 }
 
 export const QUICK_SHARE_KEY = 'codex.remote.quick-share';

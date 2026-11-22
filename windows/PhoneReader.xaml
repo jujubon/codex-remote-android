@@ -27,15 +27,15 @@
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="22,20">
       <TextBlock FontSize="25" FontWeight="SemiBold" Text="手机阅读窗" Margin="0,0,0,14"/>
-      <GroupBox Header="连接手机">
+      <GroupBox Header="本地 Wi-Fi">
         <StackPanel>
-          <TextBlock Foreground="#625B71" Text="打开手机的 USB 调试，插上数据线并在手机上允许此电脑。" Margin="0,0,0,8"/>
+          <TextBlock Foreground="#625B71" Text="手机与电脑连同一个 Wi-Fi，并在手机设置里开启无线调试。" Margin="0,0,0,8"/>
           <DockPanel LastChildFill="True">
-            <Button x:Name="Refresh" DockPanel.Dock="Right" Content="刷新设备" Margin="8,0,0,0"/>
+            <Button x:Name="Refresh" DockPanel.Dock="Right" Content="重试本地" Margin="8,0,0,0"/>
             <ComboBox x:Name="Devices" MinHeight="35" VerticalContentAlignment="Center"
                       DisplayMemberPath="Label" AutomationProperties.Name="已连接的手机"/>
           </DockPanel>
-          <Expander Header="用 Wi-Fi 连接" Margin="0,10,0,0">
+          <Expander Header="配对或手动连接" Margin="0,10,0,0">
             <StackPanel Margin="0,9,0,0">
               <TextBlock Foreground="#625B71" Text="手机和电脑连同一 Wi-Fi。初次使用，在手机无线调试中点「使用配对码配对设备」。"/>
               <Label Content="配对弹窗里的 IP:端口" Target="{Binding ElementName=PairAddress}" Padding="0,8,0,3"/>
@@ -62,8 +62,15 @@
         </StackPanel>
       </GroupBox>
       <TextBlock x:Name="Status" Foreground="#625B71" MinHeight="34" Margin="0,2,0,9"/>
-      <Button x:Name="Open" Content="打开阅读窗" IsDefault="True" IsEnabled="False"
-              Background="#513AB2" Foreground="White" MinHeight="42" FontWeight="SemiBold"/>
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Button x:Name="Open" Content="打开本地投屏" IsDefault="True" IsEnabled="False" Margin="0,0,8,0"
+                Background="#513AB2" Foreground="White" MinHeight="42" FontWeight="SemiBold"/>
+        <Button x:Name="Remote" Grid.Column="1" Content="改用跨网" MinHeight="42"/>
+      </Grid>
     </StackPanel>
   </ScrollViewer>
 </Window>
