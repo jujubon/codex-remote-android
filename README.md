@@ -6,7 +6,7 @@
 
 准备一台能正常使用 **Codex Desktop** 的 Windows 电脑和一部 **Android 7.0 或更高版本**的手机。先在电脑端登录 Codex、打开一个对话，并确认可以正常发送消息。
 
-1. 准备 Android 0.8.1 和 Windows 0.8.0，分别为 `Codex-Remote-0.8.1.apk` 和 `Codex-Remote-Windows-0.8.0.zip`。可以在[仓库的 Releases 页面](https://github.com/jujubon/codex-remote-android/releases)查看已发布附件；如果没有对应版本，请按下文从源码构建。
+1. 准备 Android 0.9.1 和 Windows 0.9.1，分别为 `Codex-Remote-0.9.1.apk` 和 `Codex-Remote-Windows-0.9.1.zip`。可以在[仓库的 Releases 页面](https://github.com/jujubon/codex-remote-android/releases)查看已发布附件；如果没有对应版本，请按下文从源码构建。
 2. 在手机上安装 APK。把 Windows ZIP **完整解压到固定文件夹**。直接在压缩包预览里双击 `.cmd` 会让它找不到同目录的 PowerShell 脚本。
 3. 第一次建议让手机和电脑连到同一可信 Wi-Fi。在解压目录双击 **`Start.cmd`**。电脑窗口会显示 `App address` 和 `Pairing token`。启动器优先使用 Codex 附带的 Node.js；如果提示找不到 `node.exe`，安装 Node.js 22.12 或更高版本后重试。
 4. 在手机的「连接设置」分别填入这两项，点「保存并连接」。看到项目列表后，打开电脑上已有的对话并发送一条消息，在桌面核对回复。使用期间请让电脑保持唤醒，并让 Codex Desktop 和配套服务保持运行。
@@ -28,6 +28,23 @@ ngrok http http://127.0.0.1:8787
 ```
 
 等 ngrok 显示 `online`，把 `Forwarding` 左侧的 HTTPS 地址填入手机。`127.0.0.1` 是电脑端的转发目标。手机的「配对令牌」使用 Codex Remote 生成的值，ngrok 的 Authtoken 只用于电脑上的 ngrok。电脑换网络后，需要能够重新连上隧道服务。公网隧道的 TLS 在服务商处终止时，服务商有能力接触传输内容。也可以使用自己的 HTTPS 入口。参阅 [ngrok Windows 安装说明](https://ngrok.com/download/windows)和[自建反向代理说明](docs/public-reverse-proxy.md)。
+
+## 设备工具
+
+Android 和 Windows 配套服务更新到 0.9.1 后，从首页筛选栏的「⋯ → 设备工具」打开。聊天标题下的模型设置里也有同一入口。
+
+- **剪贴板**。点击「发送手机剪贴板」或「拉取电脑剪贴板」来传输纯文本。需在手机打开 App 后操作，Windows 端使用登录用户的剪贴板。
+- **锁屏与熄屏挂机**。「锁定电脑」请求 Windows 锁屏。「熄屏挂机」可选择 30 分钟、1 小时或 2 小时，也可从运行中的聊天保持到当前任务结束（最多 2 小时）。期间保持主机唤醒，鼠标键盘能再次点亮屏幕。到期、任务结束、停止挂机或退出 Windows 服务后，Windows 恢复原先的休眠策略。
+- **分享**。从 Android 分享菜单选择「发送到电脑」来发送图片、PDF 或网页链接。接收后保存在 Windows 当前用户桌面下的 `PhoneDrop` 目录，单个文件上限 64 MB。可在「设备工具」开启选中分享入口后直接发送。设备工具与聊天附件使用各自的存储。
+
+如需修改收件位置，在电脑的 `%LOCALAPPDATA%\CodexMobileRemote\device-tools.json` 写入以下设置。目录应使用支持硬链接的本地文件系统（例如 NTFS）。`autoOpen` 默认关闭，开启后会尝试打开收到的常见图片、PDF 或网页链接。链接也会作为文本保存在收件目录。配置在下一次请求时读取。
+
+```json
+{
+  "receiveFolder": "D:\\PhoneDrop",
+  "autoOpen": false
+}
+```
 
 ## 在手机上工作
 
@@ -82,7 +99,7 @@ cd android
 cd ../../..
 ```
 
-**打包 Windows 配套程序**。从 Python 官网下载并解压 Windows x64 的 Python 3.13 embeddable package。回到仓库根目录，把下面的示例路径换成实际包含 `python.exe` 的目录。脚本会收集构建好的服务、依赖和 Python 运行时，生成 `dist/Codex-Remote-Windows-0.8.0.zip`。
+**打包 Windows 配套程序**。从 Python 官网下载并解压 Windows x64 的 Python 3.13 embeddable package。回到仓库根目录，把下面的示例路径换成实际包含 `python.exe` 的目录。脚本会收集构建好的服务、依赖和 Python 运行时，生成 `dist/Codex-Remote-Windows-0.9.1.zip`。
 
 ```powershell
 .\windows\Package-Host.ps1 -PythonDirectory 'C:\tools\python-embed'

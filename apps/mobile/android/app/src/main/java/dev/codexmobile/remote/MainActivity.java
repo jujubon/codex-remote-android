@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SecureTokenPlugin.class);
         registerPlugin(CodexBackgroundPlugin.class);
         registerPlugin(CodexFileTransferPlugin.class);
+        registerPlugin(DeviceClipboardPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

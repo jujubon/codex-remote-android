@@ -241,3 +241,17 @@
   .project-heading-button { gap: 7px; }
   .project-symbol { flex-basis: 30px; height: 30px; }
 }
+
+.device-tools section { display: grid; gap: 8px; padding-block: 14px; border-bottom: 1px solid var(--line); }
+.device-tools h3 { margin: 0; color: var(--ink); font-size: 14px; }
+.device-tools p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.device-tools > p { margin-top: 12px; }
+.device-tools .form-error { color: var(--red); }
+.device-tools .device-feedback { color: var(--green); }
+.device-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.device-actions button { min-height: 44px; }
+.device-duration { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
+.device-duration select { width: auto; min-width: 0; min-height: 42px; }
+.device-quick-share { display: flex; align-items: center; gap: 8px; min-height: 40px; color: var(--ink); font-size: 12px; }
+.device-quick-share input { width: 18px; height: 18px; accent-color: var(--accent); }
+.device-folder { font-family: ui-monospace, Consolas, monospace; }

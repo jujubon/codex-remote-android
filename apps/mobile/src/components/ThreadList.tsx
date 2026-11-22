@@ -131,6 +131,7 @@ export interface ThreadListPosition {
 interface ThreadListProps {
   position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
+  onDeviceTools: () => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   footer: React.ReactNode;
   threads: RemoteThread[];
@@ -258,7 +259,7 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ position, onArchives, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
+export function ThreadList({ position, onArchives, onDeviceTools, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const [query, setQuery] = useState(position.current.query);
@@ -350,6 +351,7 @@ export function ThreadList({ position, onArchives, threads, phase, phaseDetail, 
           <button key={label} type="button" aria-pressed={label === filter} onClick={() => updateFilter(label)}>{label}</button>
         )}<button type="button" aria-label="项目菜单" aria-expanded={projectMenu === 'manage'} onClick={() => setProjectMenu(projectMenu === 'manage' ? null : 'manage')}>⋯</button></nav>
         {projectMenu === 'manage' && <section className="hidden-projects">
+          <button type="button" className="secondary-button" onClick={() => { setProjectMenu(null); onDeviceTools(); }}>设备工具</button>
           {onArchives && <button type="button" className="secondary-button" onClick={onArchives}>已归档对话</button>}
           <label className="history-visibility">对话显示
             <select value={visibility} onChange={event => {

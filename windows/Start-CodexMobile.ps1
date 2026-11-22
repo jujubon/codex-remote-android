@@ -26,6 +26,10 @@ $env:CODEX_HOME = Join-Path $env:USERPROFILE '.codex'
 $env:CMR_PYTHON = Join-Path $PSScriptRoot 'python\python.exe'
 if (!(Test-Path -LiteralPath $env:CMR_PYTHON)) { $env:CMR_PYTHON = (Get-Command python.exe).Source }
 $env:CMR_STATE_DIRECTORY = $stateDir
+if (!$env:CMR_PHONE_DROP_DIR) {
+    $desktopDirectory = [Environment]::GetFolderPath('DesktopDirectory')
+    if ($desktopDirectory) { $env:CMR_PHONE_DROP_DIR = Join-Path $desktopDirectory 'PhoneDrop' }
+}
 $env:CMR_DESKTOP_ONLY = '1'
 $env:CMR_PORT = '8787'
 $env:CMR_SERVER_ID = $env:COMPUTERNAME + '-codex-desktop'

@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname, join } from "node:path";
+import { DeviceTools } from "./device-tools.js";
 import { mkdir } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
@@ -25,6 +27,12 @@ const files = await FileTransferManager.create({ allowedRoots: config.fileRoots,
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue);
 const heartbeat = gateway.startHeartbeat();
+const device = new DeviceTools(
+  join(dirname(config.promptQueueFile), "device-tools.json"),
+  process.env.CMR_PHONE_DROP_DIR,
+  threadId => gateway.currentTurnForPowerHold(threadId),
+  (threadId, turnId) => gateway.turnFinishedForPowerHold(threadId, turnId),
+);
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
 
@@ -39,7 +47,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.8.0",
+      version: "0.9.1",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,
@@ -47,7 +55,8 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     return;
   }
 
-  if (request.url?.startsWith("/api/files/")) {
+  const isDevice = request.url?.startsWith("/api/device/");
+  if (isDevice || request.url?.startsWith("/api/files/")) {
     const origin = request.headers.origin;
     if (origin && !config.allowedOrigins.has(origin)) {
       json(response, 403, { error: "origin_not_allowed" });
@@ -60,7 +69,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "access-control-allow-methods": "GET, POST, OPTIONS",
-        "access-control-allow-headers": "Authorization, Content-Type, X-CMR-Filename",
+        "access-control-allow-headers": "Authorization, Content-Type, X-CMR-Filename, X-CMR-Request-Id, ngrok-skip-browser-warning",
         "access-control-max-age": "600",
         "cache-control": "no-store",
       });
@@ -73,6 +82,10 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
       return;
     }
     try {
+      if (isDevice) {
+        await handleDevice(request, response);
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/files/upload") {
         const encodedName = String(request.headers["x-cmr-filename"] ?? "file");
         let fileName = "file";
@@ -119,6 +132,50 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
   json(response, 404, { error: "not_found" });
 }
 
+async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method === "GET" && request.url === "/api/device/status") {
+    json(response, 200, await device.status());
+    return;
+  }
+  if (!device.supported || request.method !== "POST") {
+    json(response, 404, { error: "此电脑未提供设备工具。" });
+    return;
+  }
+  switch (request.url) {
+    case "/api/device/clipboard/read":
+      json(response, 200, await device.clipboardRead());
+      return;
+    case "/api/device/clipboard/write":
+      await device.clipboardWrite((await readJsonBody(request, 384 * 1024)).text);
+      break;
+    case "/api/device/power/lock":
+      await device.lock();
+      break;
+    case "/api/device/power/hold": {
+      const body = await readJsonBody(request, 2048);
+      await device.startHold(body.minutes, body.threadId);
+      json(response, 200, await device.status());
+      return;
+    }
+    case "/api/device/power/release":
+      device.cancelHold();
+      json(response, 200, await device.status());
+      return;
+    case "/api/device/share/file":
+      json(response, 201, await device.file(request, files));
+      return;
+    case "/api/device/share/link": {
+      const body = await readJsonBody(request, 16 * 1024);
+      json(response, 201, await device.link(body.requestId, body.url));
+      return;
+    }
+    default:
+      json(response, 404, { error: "not_found" });
+      return;
+  }
+  json(response, 200, { ok: true });
+}
+
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   response.end(JSON.stringify(value));
@@ -144,6 +201,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[server] received ${signal}; shutting down`);
   clearInterval(heartbeat);
   clearInterval(fileCleanup);
+  device.stopHold();
   gateway.close();
   await desktopIpc.stop();
   await bridge.stop();

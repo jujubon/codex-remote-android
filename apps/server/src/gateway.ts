@@ -101,6 +101,7 @@ export class MobileGateway {
   private readonly turnSubmissions = new Map<string, TurnSubmissionEntry>();
   private readonly appServerThreadStatuses = new Map<string, unknown>();
   private readonly appServerCurrentTurnIds = new Map<string, string>();
+  private readonly appServerCompletedTurnIds = new Map<string, string>();
   private readonly queueDrains = new Map<string, Promise<void>>();
   private readonly desktopQueuedFollowUps = new Map<string, number>();
   private readonly gitDiffs = new Map<string, GitDiffSnapshot>();
@@ -138,6 +139,7 @@ export class MobileGateway {
       this.turnDiffs.clear();
       this.appServerThreadStatuses.clear();
       this.appServerCurrentTurnIds.clear();
+      this.appServerCompletedTurnIds.clear();
       this.broadcast({
         type: "status",
         codexReady: false,
@@ -445,7 +447,7 @@ export class MobileGateway {
       desktopOnly: this.config.desktopOnly,
       projectCreation: this.config.desktopOnly,
       archiveManagement: true,
-      version: "0.8.0",
+      version: "0.9.1",
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
       syncVersion: this.syncJournal.version,
@@ -1067,6 +1069,7 @@ export class MobileGateway {
     const currentTurnId = this.appServerCurrentTurnIds.get(threadId);
     if (currentTurnId && completedTurnId && currentTurnId !== completedTurnId) return;
     this.appServerCurrentTurnIds.delete(threadId);
+    if (completedTurnId) this.appServerCompletedTurnIds.set(threadId, completedTurnId);
     this.appServerThreadStatuses.set(threadId, { type: "idle" });
   }
 
@@ -1074,6 +1077,23 @@ export class MobileGateway {
     const normalized = asRecord(status);
     if (!normalized || typeof normalized.type !== "string") return;
     this.appServerThreadStatuses.set(threadId, normalized);
+  }
+
+  currentTurnForPowerHold(threadId: string): string | undefined {
+    const desktopTurn = this.desktopIpc?.hasOwner(threadId)
+      ? activeConversationTurnId(this.desktopIpc.getConversation(threadId))
+      : null;
+    return desktopTurn ?? this.appServerCurrentTurnIds.get(threadId);
+  }
+
+  turnFinishedForPowerHold(threadId: string, turnId: string): boolean {
+    if (this.appServerCompletedTurnIds.get(threadId) === turnId) return true;
+    const conversation = this.desktopIpc?.getConversation(threadId);
+    return Array.isArray(conversation?.turns) && conversation.turns.some(value => {
+      const turn = asRecord(value);
+      const status = String(turn?.status ?? "").toLowerCase();
+      return (turn?.id ?? turn?.turnId) === turnId && ["completed", "failed", "interrupted", "cancelled", "canceled"].includes(status);
+    });
   }
 
   private appServerThreadIsActive(threadId: string): boolean {

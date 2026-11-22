@@ -15,6 +15,7 @@ import { ElapsedTime } from './ElapsedTime';
 
 interface ConversationScreenProps {
   onArchive?: () => void;
+  onDeviceTools: () => void;
   accountPanel: React.ReactNode;
   notice: React.ReactNode;
   thread: RemoteThread;
@@ -325,7 +326,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ onArchive, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
+export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -704,6 +705,10 @@ export function ConversationScreen({ onArchive, accountPanel, notice, thread, me
         {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
       </section>
           {accountPanel}
+          <button type="button" className="secondary-button" onClick={() => {
+            settingsRef.current?.close();
+            onDeviceTools();
+          }}>设备工具</button>
           {onArchive && <button type="button" className="secondary-button" disabled={running || approvals.length > 0 || phase !== 'connected'} onClick={() => {
             settingsRef.current?.close();
             onArchive();

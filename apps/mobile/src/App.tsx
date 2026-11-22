@@ -4,6 +4,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
+import { DeviceToolsDialog } from './components/DeviceToolsDialog';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
@@ -22,6 +23,7 @@ export function popThreadBackStack(stack: string[]): { previousThreadId: string 
 export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDeviceTools, setShowDeviceTools] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
@@ -192,6 +194,7 @@ export function App() {
       {remote.selectedThread ? (
         <ConversationScreen
           key={remote.selectedThread.id}
+          onDeviceTools={() => setShowDeviceTools(true)}
           onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
           notice={notice}
@@ -239,6 +242,7 @@ export function App() {
       ) : (
         <ThreadList
           position={threadListPosition}
+          onDeviceTools={() => setShowDeviceTools(true)}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           hidden={hidden}
           threads={remote.threads}
@@ -252,6 +256,9 @@ export function App() {
         />
       )}
 
+      {showDeviceTools && <DeviceToolsDialog config={config}
+        runningThreadId={remote.running ? remote.selectedThreadId ?? undefined : undefined}
+        onClose={() => setShowDeviceTools(false)} />}
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
