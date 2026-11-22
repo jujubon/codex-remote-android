@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
 import { ComputerScreen } from './components/ComputerScreen';
+import { stopCrossNetworkReader } from './components/CrossNetworkReader';
 import { DevicePowerDialog } from './components/DeviceTools';
 import { HomeNav, type HomePage } from './components/HomeNav';
 import { CloseIcon } from './components/Icons';
@@ -154,6 +155,7 @@ export function App() {
   }, [openRootThread]);
 
   async function forgetConnection() {
+    await stopCrossNetworkReader();
     if (Capacitor.isNativePlatform()) await CodexBackground.stop().catch(() => undefined);
     await clearRemoteConfig();
     threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
@@ -179,6 +181,7 @@ export function App() {
         initialConfig={config}
         accountPanel={config ? accountPanel : undefined}
         onSaved={(saved) => {
+          if (config?.serverUrl !== saved.serverUrl || config?.pairingToken !== saved.pairingToken) void stopCrossNetworkReader();
           setConfig(saved);
           setShowSettings(false);
         }}

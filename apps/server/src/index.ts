@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
+import { ReaderStream } from "./reader-stream.js";
 import { DeviceTools } from "./device-tools.js";
 import { mkdir } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
@@ -36,6 +37,7 @@ const device = new DeviceTools(
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
 
+const reader = new ReaderStream(config.port === 65535 ? 8788 : config.port + 1);
 const server = createServer((request, response) => void handleHttp(request, response));
 
 async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -47,11 +49,23 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.9.1",
+      version: "0.9.3",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,
     }));
+    return;
+  }
+
+  if (request.url?.startsWith("/api/reader/")) {
+    if ((request.headers.origin && !config.allowedOrigins.has(request.headers.origin)) ||
+        !authenticateBearer(request.headers.authorization, config)) {
+      request.resume();
+      json(response, 401, { error: "unauthorized" });
+      return;
+    }
+    try { await reader.ingest(request, response); }
+    catch { if (!response.destroyed && !response.headersSent) json(response, 400, { error: "投屏请求未完成。" }); }
     return;
   }
 
@@ -202,6 +216,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(heartbeat);
   clearInterval(fileCleanup);
   device.stopHold();
+  reader.close();
   gateway.close();
   await desktopIpc.stop();
   await bridge.stop();
@@ -223,6 +238,7 @@ console.log(`[server] Codex home ${config.codexHome}`);
 await bridge.start();
 await desktopIpc.start();
 server.listen(config.port, config.host, () => {
+  reader.listen();
   console.log(`[server] listening on http://${config.host}:${config.port}`);
   console.log(`[server] websocket endpoint ws://${config.host}:${config.port}/ws`);
   if (config.packagedNodeReplRuntime)
