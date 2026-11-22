@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { threadStateLabel } from '../hooks/useRemote';
 import type { ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { PlusIcon, SettingsIcon } from './Icons';
+import { ChatIcon, ChevronDownIcon, CloseIcon, FolderIcon, PlusIcon, SearchIcon, SettingsIcon } from './Icons';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 
 export const PROJECT_COLLAPSE_STORAGE_KEY = 'codex-mobile.project-collapse.v1';
@@ -122,7 +122,14 @@ export function toggleProjectCollapsePreference(
   };
 }
 
+export interface ThreadListPosition {
+  query: string;
+  filter: string;
+  scrollTop: number;
+}
+
 interface ThreadListProps {
+  position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   footer: React.ReactNode;
@@ -210,7 +217,7 @@ function ThreadRow({
               {thread.agentRole && <span>{thread.agentRole}</span>}
             </span>
           )}
-          <span className="thread-preview">{thread.preview || (thread.state === 'running' ? '正在执行…' : '等待新消息')}</span>
+          {thread.preview && thread.preview.trim() !== thread.title?.trim() && <span className="thread-preview">{thread.preview}</span>}
           <span className="thread-meta">
             {thread.state !== 'idle' && <span className={`state-label state-label-${thread.state}`}>{threadStateLabel(thread.state)}</span>}
             {completedDuration && thread.state !== 'running' && <span className="duration-label">用时 {completedDuration}</span>}
@@ -251,11 +258,30 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
+export function ThreadList({ position, onArchives, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, hidden }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
-  const [query, setQuery] = useState('');
+  const listRef = useRef<HTMLElement>(null);
+  const [query, setQuery] = useState(position.current.query);
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
-  const [filter, setFilter] = useState('全部项目');
+  const [filter, setFilter] = useState(position.current.filter);
+
+  useLayoutEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = position.current.scrollTop;
+  }, [position]);
+
+  const updateQuery = (next: string) => {
+    position.current.query = next;
+    setQuery(next);
+    position.current.scrollTop = 0;
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
+
+  const updateFilter = (next: string) => {
+    position.current.filter = next;
+    setFilter(next);
+    position.current.scrollTop = 0;
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
   const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
   const [projectCollapsePreferences, setProjectCollapsePreferences] = useState<ProjectCollapsePreferences>(
     () => readProjectCollapsePreferences(),
@@ -315,9 +341,13 @@ export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, 
         <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
       </div>}
       <div className="thread-browser">
-        <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或最近消息" value={query} onChange={event => setQuery(event.target.value)} />
+        <div className="project-search">
+          <SearchIcon />
+          <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={event => updateQuery(event.target.value)} />
+          {query && <button type="button" aria-label="清空搜索" onClick={() => updateQuery('')}><CloseIcon /></button>}
+        </div>
         <nav aria-label="对话筛选">{['全部项目', '最近', '进行中', '待处理'].map(label =>
-          <button key={label} type="button" aria-pressed={label === filter} onClick={() => setFilter(label)}>{label}</button>
+          <button key={label} type="button" aria-pressed={label === filter} onClick={() => updateFilter(label)}>{label}</button>
         )}<button type="button" aria-label="项目菜单" aria-expanded={projectMenu === 'manage'} onClick={() => setProjectMenu(projectMenu === 'manage' ? null : 'manage')}>⋯</button></nav>
         {projectMenu === 'manage' && <section className="hidden-projects">
           {onArchives && <button type="button" className="secondary-button" onClick={onArchives}>已归档对话</button>}
@@ -338,7 +368,8 @@ export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, 
         </section>}
       </div>
 
-      <section className="thread-list" aria-label="任务列表">
+      <section ref={listRef} className="thread-list" aria-label="任务列表"
+        onScroll={event => { position.current.scrollTop = event.currentTarget.scrollTop; }}>
         {threads.length === 0 ? (
           <div className="empty-state">
             <div className="empty-glyph" aria-hidden="true"><span /></div>
@@ -346,7 +377,7 @@ export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, 
             <p>{phase === 'connected' ? '创建任务，或等待电脑端的任务同步到这里。' : '连接就绪后，历史任务会自动显示。'}</p>
           </div>
         ) : !filtered.length ? (
-          <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在上方「⋯」的「对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { setQuery(''); setFilter('全部项目'); }}>查看全部项目</button></div>
+          <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在上方「⋯」的「对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { updateQuery(''); updateFilter('全部项目'); }}>查看全部项目</button></div>
         ) : flatList ? recent.map(thread => (
           <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd) ? NO_PROJECT : projectName(thread.cwd)}</small>
             <ThreadRow thread={thread} childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
@@ -373,13 +404,14 @@ export function ThreadList({ onArchives, threads, phase, phaseDetail, onSelect, 
                   aria-expanded={!collapsed}
                   aria-label={`${projectName(cwd)}，${items.length} 个任务，${collapsed ? '展开目录' : '折叠目录'}`}
                 >
+                  <span className="project-symbol">{cwd === NO_PROJECT ? <ChatIcon /> : <FolderIcon />}</span>
                   <span className="project-heading-copy">
                     <strong>{projectName(cwd)}</strong>
                     {cwd !== NO_PROJECT && <code title={cwd}>{compactPath(cwd)}</code>}
                   </span>
                   <span className="project-heading-meta">
                     <span className="project-task-count">{items.length}</span>
-                    <span className="project-chevron" aria-hidden="true">{collapsed ? '⌄' : '⌃'}</span>
+                    <ChevronDownIcon className="project-chevron" />
                   </span>
                 </button>
                 {cwd !== NO_PROJECT && <button className="project-hide" type="button" aria-label={`${projectName(cwd)} 的项目菜单`} aria-expanded={projectMenu === cwd} onClick={() => setProjectMenu(projectMenu === cwd ? null : cwd)}>⋯</button>}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
-import { SendIcon, StopIcon } from './Icons';
+import { PlusIcon, SendIcon, StopIcon } from './Icons';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
 
@@ -183,7 +183,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
           onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
           disabled={!connected || sending}
         />
-        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending} aria-label="上传图片或文件">＋</button>
+        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending} aria-label="上传图片或文件"><PlusIcon /></button>
         <textarea
           ref={textareaRef}
           value={content}

@@ -68,3 +68,15 @@ export function ShieldIcon(props: IconProps) {
 export function AlertIcon(props: IconProps) {
   return <IconBase {...props}><path d="M12 3 2.8 19h18.4L12 3Z" /><path d="M12 9v4M12 16h.01" /></IconBase>;
 }
+
+export function SearchIcon(props: IconProps) {
+  return <IconBase {...props}><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 4 4" /></IconBase>;
+}
+
+export function FolderIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></IconBase>;
+}
+
+export function ChatIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3.1A7.5 7.5 0 1 1 20 11.5Z" /><path d="M9 11.5h6" /></IconBase>;
+}

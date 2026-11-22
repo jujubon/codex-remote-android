@@ -6,7 +6,7 @@ import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
-import { ThreadList } from './components/ThreadList';
+import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
 import { useHiddenProjects } from './lib/hiddenProjects';
 import { useRemote } from './hooks/useRemote';
@@ -28,6 +28,7 @@ export function App() {
   const [backgroundError, setBackgroundError] = useState('');
   const [selectedAgentByThread, setSelectedAgentByThread] = useState<Record<string, string | null>>({});
   const threadBackStackRef = useRef<string[]>([]);
+  const threadListPosition = useRef<ThreadListPosition>({ query: '', filter: '全部项目', scrollTop: 0 });
   const remote = useRemote(config ?? null);
   const hidden = useHiddenProjects(remote.serverId ?? config?.serverUrl ?? '');
 
@@ -141,6 +142,7 @@ export function App() {
   async function forgetConnection() {
     if (Capacitor.isNativePlatform()) await CodexBackground.stop().catch(() => undefined);
     await clearRemoteConfig();
+    threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
     setShowSettings(false);
     setConfig(null);
   }
@@ -236,6 +238,7 @@ export function App() {
         />
       ) : (
         <ThreadList
+          position={threadListPosition}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           hidden={hidden}
           threads={remote.threads}
