@@ -1,0 +1,69 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="手机阅读窗" Width="500" MinWidth="420" MaxHeight="760"
+        SizeToContent="Height" WindowStartupLocation="CenterScreen"
+        Background="#F7F6FA" Foreground="#282137"
+        FontFamily="Microsoft YaHei UI" FontSize="14">
+  <Window.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="12,7"/>
+      <Setter Property="MinHeight" Value="35"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Padding" Value="8,6"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style TargetType="GroupBox">
+      <Setter Property="Padding" Value="12"/>
+      <Setter Property="Margin" Value="0,0,0,10"/>
+      <Setter Property="BorderBrush" Value="#E1DBEC"/>
+      <Setter Property="Background" Value="White"/>
+    </Style>
+  </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="22,20">
+      <TextBlock FontSize="25" FontWeight="SemiBold" Text="手机阅读窗" Margin="0,0,0,14"/>
+      <GroupBox Header="连接手机">
+        <StackPanel>
+          <TextBlock Foreground="#625B71" Text="打开手机的 USB 调试，插上数据线并在手机上允许此电脑。" Margin="0,0,0,8"/>
+          <DockPanel LastChildFill="True">
+            <Button x:Name="Refresh" DockPanel.Dock="Right" Content="刷新设备" Margin="8,0,0,0"/>
+            <ComboBox x:Name="Devices" MinHeight="35" VerticalContentAlignment="Center"
+                      DisplayMemberPath="Label" AutomationProperties.Name="已连接的手机"/>
+          </DockPanel>
+          <Expander Header="用 Wi-Fi 连接" Margin="0,10,0,0">
+            <StackPanel Margin="0,9,0,0">
+              <TextBlock Foreground="#625B71" Text="手机和电脑连同一 Wi-Fi。初次使用，在手机无线调试中点「使用配对码配对设备」。"/>
+              <Label Content="配对弹窗里的 IP:端口" Target="{Binding ElementName=PairAddress}" Padding="0,8,0,3"/>
+              <TextBox x:Name="PairAddress"/>
+              <Label Content="六位配对码" Target="{Binding ElementName=PairCode}" Padding="0,7,0,3"/>
+              <DockPanel LastChildFill="True">
+                <Button x:Name="Pair" DockPanel.Dock="Right" Content="配对" Margin="8,0,0,0"/>
+                <PasswordBox x:Name="PairCode" MaxLength="6" Padding="8,6" AutomationProperties.Name="六位配对码"/>
+              </DockPanel>
+              <Label Content="无线调试首页的 IP:端口" Target="{Binding ElementName=ConnectAddress}" Padding="0,7,0,3"/>
+              <DockPanel LastChildFill="True">
+                <Button x:Name="Connect" DockPanel.Dock="Right" Content="连接" Margin="8,0,0,0"/>
+                <TextBox x:Name="ConnectAddress"/>
+              </DockPanel>
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+      </GroupBox>
+      <GroupBox Header="阅读选项">
+        <StackPanel>
+          <CheckBox x:Name="Topmost" IsChecked="True" Content="小窗置顶" Margin="0,1,0,9"/>
+          <CheckBox x:Name="ScreenOff" IsChecked="True" Content="打开时关闭手机屏幕" Margin="0,0,0,7"/>
+          <TextBlock Foreground="#625B71" Text="小窗支持鼠标、滚轮和键盘。横向翻页也可以按住鼠标左键拖动。"/>
+        </StackPanel>
+      </GroupBox>
+      <TextBlock x:Name="Status" Foreground="#625B71" MinHeight="34" Margin="0,2,0,9"/>
+      <Button x:Name="Open" Content="打开阅读窗" IsDefault="True" IsEnabled="False"
+              Background="#513AB2" Foreground="White" MinHeight="42" FontWeight="SemiBold"/>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

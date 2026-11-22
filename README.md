@@ -29,6 +29,10 @@ ngrok http http://127.0.0.1:8787
 
 等 ngrok 显示 `online`，把 `Forwarding` 左侧的 HTTPS 地址填入手机。`127.0.0.1` 是电脑端的转发目标。手机的「配对令牌」使用 Codex Remote 生成的值，ngrok 的 Authtoken 只用于电脑上的 ngrok。电脑换网络后，需要能够重新连上隧道服务。公网隧道的 TLS 在服务商处终止时，服务商有能力接触传输内容。也可以使用自己的 HTTPS 入口。参阅 [ngrok Windows 安装说明](https://ngrok.com/download/windows)和[自建反向代理说明](docs/public-reverse-proxy.md)。
 
+## 手机阅读窗
+
+在 Windows 双击 `windows/Phone-Reading-Window.cmd`，通过 USB 或同一 Wi-Fi 打开可置顶的 Android 阅读小窗。首次准备和翻页、熄屏的操作见[手机阅读窗说明](docs/phone-reader.md)。
+
 ## 设备工具
 
 Android 0.9.2 搭配 Windows 配套服务 0.9.1 使用。从首页底部点「电脑」打开设备工具。在运行中的聊天点右上角「⋯」，可以打开「熄屏挂机到本轮结束」。
