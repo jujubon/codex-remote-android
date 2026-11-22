@@ -54,7 +54,7 @@ export function ArchiveDialog({ target, connected, request, onClose }: {
   return <dialog className="session-dialog" ref={dialog} onClose={onClose} aria-labelledby="archive-heading">
     <div className="session-sheet archive-sheet">
       <header className="sheet-title-row"><h2 id="archive-heading">{target === 'list' ? '已归档对话' : '归档对话'}</h2>
-        <button type="button" className="icon-button" aria-label="关闭" onClick={() => dialog.current?.close()}><CloseIcon /></button></header>
+        <button type="button" className="icon-button nav-icon-button" aria-label="关闭" onClick={() => dialog.current?.close()}><CloseIcon /></button></header>
       {target === 'list' ? <>
         {rows.map(row => <div className="archive-row" key={row.id}><div><strong>{row.name || row.preview || '未命名对话'}</strong><small>{row.cwd}</small></div>
           <button type="button" className="secondary-button" disabled={changing || loading || !connected} onClick={() => void change(row.id, false)}>恢复</button></div>)}
@@ -63,7 +63,7 @@ export function ArchiveDialog({ target, connected, request, onClose }: {
         {cursor && !loading && !error && <button type="button" disabled={!connected || changing} onClick={() => setPages({ after: cursor })}>加载更多</button>}
         {error && connected && <button type="button" disabled={changing} onClick={() => setPages({})}>刷新归档列表</button>}
       </> : <>
-        <p>将「{target.title}」移到电脑的已归档对话？之后可从手机首页「⋯ → 已归档对话」恢复。</p>
+        <p>将「{target.title}」移到电脑的已归档对话？之后可从手机首页「管理 → 已归档对话」恢复。</p>
         <button type="button" className="primary-button" disabled={changing || !connected || !!error} onClick={() => void change(target.id, true)}>确认归档</button>
       </>}
       {changing && <p role="status">等待电脑确认…</p>}

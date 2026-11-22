@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { RemoteMessage, RemoteThread } from '../types/protocol';
 import { Markdown } from './Markdown';
+import { ChevronDownIcon } from './Icons';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -106,7 +107,7 @@ export function ConversationContextPanel({ thread, messages }: { thread: RemoteT
           <strong>目标 / TODO</strong>
           <small>{summary}</small>
         </span>
-        <span className="context-chevron" aria-hidden="true">⌄</span>
+        <ChevronDownIcon className="context-chevron" />
       </button>
       {expanded && (
         <div className="context-content">

@@ -80,3 +80,15 @@ export function FolderIcon(props: IconProps) {
 export function ChatIcon(props: IconProps) {
   return <IconBase {...props}><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3.1A7.5 7.5 0 1 1 20 11.5Z" /><path d="M9 11.5h6" /></IconBase>;
 }
+
+export function MoreIcon(props: IconProps) {
+  return <IconBase {...props}><g fill="currentColor" stroke="none">
+    <circle cx="5" cy="12" r="1.6" />
+    <circle cx="12" cy="12" r="1.6" />
+    <circle cx="19" cy="12" r="1.6" />
+  </g></IconBase>;
+}
+
+export function MonitorIcon(props: IconProps) {
+  return <IconBase {...props}><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M12 17v3m-4 0h8" /></IconBase>;
+}

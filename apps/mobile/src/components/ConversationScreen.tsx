@@ -6,7 +6,7 @@ import { isContextCompactionItem } from '../hooks/useRemote';
 import { Composer } from './Composer';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ConversationContextPanel, isContextMessage, latestReasoning } from './ConversationContextPanel';
-import { ArrowLeftIcon, ShieldIcon, CloseIcon } from './Icons';
+import { ArrowLeftIcon, ChevronDownIcon, ChevronRightIcon, ShieldIcon, CloseIcon, MoreIcon } from './Icons';
 import { MessageBubble } from './MessageBubble';
 import { GitDiffPanel } from './GitDiffPanel';
 import { PromptQueuePanel } from './PromptQueuePanel';
@@ -15,7 +15,7 @@ import { ElapsedTime } from './ElapsedTime';
 
 interface ConversationScreenProps {
   onArchive?: () => void;
-  onDeviceTools: () => void;
+  onTaskPower: () => void;
   accountPanel: React.ReactNode;
   notice: React.ReactNode;
   thread: RemoteThread;
@@ -326,7 +326,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
+export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -337,6 +337,7 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
   const followScrollFrameRef = useRef<number | null>(null);
   const previousEntryCountRef = useRef(0);
   const settingsRef = useRef<HTMLDialogElement>(null);
+  const actionsRef = useRef<HTMLDialogElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hasNewContent, setHasNewContent] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
@@ -518,19 +519,28 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
   return (
     <main className="app-screen conversation-screen">
       <header className="top-bar conversation-top-bar">
-        <button className="back-button" type="button" onClick={onBack} aria-label="返回任务列表"><ArrowLeftIcon /></button>
+        <button className="back-button nav-icon-button" type="button" onClick={onBack} aria-label="返回任务列表"><ArrowLeftIcon /></button>
         <div className="conversation-title">
           <h1>{thread.title}</h1>
-          <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
-            setSettingsOpen(true);
-            settingsRef.current?.showModal();
-          }}>
-            <span>{thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}</span>
-            <b>{activeModel?.displayName || selectedModel || '模型'} ▾</b>
-            {selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
-          </button>
+          <div className="session-controls">
+            <span className="session-project">
+              {thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}
+            </span>
+            <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
+              setSettingsOpen(true);
+              settingsRef.current?.showModal();
+            }}>
+              <b>{activeModel?.displayName || selectedModel || '模型'}</b>
+              <ChevronDownIcon className="session-chevron" />
+              {selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
+            </button>
+          </div>
         </div>
-        <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
+        <div className="conversation-actions">
+          <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
+          {(onArchive || running) && <button className="nav-icon-button conversation-more" type="button"
+            aria-label="对话操作" aria-haspopup="dialog" onClick={() => actionsRef.current?.showModal()}><MoreIcon /></button>}
+        </div>
       </header>
 
 
@@ -636,7 +646,7 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
                 }}
               >
                 <summary>
-                  <span className="tool-group-disclosure" aria-hidden="true">›</span>
+                  <ChevronRightIcon className="tool-group-disclosure" />
                   {entry.type === 'process' ? <span className="process-label">{processLabel(entry.messages, currentTurnId)}</span> : <>
                     <strong>工具调用 · {entry.messages.length}</strong>
                     <small>{entry.messages.map((message) => message.toolName || '工具').slice(0, 3).join('、')}{entry.messages.length > 3 ? '…' : ''}</small>
@@ -673,7 +683,7 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
       }}>
         {settingsOpen && <div className="session-sheet">
           <header className="sheet-title-row"><h2 id="session-options">对话设置</h2>
-            <button type="button" className="icon-button" aria-label="关闭对话设置" onClick={() => settingsRef.current?.close()}><CloseIcon /></button>
+            <button type="button" className="icon-button nav-icon-button" aria-label="关闭对话设置" onClick={() => settingsRef.current?.close()}><CloseIcon /></button>
           </header>
       <section className="session-toolbar" aria-label="任务设置">
         <label>
@@ -705,16 +715,24 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
         {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
       </section>
           {accountPanel}
-          <button type="button" className="secondary-button" onClick={() => {
-            settingsRef.current?.close();
-            onDeviceTools();
-          }}>设备工具</button>
-          {onArchive && <button type="button" className="secondary-button" disabled={running || approvals.length > 0 || phase !== 'connected'} onClick={() => {
-            settingsRef.current?.close();
-            onArchive();
-          }}>归档这段对话</button>}
           {notice}
         </div>}
+      </dialog>
+      <dialog className="session-dialog" ref={actionsRef} aria-labelledby="conversation-actions-title">
+        <div className="session-sheet list-management">
+          <header className="sheet-title-row">
+            <h2 id="conversation-actions-title">对话操作</h2>
+            <button className="icon-button nav-icon-button" type="button" aria-label="关闭对话操作" onClick={() => actionsRef.current?.close()}><CloseIcon /></button>
+          </header>
+          {running && <button className="management-row" type="button" disabled={phase !== 'connected'} onClick={() => {
+            actionsRef.current?.close();
+            onTaskPower();
+          }}>熄屏挂机到本轮结束</button>}
+          {onArchive && <button className="management-row" type="button" disabled={running || approvals.length > 0 || phase !== 'connected'} onClick={() => {
+            actionsRef.current?.close();
+            onArchive();
+          }}>归档这段对话</button>}
+        </div>
       </dialog>
       {(running || thread.state !== 'idle' || phase !== 'connected') && <div className="composer-status" role="status">
         {phase !== 'connected' ? '连接中断，等待恢复' : running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
@@ -730,7 +748,7 @@ export function ConversationScreen({ onArchive, onDeviceTools, accountPanel, not
             <header>
               <span className={`agent-detail-state agent-state-${agentStatePresentation(selectedAgent.state).className}`} />
               <div><strong>{selectedAgent.label}</strong><small>{agentStatePresentation(selectedAgent.state).label}</small></div>
-              <button type="button" onClick={() => onSelectAgent(null)} aria-label="关闭 Subagent 详情">×</button>
+              <button type="button" onClick={() => onSelectAgent(null)} className="nav-icon-button" aria-label="关闭 Subagent 详情"><CloseIcon /></button>
             </header>
             <dl>
               {selectedAgent.thread?.agentRole && <><dt>角色</dt><dd>{selectedAgent.thread.agentRole}</dd></>}

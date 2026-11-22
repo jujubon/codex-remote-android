@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from 'react';
 import type { RemoteAttachment, RemoteMessage } from '../types/protocol';
 import { DiffView } from './DiffView';
 import { Markdown } from './Markdown';
+import { ChevronRightIcon } from './Icons';
 
 export function displayTime(timestamp: number, source?: RemoteMessage['timestampSource']): string {
   if (!source || source === 'turn' || !timestamp || timestamp <= 0) return '';
@@ -183,7 +184,7 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
             onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
           >
             <summary>
-              <span className="event-disclosure" aria-hidden="true">›</span>
+              <ChevronRightIcon className="event-disclosure" />
               <span className="event-kind">{isSubagent ? 'Agent' : isDiff ? 'Diff' : '工具'}</span>
               <span className="event-summary">
                 <strong>{author}</strong>

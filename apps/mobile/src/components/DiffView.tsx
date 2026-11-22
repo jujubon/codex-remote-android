@@ -2,6 +2,7 @@ interface DiffRow {
   kind: 'context' | 'add' | 'remove' | 'meta' | 'hunk';
   text: string;
 }
+import { ChevronRightIcon } from './Icons';
 
 interface DiffFile {
   path: string;
@@ -68,7 +69,7 @@ export function DiffView({ diff }: { diff: string }) {
         {files.map((file, index) => (
           <details className="diff-file" key={`${file.path}:${index}`} open={files.length === 1}>
             <summary>
-              <span className="diff-file-disclosure" aria-hidden="true">›</span>
+              <ChevronRightIcon className="diff-file-disclosure" />
               <code>{file.path}</code>
               <span className="diff-stat"><b>+{file.additions}</b><i>-{file.deletions}</i></span>
             </summary>

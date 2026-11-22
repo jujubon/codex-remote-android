@@ -4,7 +4,10 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
-import { DeviceToolsDialog } from './components/DeviceToolsDialog';
+import { ComputerScreen } from './components/ComputerScreen';
+import { DevicePowerDialog } from './components/DeviceTools';
+import { HomeNav, type HomePage } from './components/HomeNav';
+import { CloseIcon } from './components/Icons';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
@@ -23,7 +26,8 @@ export function popThreadBackStack(stack: string[]): { previousThreadId: string 
 export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
-  const [showDeviceTools, setShowDeviceTools] = useState(false);
+  const [homePage, setHomePage] = useState<HomePage>('projects');
+  const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
@@ -36,6 +40,8 @@ export function App() {
 
   const openRootThread = useCallback((threadId: string) => {
     threadBackStackRef.current = [];
+    setHomePage('projects');
+    setTaskPowerThreadId(null);
     setSelectedAgentByThread((current) => ({ ...current, [threadId]: null }));
     remote.selectThread(threadId);
   }, [remote.selectThread]);
@@ -115,18 +121,24 @@ export function App() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let listener: { remove: () => Promise<void> } | null = null;
+    let disposed = false;
     void CapacitorApp.addListener('backButton', () => {
       const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
       if (dialog) dialog.close();
       else if (showNewThread) setShowNewThread(false);
       else if (showSettings) setShowSettings(false);
       else if (remote.selectedThreadId) navigateBack();
+      else if (homePage === 'computer') setHomePage('projects');
       else void CapacitorApp.exitApp();
     }).then((handle) => {
-      listener = handle;
+      if (disposed) void handle.remove();
+      else listener = handle;
     });
-    return () => void listener?.remove();
-  }, [navigateBack, remote.selectedThreadId, showNewThread, showSettings]);
+    return () => {
+      disposed = true;
+      void listener?.remove();
+    };
+  }, [homePage, navigateBack, remote.selectedThreadId, showNewThread, showSettings]);
 
 
   useEffect(() => {
@@ -147,6 +159,7 @@ export function App() {
     threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
     setShowSettings(false);
     setConfig(null);
+    setHomePage('projects');
   }
 
   if (config === undefined) {
@@ -158,10 +171,13 @@ export function App() {
     );
   }
 
+  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />;
+
   if (!config || showSettings) {
     return (
       <SetupScreen
         initialConfig={config}
+        accountPanel={config ? accountPanel : undefined}
         onSaved={(saved) => {
           setConfig(saved);
           setShowSettings(false);
@@ -178,23 +194,25 @@ export function App() {
 
   const notice = <>
       {!remote.lastError && !backgroundError && remote.queueReceipt && (
-        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" onClick={remote.dismissReceipt}>×</button></div>
+        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
       )}
       {(remote.lastError || backgroundError) && (
         <div className="error-toast" role="alert">
           <span>{remote.lastError || backgroundError}</span>
-          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} aria-label="关闭错误提示">×</button>
+          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} className="nav-icon-button" aria-label="关闭错误提示"><CloseIcon /></button>
         </div>
       )}
   </>;
-  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />;
+
+  const phaseDetail = remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? '已连接电脑，Codex 服务正在等待就绪' : '');
+  const homeNav = <HomeNav page={homePage} onNavigate={setHomePage} />;
 
   return (
     <>
       {remote.selectedThread ? (
         <ConversationScreen
           key={remote.selectedThread.id}
-          onDeviceTools={() => setShowDeviceTools(true)}
+          onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
           onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
           notice={notice}
@@ -239,26 +257,33 @@ export function App() {
           onLoadAttachment={remote.loadHostAttachment}
           onDownloadAttachment={remote.downloadHostAttachment}
         />
+      ) : homePage === 'computer' ? (
+        <ComputerScreen config={config}
+          phase={remote.phase}
+          detail={phaseDetail}
+          onReconnect={remote.reconnect}
+          onSettings={() => setShowSettings(true)}
+          footer={homeNav}
+          notice={notice} />
       ) : (
         <ThreadList
           position={threadListPosition}
-          onDeviceTools={() => setShowDeviceTools(true)}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           hidden={hidden}
           threads={remote.threads}
           phase={remote.phase}
-          phaseDetail={remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? 'Bridge 已连接，但 Codex app-server 尚未就绪' : '')}
+          phaseDetail={phaseDetail}
           onSelect={openRootThread}
           onCreate={cwd => { setNewDirectory(cwd); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
-          footer={accountPanel}
+          footer={homeNav}
+          notice={notice}
           onSettings={() => setShowSettings(true)}
           onReconnect={remote.reconnect}
         />
       )}
 
-      {showDeviceTools && <DeviceToolsDialog config={config}
-        runningThreadId={remote.running ? remote.selectedThreadId ?? undefined : undefined}
-        onClose={() => setShowDeviceTools(false)} />}
+      {taskPowerThreadId && taskPowerThreadId === remote.selectedThreadId &&
+        <DevicePowerDialog config={config} phase={remote.phase} threadId={taskPowerThreadId} onClose={() => setTaskPowerThreadId(null)} />}
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
@@ -268,7 +293,6 @@ export function App() {
           models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
       )}
 
-      {!remote.selectedThread && notice}
     </>
   );
 }

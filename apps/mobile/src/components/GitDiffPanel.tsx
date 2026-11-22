@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { GitDiffSnapshot } from '../types/protocol';
 import { DiffView } from './DiffView';
+import { ChevronRightIcon } from './Icons';
 
 interface GitDiffPanelProps {
   snapshot: GitDiffSnapshot | null;
@@ -18,7 +19,7 @@ export function GitDiffPanel({ snapshot, onRefresh }: GitDiffPanelProps) {
     <section className="git-diff-panel" aria-label="Git 变更">
       <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary aria-label={`Git 变更，${expanded ? '点击收起' : '点击展开'}`}>
-          <span className="git-diff-disclosure" aria-hidden="true">›</span>
+          <ChevronRightIcon className="git-diff-disclosure" />
           <span className="git-diff-title"><strong>Git 变更</strong><small>{snapshot?.repositoryRoot || '等待读取仓库'}</small></span>
           <span className="git-diff-counts">
             {snapshot && !snapshot.error ? <><b>{snapshot.files} 文件</b><i>+{snapshot.additions}</i><em>-{snapshot.deletions}</em></> : <b>未载入</b>}

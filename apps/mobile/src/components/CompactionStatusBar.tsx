@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CompactionStatus } from '../types/protocol';
+import { CloseIcon } from './Icons';
 
 function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -51,7 +52,7 @@ export function CompactionStatusBar({ status, onDismiss }: { status: CompactionS
         {status.message && status.message !== label && <small>{status.message}</small>}
       </span>
       {active && <time>{formatElapsed(now - status.startedAt)}</time>}
-      {!active && <button type="button" onClick={onDismiss} aria-label="关闭上下文压缩状态">×</button>}
+      {!active && <button type="button" onClick={onDismiss} className="nav-icon-button" aria-label="关闭上下文压缩状态"><CloseIcon /></button>}
     </section>
   );
 }

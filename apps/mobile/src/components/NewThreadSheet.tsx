@@ -46,7 +46,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
         <div className="sheet-handle" />
         <div className="sheet-title-row">
           <h2 id="new-thread-title">新聊天</h2>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><CloseIcon /></button>
+          <button className="icon-button nav-icon-button" type="button" onClick={onClose} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
           {desktopOnly && <label><span>首条消息</span><textarea required placeholder="给 Codex 发消息…" rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}

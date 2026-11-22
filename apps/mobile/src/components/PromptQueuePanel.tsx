@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { PromptQueueItem } from '../types/protocol';
+import { ChevronDownIcon } from './Icons';
 
 interface PromptQueuePanelProps {
   items: PromptQueueItem[];
@@ -27,7 +28,7 @@ export function PromptQueuePanel({ items, onCancel, onPromote, onResume, running
     <section className="prompt-queue-panel" aria-label="提示词队列">
       <button className="prompt-queue-summary" type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
         <span><strong>下一轮队列</strong><small>{ordered.length} 条等待处理</small></span>
-        <span aria-hidden="true">⌄</span>
+        <ChevronDownIcon className="queue-chevron" />
       </button>
       {expanded && (
         <>
