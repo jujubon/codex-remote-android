@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteSocket } from '../src/lib/RemoteSocket';
+import { discoverLanUrl, supportsLanDiscovery, verifyLocalRoute } from '../src/lib/localRoute';
 import type { ClientMessage, ServerMessage } from '../src/types/protocol';
+
+vi.mock('../src/lib/localRoute', () => ({
+  discoverLanUrl: vi.fn(),
+  supportsLanDiscovery: vi.fn(),
+  verifyLocalRoute: vi.fn(),
+}));
 
 class TestWebSocket {
   static readonly CONNECTING = 0;
@@ -13,7 +20,7 @@ class TestWebSocket {
   sent: ClientMessage[] = [];
   close = vi.fn(() => { this.readyState = 3; });
 
-  constructor() {
+  constructor(readonly url: string) {
     TestWebSocket.instances.push(this);
   }
 
@@ -48,6 +55,7 @@ function connectedSocket() {
 describe('RemoteSocket foreground recovery', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.resetAllMocks();
     TestWebSocket.instances.length = 0;
     vi.stubGlobal('WebSocket', TestWebSocket);
     vi.stubGlobal('navigator', { onLine: true });
@@ -121,5 +129,32 @@ describe('RemoteSocket foreground recovery', () => {
     vi.advanceTimersByTime(14_000);
     expect(TestWebSocket.instances).toHaveLength(2);
     expect(TestWebSocket.instances[0].close).toHaveBeenCalledOnce();
+  });
+
+  it('discovers LAN without a public connection, follows DHCP changes, and returns to the fixed domain', async () => {
+    vi.mocked(supportsLanDiscovery).mockReturnValue(true);
+    const first = 'http://192.168.20.25:18788';
+    const second = 'http://192.168.20.26:18788';
+    let reachable: string | undefined = first;
+    vi.mocked(discoverLanUrl).mockImplementation(async () => reachable);
+    vi.mocked(verifyLocalRoute).mockImplementation(async candidate => candidate === reachable);
+    const client = new RemoteSocket({
+      serverUrl: 'https://remote.example', token: 'test-token', onPhase: vi.fn(), onMessage: vi.fn(),
+    });
+    client.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(TestWebSocket.instances.map(socket => socket.url)).toEqual(['ws://192.168.20.25:18788/ws']);
+    TestWebSocket.instances[0].welcome();
+    expect(client.serverUrl).toBe(first);
+
+    reachable = second;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(TestWebSocket.instances[1].url).toBe('ws://192.168.20.26:18788/ws');
+    TestWebSocket.instances[1].welcome();
+    expect(client.serverUrl).toBe(second);
+
+    reachable = undefined;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(TestWebSocket.instances[2].url).toBe('wss://remote.example/ws');
   });
 });

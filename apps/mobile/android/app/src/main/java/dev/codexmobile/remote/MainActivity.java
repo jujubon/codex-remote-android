@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CodexBackgroundPlugin.class);
         registerPlugin(CodexFileTransferPlugin.class);
         registerPlugin(DeviceClipboardPlugin.class);
+        registerPlugin(LanDiscoveryPlugin.class);
         registerPlugin(CrossNetworkReaderPlugin.class);
         super.onCreate(savedInstanceState);
     }

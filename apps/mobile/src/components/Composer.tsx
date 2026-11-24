@@ -4,9 +4,9 @@ import { PlusIcon, SendIcon, StopIcon } from './Icons';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
 
-export function effectiveDeliveryMode(running: boolean, selectedMode: DeliveryMode): DeliveryMode {
+export function effectiveDeliveryMode(running: boolean, selectedMode: DeliveryMode, canSteer = true): DeliveryMode {
   if (!running) return 'auto';
-  return selectedMode === 'queue' ? 'queue' : 'steer';
+  return !canSteer || selectedMode === 'queue' ? 'queue' : 'steer';
 }
 
 export function shouldSubmitComposerShortcut(event: { key: string; ctrlKey?: boolean; metaKey?: boolean; isComposing?: boolean }): boolean {
@@ -24,13 +24,15 @@ interface ComposerProps {
   connected: boolean;
   running: boolean;
   canInterrupt: boolean;
+  canSteer?: boolean;
+  desktopOnly?: boolean;
   models: ModelOption[];
   skills: SkillOption[];
   onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode) => Promise<boolean> | boolean;
   onInterrupt: () => void;
 }
 
-export function Composer({ connected, running, onSend, onInterrupt, canInterrupt, models, skills }: ComposerProps) {
+export function Composer({ connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills }: ComposerProps) {
   const [content, setContent] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
@@ -79,10 +81,11 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
     ).slice(0, 8);
   }, [commandOptions, content]);
 
+  const deliveryMode = effectiveDeliveryMode(running, selectedDeliveryMode, canSteer);
+
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     if (sendingRef.current || sending || (!content.trim() && files.length === 0)) return;
-    const deliveryMode = effectiveDeliveryMode(running, selectedDeliveryMode);
     sendingRef.current = true;
     setSending(true);
     try {
@@ -106,7 +109,6 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
     });
   }
 
-  const deliveryMode = effectiveDeliveryMode(running, selectedDeliveryMode);
   const placeholder = sending
     ? deliveryMode === 'queue' ? '正在加入下一轮…' : '正在上传并发送…'
     : !connected ? '等待重新连接…'
@@ -125,7 +127,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
               className={deliveryMode === 'steer' ? 'is-selected' : ''}
               aria-pressed={deliveryMode === 'steer'}
               onClick={() => setSelectedDeliveryMode('steer')}
-              disabled={sending}
+              disabled={sending || !canSteer}
             >
               <strong>引导当前</strong>
               <small>立即补充要求</small>
@@ -149,8 +151,11 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
       {running && deliveryMode === 'queue' && (
         <div className="queue-mode-notice" role="status">
           <span aria-hidden="true" />
-          <p><strong>已选择排队</strong><small>这条提示词不会引导当前执行，将在当前任务结束后作为下一轮发送。</small></p>
+          <p><strong>{canSteer ? '已选择排队' : '当前桌面连接支持排队'}</strong><small>这条提示词将在当前任务结束后作为下一轮发送。</small></p>
         </div>
+      )}
+      {files.length > 0 && desktopOnly && (!canSteer || deliveryMode === 'queue') && (
+        <p className="composer-file-hint">所选文件将上传到电脑，并以本地文件路径随消息发送。</p>
       )}
       {suggestions.length > 0 && (
         <div className="command-palette" role="listbox" aria-label="斜杠命令">

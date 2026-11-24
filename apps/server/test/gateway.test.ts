@@ -4,12 +4,14 @@ import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { MobileGateway, accountUsage, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
 import type { ServerConfig } from "../src/config.js";
 import { PromptQueueStore } from "../src/prompt-queue.js";
 import { DesktopActionError, type desktopAction } from "../src/windows-desktop.js";
+import { FileTransferManager } from "../src/file-transfer.js";
 
 
 it("maps account limits without duplicate buckets or inventing missing windows", () => {
@@ -137,9 +139,9 @@ const closers: Array<() => Promise<void>> = [];
 afterEach(async () => { while (closers.length) await closers.pop()?.(); });
 
 async function start(desktop?: FakeDesktop, promptQueue?: PromptQueueStore, overrides?: Partial<ServerConfig>,
-                     runDesktopAction?: typeof desktopAction) {
+                     runDesktopAction?: typeof desktopAction, files?: FileTransferManager) {
   const bridge = new FakeBridge();
-  const gateway = new MobileGateway(bridge as never, { ...config, ...overrides }, desktop as never, undefined, promptQueue, runDesktopAction);
+  const gateway = new MobileGateway(bridge as never, { ...config, ...overrides }, desktop as never, files, promptQueue, runDesktopAction);
   const server = createServer();
   server.on("upgrade", (request, socket, head) => gateway.handleUpgrade(request, socket, head));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -756,10 +758,60 @@ describe("MobileGateway", () => {
     ws.send(JSON.stringify({ ...turn, threadId: "uncertain", requestId: "unknown" }));
     await waitFor(() => messages.filter(message => message.type === "turn.started").length === 2);
     await waitFor(() => messages.some(message => message.requestId === "unknown" && message.code === "submission_state_unknown"));
-    expect(messages.find(message => message.requestId === "steer")).toMatchObject({ code: "desktop_route_limited" });
+    expect(messages.find(message => message.requestId === "steer")).toMatchObject({ code: "desktop_steer_unavailable" });
     expect(actions.filter(action => action === "native-send")).toHaveLength(2);
     await waitFor(() => messages.some(message => message.type === "thread" && JSON.stringify(message.thread).includes('"text":"OK"')), 3500);
     expect(bridge.calls.some(call => call.method === "turn/start")).toBe(false);
+    ws.close();
+  });
+
+  it("sends uploaded image and file references and uses the desktop queue without starting a second turn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cmr-native-files-"));
+    closers.push(() => rm(root, { recursive: true, force: true }));
+    let now = Date.now();
+    const files = await FileTransferManager.create({ allowedRoots: [root], uploadDirectory: join(root, "uploads"),
+      now: () => now, uploadTtlMs: 1_000 });
+    const uploads = await Promise.all(["photo.png", "notes.txt"].map(fileName => files.receiveUpload({
+      stream: Readable.from([Buffer.from("fixture")]), fileName, contentLength: 7,
+      mimeType: fileName.endsWith(".png") ? "image/png" : "text/plain",
+    })));
+    const desktop = new FakeDesktop();
+    desktop.ready = desktop.owner = false;
+    const actions: Parameters<typeof desktopAction>[0][] = [];
+    const { bridge, port } = await start(desktop, undefined, { desktopOnly: true }, async request => {
+      actions.push(request);
+      return request.action === "native-queue" ? { queue_id: "queue-1" } : { turn_id: "turn-native" };
+    }, files);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`], { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    await waitFor(() => messages.some(message => message.type === "welcome"));
+    expect(messages.find(message => message.type === "welcome")).toMatchObject({ desktopIpcReady: false });
+    const base = { type: "turn.start", threadId: "thread-1", text: "Review the files",
+      attachments: uploads.map(upload => ({ uploadId: upload.uploadId, localPath: "/untrusted/mobile/path" })) };
+    ws.send(JSON.stringify({ ...base, requestId: "send", clientUserMessageId: "message-1" }));
+    await waitFor(() => messages.some(message => message.requestId === "send"));
+    const prompt = actions[0]?.prompt;
+    expect(prompt).toContain("Review the files");
+    expect(prompt).not.toContain("untrusted/mobile/path");
+    for (const upload of uploads) expect(prompt).toContain(JSON.stringify(upload.path));
+    expect(messages.find(message => message.requestId === "send")).toMatchObject({
+      type: "turn.started", turn: { id: "turn-native", submittedText: prompt },
+    });
+
+    const queue = { ...base, deliveryMode: "queue", clientUserMessageId: "message-2" };
+    ws.send(JSON.stringify({ ...queue, requestId: "queue" }));
+    ws.send(JSON.stringify({ ...queue, requestId: "duplicate" }));
+    ws.send(JSON.stringify({ ...base, requestId: "steer", deliveryMode: "steer", clientUserMessageId: "message-3" }));
+    await waitFor(() => messages.some(message => message.requestId === "duplicate"));
+    expect(actions.map(action => action.action)).toEqual(["native-send", "native-queue"]);
+    expect(actions[1]?.prompt).toBe(prompt);
+    expect(messages.find(message => message.requestId === "queue")).toMatchObject({ type: "prompt.desktopQueued", queueId: "queue-1" });
+    expect(messages.find(message => message.requestId === "steer")).toMatchObject({ code: "desktop_steer_unavailable" });
+    expect(bridge.calls.some(call => call.method === "turn/start" || call.method === "turn/steer")).toBe(false);
+    now += 5_000;
+    expect(await files.cleanupExpired()).toMatchObject({ uploads: 0 });
     ws.close();
   });
 

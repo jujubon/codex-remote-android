@@ -237,6 +237,8 @@ export function App() {
           phaseDetail={remote.phaseDetail}
           running={remote.running}
           canInterrupt={remote.canInterrupt}
+          canSteer={remote.canSteer}
+          desktopOnly={remote.desktopOnly}
           currentTurnId={remote.selectedTurnId}
           historyHasMore={Boolean(remote.selectedHistory?.hasMore)}
           historyLoading={remote.historyLoading}

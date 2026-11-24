@@ -21,6 +21,8 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, onReconne
   const endpoint = URL.canParse(active) ? new URL(active).host : '';
   const deviceConfig = useMemo(() => active === config.serverUrl ? config : { ...config, serverUrl: active }, [config, active]);
   const connected = phase === 'connected';
+  const routeLabel = !connected ? '' : active !== config.serverUrl ? '局域网直连 · '
+    : /^(https|wss):\/\//i.test(active) ? '固定域名 · ' : '';
   const { status, updateStatus } = useDeviceStatus(deviceConfig, connected, true);
   return <main className="app-screen computer-screen">
     <header className="top-bar computer-top-bar">
@@ -31,7 +33,7 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, onReconne
     <div className="computer-scroll">
       <section className="computer-connection" aria-label="连接状态">
         <ConnectionStatus phase={phase} detail={detail} onReconnect={onReconnect} />
-        {endpoint && <span>{connected && config.localUrl && (active === config.localUrl ? '局域网直连 · ' : '固定域名 · ')}{endpoint}</span>}
+        {endpoint && <span>{routeLabel}{endpoint}</span>}
       </section>
       <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />

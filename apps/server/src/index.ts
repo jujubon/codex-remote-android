@@ -1,17 +1,18 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac } from "node:crypto";
-import { BlockList } from "node:net";
+import { BlockList, type Socket } from "node:net";
 import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { ReaderStream } from "./reader-stream.js";
 import { LocalReaderError, localReaderLauncher } from "./local-reader.js";
 import { DeviceTools } from "./device-tools.js";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
 import { buildCodexEnvironment, HOST_VERSION, loadConfig } from "./config.js";
 import { DesktopIpcBridge } from "./desktop-ipc-bridge.js";
 import { FileTransferError, FileTransferManager } from "./file-transfer.js";
+import { LAN_PORT, listenForLanDiscovery, trustedLanAddress } from "./lan-discovery.js";
 import { MobileGateway } from "./gateway.js";
 import { PromptQueueStore } from "./prompt-queue.js";
 
@@ -46,13 +47,27 @@ const reader = new ReaderStream(readerViewerPort, Date.now,
   localReaderLauncher(process.env.CMR_PHONE_READER_SCRIPT, readerViewerPort),
   localReaderLauncher(process.env.CMR_PHONE_READER_SCRIPT, readerViewerPort, true));
 const server = createServer((request, response) => void handleHttp(request, response));
-let localServer: ReturnType<typeof createServer> | undefined;
-let localHost = "";
+let localBinding: {
+  listener: ReturnType<typeof createServer>;
+  address: string;
+  cidr: string;
+  subnet: BlockList;
+  sockets: Set<Socket>;
+} | undefined;
 let localListenerTimer: ReturnType<typeof setInterval> | undefined;
+let closeDiscovery: (() => void) | undefined;
+
+function closeLocalListener(): void {
+  const binding = localBinding;
+  localBinding = undefined;
+  if (!binding) return;
+  binding.listener.close();
+  for (const socket of binding.sockets) socket.destroy();
+}
 
 async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const proofRequest = /^\/api\/local-proof\?nonce=([a-f0-9]{32})$/.exec(request.url ?? "");
-  if (request.method === "GET" && proofRequest && request.socket.localPort === 18788 && request.socket.localAddress === localHost) {
+  if (request.method === "GET" && proofRequest && request.socket.localPort === LAN_PORT && request.socket.localAddress === localBinding?.address) {
     const origin = request.headers.origin;
     if (origin && !config.allowedOrigins.has(origin)) {
       json(response, 403, { error: "origin_not_allowed" });
@@ -251,12 +266,13 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(heartbeat);
   clearInterval(fileCleanup);
   clearInterval(localListenerTimer);
+  closeDiscovery?.();
   device.stopHold();
   reader.close();
   gateway.close();
   await desktopIpc.stop();
   await bridge.stop();
-  localServer?.close();
+  closeLocalListener();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5_000).unref();
 }
@@ -281,32 +297,48 @@ server.listen(config.port, config.host, () => {
   if (config.packagedNodeReplRuntime)
     console.log(`[server] packaged Node REPL runtime ${config.packagedNodeReplRuntime.nodeRepl}`);
 });
-localHost = await readFile(join(dirname(config.promptQueueFile), "lan-address.txt"), "utf8").then(value => value.trim(), () => "");
-if (config.host === "127.0.0.1" && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(localHost)) {
-  const refreshLocalListener = () => {
-    const adapter = Object.values(networkInterfaces()).flat().find(entry => entry?.family === "IPv4" && entry.address === localHost);
-    const prefix = Number(adapter?.cidr?.split("/")[1]);
-    if (!adapter || !Number.isInteger(prefix) || prefix < 1 || prefix > 32) {
-      localServer?.close();
-      localServer = undefined;
-      return;
-    }
-    if (localServer) return;
-    const subnet = new BlockList();
-    subnet.addSubnet(localHost, prefix);
-    const listener = createServer((request, response) => void handleHttp(request, response));
-    localServer = listener;
-    listener.prependListener("connection", socket => {
-      if (!socket.remoteAddress || !subnet.check(socket.remoteAddress)) socket.destroy();
-    });
-    listener.on("upgrade", (request, socket, head) => gateway.handleUpgrade(request, socket, head));
-    listener.on("error", error => {
-      if (localServer === listener) localServer = undefined;
-      console.warn("[server] LAN listener unavailable:", error.message);
-    });
-    listener.listen(18788, localHost);
-  };
-  refreshLocalListener();
-  localListenerTimer = setInterval(refreshLocalListener, 5000);
-  localListenerTimer.unref();
+if (config.host === "127.0.0.1") {
+  const stateDirectory = dirname(config.promptQueueFile);
+  const adapterFile = join(stateDirectory, "lan-interface.txt");
+  const readSetting = (path: string) => readFile(path, "utf8").then(value => value.trim(), () => "");
+  let adapterName = await readSetting(adapterFile);
+  if (!adapterName) {
+    const previousAddress = await readSetting(join(stateDirectory, "lan-address.txt"));
+    const interfaces = networkInterfaces();
+    adapterName = Object.keys(interfaces).find(name =>
+      trustedLanAddress(interfaces, name, previousAddress)?.address === previousAddress) ?? "";
+    if (adapterName) await writeFile(adapterFile, adapterName, { flag: "wx" }).catch(() => {});
+  }
+  if (adapterName) {
+    const refreshLocalListener = () => {
+      const adapter = trustedLanAddress(networkInterfaces(), adapterName, localBinding?.address);
+      if (localBinding && adapter?.cidr === localBinding.cidr) return;
+      closeLocalListener();
+      if (!adapter?.cidr) return;
+      const { address, cidr } = adapter;
+      const subnet = new BlockList();
+      subnet.addSubnet(address, Number(cidr.split("/")[1]));
+      const listener = createServer((request, response) => void handleHttp(request, response));
+      const sockets = new Set<Socket>();
+      localBinding = { listener, address, cidr, subnet, sockets };
+      listener.prependListener("connection", socket => {
+        if (!socket.remoteAddress || !subnet.check(socket.remoteAddress)) {
+          socket.destroy();
+          return;
+        }
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+      });
+      listener.on("upgrade", (request, socket, head) => gateway.handleUpgrade(request, socket, head));
+      listener.on("error", error => {
+        if (localBinding?.listener === listener) closeLocalListener();
+        console.warn("[server] LAN listener unavailable:", error.message);
+      });
+      listener.listen(LAN_PORT, address);
+    };
+    refreshLocalListener();
+    closeDiscovery = listenForLanDiscovery(config.token, () => localBinding?.listener.listening ? localBinding : undefined);
+    localListenerTimer = setInterval(refreshLocalListener, 5000);
+    localListenerTimer.unref();
+  }
 }

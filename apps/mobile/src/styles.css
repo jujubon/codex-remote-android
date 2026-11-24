@@ -218,6 +218,7 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 .deny-button { border: 1px solid transparent; background: transparent; color: var(--red); }
 
 .composer-shell { flex: 0 0 auto; padding: 8px calc(var(--app-safe-right) + 10px) calc(var(--app-safe-bottom) + 9px) calc(var(--app-safe-left) + 10px); border-top: 1px solid var(--line); background: var(--surface); }
+.composer-file-hint { margin: 0 0 6px; color: var(--muted); font-size: .75rem; }
 .composer-running-controls { display: flex; align-items: stretch; gap: 7px; margin-bottom: 7px; }
 .delivery-mode-picker { min-width: 0; flex: 1 1 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid #deded8; border-radius: 9px; background: #f1f1ee; }
 .delivery-mode-picker button { min-width: 0; min-height: 40px; display: grid; align-content: center; gap: 1px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: #6b6b65; text-align: left; }

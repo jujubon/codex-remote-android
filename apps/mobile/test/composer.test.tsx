@@ -15,6 +15,7 @@ describe('Composer delivery mode', () => {
 
   it('preserves an explicit next-turn queue choice while the task is active', () => {
     expect(effectiveDeliveryMode(true, 'queue')).toBe('queue');
+    expect(effectiveDeliveryMode(true, 'steer', false)).toBe('queue');
   });
 });
 

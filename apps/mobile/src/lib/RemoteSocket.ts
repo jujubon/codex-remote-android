@@ -1,7 +1,7 @@
 import type { ClientMessage, ConnectionPhase, ServerMessage } from '../types/protocol';
 import { isServerMessage, WIRE_PROTOCOL } from '../types/protocol';
 import { toWebSocketUrl } from './configStore';
-import { verifyLocalRoute } from './localRoute';
+import { discoverLanUrl, supportsLanDiscovery, verifyLocalRoute } from './localRoute';
 
 interface RemoteSocketOptions {
   serverUrl: string;
@@ -34,7 +34,7 @@ export class RemoteSocket {
   private networkListenersInstalled = false;
   private routeTimer: number | null = null;
   private routeGeneration = 0;
-  private localRetryAfter = 0;
+  private failedLocalRoute?: { url: string; retryAfter: number };
   private checkingRoute = false;
   private activeServerUrl = '';
   private handshakeTimer: number | null = null;
@@ -112,8 +112,7 @@ export class RemoteSocket {
 
     const generation = ++this.routeGeneration;
     this.options.onPhase(reconnecting ? 'reconnecting' : 'connecting');
-    const serverUrl = route ?? (this.options.localUrl && Date.now() >= this.localRetryAfter &&
-      await verifyLocalRoute(this.options.localUrl, this.options.token) ? this.options.localUrl : this.options.serverUrl);
+    const serverUrl = route ?? (this.canCheckLocalRoute() ? await this.findLocalRoute() : undefined) ?? this.options.serverUrl;
     if (this.manuallyClosed || generation !== this.routeGeneration) return;
     let wsUrl: string;
     try {
@@ -127,14 +126,14 @@ export class RemoteSocket {
     const tokenProtocol = `token.${base64UrlUtf8(this.options.token)}`;
     const socket = new WebSocket(wsUrl, [WIRE_PROTOCOL, tokenProtocol]);
     this.socket = socket;
-    const isLocal = serverUrl === this.options.localUrl;
+    const isLocal = serverUrl !== this.options.serverUrl;
     this.handshakeTimer = window.setTimeout(() => {
       if (socket !== this.socket || this.welcomed) return;
       this.clearTimers();
       this.socket = null;
       socket.close();
       if (isLocal) {
-        this.localRetryAfter = Date.now() + 30_000;
+        this.failedLocalRoute = { url: serverUrl, retryAfter: Date.now() + 30_000 };
         void this.open(true, this.options.serverUrl);
       } else {
         this.scheduleReconnect('等待电脑连接超时');
@@ -185,7 +184,7 @@ export class RemoteSocket {
 
     socket.onclose = (event) => {
       if (socket !== this.socket) return;
-      if (!this.welcomed && serverUrl === this.options.localUrl) this.localRetryAfter = Date.now() + 30_000;
+      if (!this.welcomed && isLocal) this.failedLocalRoute = { url: serverUrl, retryAfter: Date.now() + 30_000 };
       this.socket = null;
       this.welcomed = false;
       this.clearTimers();
@@ -221,7 +220,7 @@ export class RemoteSocket {
     if (this.networkListenersInstalled) return;
     window.addEventListener('offline', this.handleNetworkOffline);
     window.addEventListener('online', this.handleNetworkOnline);
-    if (this.options.localUrl) this.routeTimer = window.setInterval(() => void this.refreshRoute(), 10_000);
+    if (this.canCheckLocalRoute()) this.routeTimer = window.setInterval(() => void this.refreshRoute(), 10_000);
     this.networkListenersInstalled = true;
   }
 
@@ -235,12 +234,11 @@ export class RemoteSocket {
   }
 
   private async refreshRoute(): Promise<void> {
-    const local = this.options.localUrl;
-    if (!local || this.checkingRoute || !this.welcomed || this.manuallyClosed || this.suspended || document.hidden) return;
+    if (!this.canCheckLocalRoute() || this.checkingRoute || !this.welcomed || this.manuallyClosed || this.suspended || document.hidden) return;
     const generation = this.routeGeneration;
     this.checkingRoute = true;
     try {
-      const next = Date.now() >= this.localRetryAfter && await verifyLocalRoute(local, this.options.token) ? local : this.options.serverUrl;
+      const next = await this.findLocalRoute() ?? this.options.serverUrl;
       if (generation !== this.routeGeneration || !this.welcomed || this.suspended || next === this.activeServerUrl) return;
       this.clearTimers();
       const old = this.socket;
@@ -249,6 +247,26 @@ export class RemoteSocket {
       old?.close(1000, 'network route changed');
       void this.open(true, next);
     } finally { this.checkingRoute = false; }
+  }
+
+  private canCheckLocalRoute(): boolean {
+    return Boolean(this.options.localUrl) || supportsLanDiscovery(this.options.serverUrl);
+  }
+
+  private async findLocalRoute(): Promise<string | undefined> {
+    const active = this.activeServerUrl !== this.options.serverUrl ? this.activeServerUrl : undefined;
+    const manual = this.options.localUrl;
+    for (const url of new Set([active, manual])) {
+      if (url && await this.verifyLocalCandidate(url)) return url;
+    }
+    if (!supportsLanDiscovery(this.options.serverUrl)) return;
+    const discovered = await discoverLanUrl(this.options.token);
+    if (discovered && discovered !== active && discovered !== manual && await this.verifyLocalCandidate(discovered)) return discovered;
+  }
+
+  private verifyLocalCandidate(url: string): Promise<boolean> {
+    if (this.failedLocalRoute?.url === url && this.failedLocalRoute.retryAfter > Date.now()) return Promise.resolve(false);
+    return verifyLocalRoute(url, this.options.token);
   }
 
   private scheduleReconnect(reason?: string): void {

@@ -1,4 +1,20 @@
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
+import { normalizeLocalUrl } from './configStore';
+
+const lanDiscovery = registerPlugin<{ discover(options: { token: string }): Promise<{ address?: string }> }>('LanDiscovery');
+
+export function supportsLanDiscovery(serverUrl: string): boolean {
+  return Capacitor.getPlatform() === 'android' && /^(https|wss):\/\//i.test(serverUrl);
+}
+
+export async function discoverLanUrl(token: string): Promise<string | undefined> {
+  try {
+    const { address } = await lanDiscovery.discover({ token });
+    return address ? normalizeLocalUrl(`http://${address}:18788`) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function verifyLocalRoute(localUrl: string, token: string): Promise<boolean> {
   try {

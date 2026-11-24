@@ -95,6 +95,8 @@ interface DownloadRecord extends DownloadTicket {
 
 interface UploadRecord extends StoredUpload {
   storageDirectory: string;
+  pins: number;
+  committed: boolean;
 }
 
 interface TrustedFileRecord {
@@ -311,6 +313,8 @@ export class FileTransferManager {
         createdAt,
         expiresAt: createdAt + this.uploadTtlMs,
         storageDirectory,
+        pins: 0,
+        committed: false,
       };
       this.uploads.set(uploadId, record);
       return this.publicUpload(record);
@@ -323,15 +327,16 @@ export class FileTransferManager {
 
   pinUpload(uploadId: string): boolean {
     const record = this.uploads.get(uploadId);
-    if (!record) return false;
-    record.expiresAt = Number.MAX_SAFE_INTEGER;
+    if (!record || (record.pins === 0 && record.expiresAt <= this.now())) return false;
+    record.pins++;
     return true;
   }
 
   releaseUpload(uploadId: string): boolean {
     const record = this.uploads.get(uploadId);
     if (!record) return false;
-    record.expiresAt = this.now() + this.uploadTtlMs;
+    record.pins = Math.max(0, record.pins - 1);
+    if (!record.committed && record.pins === 0) record.expiresAt = this.now() + this.uploadTtlMs;
     return true;
   }
 
@@ -342,6 +347,7 @@ export class FileTransferManager {
     const markerPath = resolve(record.storageDirectory, COMMITTED_UPLOAD_MARKER);
     const marker = await open(markerPath, "a", 0o600);
     await marker.close();
+    record.committed = true;
     record.expiresAt = Number.MAX_SAFE_INTEGER;
     return true;
   }
@@ -349,7 +355,7 @@ export class FileTransferManager {
   async getUpload(uploadId: string): Promise<StoredUpload> {
     const record = this.uploads.get(uploadId);
     if (!record) throw new FileTransferError("TRANSFER_NOT_FOUND", "upload was not found", 404);
-    if (record.expiresAt <= this.now()) {
+    if (record.pins === 0 && record.expiresAt <= this.now()) {
       await this.removeUpload(uploadId);
       throw new FileTransferError("TRANSFER_EXPIRED", "upload has expired", 410);
     }
@@ -493,7 +499,7 @@ export class FileTransferManager {
       }
     }
     for (const [id, record] of this.uploads) {
-      if (record.expiresAt <= now) {
+      if (record.pins === 0 && record.expiresAt <= now) {
         this.uploads.delete(id);
         await rm(record.storageDirectory, { recursive: true, force: true });
         uploads += 1;

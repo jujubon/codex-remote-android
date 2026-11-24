@@ -1195,6 +1195,7 @@ export function useRemote(config: RemoteConfig | null) {
   const [connectionUrl, setConnectionUrl] = useState('');
   const [codexReady, setCodexReady] = useState(false);
   const [desktopOnly, setDesktopOnly] = useState(false);
+  const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
   const [projectStatus, setProjectStatus] = useState('');
@@ -1953,6 +1954,7 @@ export function useRemote(config: RemoteConfig | null) {
         case 'welcome': {
           setArchiveSupported(message.archiveManagement === true);
           setDesktopOnly(message.desktopOnly === true);
+          setDesktopIpcReady(message.desktopIpcReady);
           setDesktopProjectMenus(message.desktopOnly === true && message.projectCreation === true);
           setDesktopProjects([]);
           setCodexReady(message.codexReady);
@@ -1998,6 +2000,7 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'status':
+          if (typeof message.desktopIpcReady === 'boolean') setDesktopIpcReady(message.desktopIpcReady);
           setCodexReady(message.codexReady);
           if (message.codexReady) {
             setPhase('connected');
@@ -2171,11 +2174,12 @@ export function useRemote(config: RemoteConfig | null) {
         case 'turn.started': {
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
+          const submittedText = stringValue(turn?.submittedText);
           if (message.requestId) setMessagesByThread(current => ({
             ...current,
             [message.threadId]: (current[message.threadId] ?? []).map(item =>
               item.id === `local_${message.requestId}`
-                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId } : item),
+                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: submittedText ?? item.content } : item),
           }));
           if (turnId) setTurnIds((current) => ({ ...current, [message.threadId]: turnId }));
           updateThreadState(message.threadId, 'running');
@@ -2655,7 +2659,7 @@ export function useRemote(config: RemoteConfig | null) {
       try {
         for (const file of files) {
           const upload = await uploadRemoteFile({
-            serverUrl: config.serverUrl,
+            serverUrl: socketRef.current?.serverUrl ?? config.serverUrl,
             token: config.pairingToken,
             file,
             fileName: file.name,
@@ -2921,7 +2925,8 @@ export function useRemote(config: RemoteConfig | null) {
     [approvals, selectedThreadId],
   );
   const running = selectedThread?.state === 'running';
-  const canInterrupt = Boolean(selectedThreadId && turnIds[selectedThreadId]);
+  const canSteer = !(desktopOnly && desktopIpcReady === false);
+  const canInterrupt = canSteer && Boolean(selectedThreadId && turnIds[selectedThreadId]);
 
   return {
     phase,
@@ -2929,6 +2934,7 @@ export function useRemote(config: RemoteConfig | null) {
     connectionUrl: phase === 'connected' ? connectionUrl : '',
     codexReady,
     desktopOnly,
+    canSteer,
     archiveSupported, archiveRequest,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,
     usage, usageStatus, refreshUsage, modelPending,

@@ -1,6 +1,4 @@
 import type { IncomingMessage } from "node:http";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { desktopAction, DesktopActionError } from "./windows-desktop.js";
 import { readFile } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
@@ -296,11 +294,15 @@ export class MobileGateway {
       if (event.messages.length === 0) this.scheduleQueueDrain(event.conversationId);
     });
     desktopIpc?.on("ready", () => {
+      if (this.config.desktopOnly) this.broadcast({ type: "status", codexReady: this.bridge.ready, desktopIpcReady: true });
       for (const socket of this.wss.clients)
         for (const threadId of this.socketThreads.get(socket) ?? [])
           void this.restoreDesktopSubscription(socket, threadId);
     });
-    desktopIpc?.on("offline", () => this.clearDesktopState());
+    desktopIpc?.on("offline", () => {
+      this.clearDesktopState();
+      if (this.config.desktopOnly) this.broadcast({ type: "status", codexReady: this.bridge.ready, desktopIpcReady: false });
+    });
     desktopIpc?.on("reset", () => this.clearDesktopState());
     desktopIpc?.on("ownerLost", (threadId: string) => {
       this.desktopThreads.delete(threadId);
@@ -464,6 +466,7 @@ export class MobileGateway {
     this.send(socket, {
       type: "welcome",
       desktopOnly: this.config.desktopOnly,
+      desktopIpcReady: this.config.desktopOnly ? this.desktopIpc?.ready === true : undefined,
       projectCreation: this.config.desktopOnly,
       archiveManagement: true,
       version: HOST_VERSION,
@@ -820,32 +823,28 @@ export class MobileGateway {
             throw new Error("对话已归档或正在更改归档状态，请刷新后再发送。");
           const threadId = requiredString(message.threadId, "threadId");
           const text = requiredString(message.text, "text");
-          if (this.config.desktopOnly && !this.desktopIpc?.ready) {
-            if ((message.deliveryMode && message.deliveryMode !== "auto") || message.attachments?.length || message.skill ||
-                message.model || message.effort || message.summary || message.permissionMode || message.collaborationMode) {
-              throw new GatewayRequestError("desktop_route_limited", "新版桌面连接目前支持普通文字发送。请在电脑处理附件、引导和设置。");
+          if (message.deliveryMode != null && !["auto", "steer", "queue"].includes(message.deliveryMode))
+            throw new Error("无效的消息发送方式。");
+          const desktopFallback = this.config.desktopOnly && !this.desktopIpc?.ready;
+          if (this.config.desktopOnly && (desktopFallback || message.deliveryMode === "queue")) {
+            if (message.deliveryMode === "steer") {
+              throw new GatewayRequestError("desktop_steer_unavailable", "当前桌面连接无法确认并引导指定轮次。可选择排队下一轮。");
             }
-            const receipt = await this.submitNativeDesktopText(threadId, text, requiredString(message.clientUserMessageId, "clientUserMessageId"));
-            this.send(socket, { type: "turn.started", requestId: message.requestId, threadId, turn: receipt });
+            if (message.skill || message.model || message.effort || message.summary || message.permissionMode || message.collaborationMode) {
+              throw new GatewayRequestError("desktop_route_limited", "当前发送方式无法随消息应用技能或设置。请先在对话设置里修改模型。");
+            }
+            const queued = message.deliveryMode === "queue";
+            const receipt = await this.submitNativeDesktopPrompt(threadId, text,
+              requiredString(message.clientUserMessageId, "clientUserMessageId"),
+              [...new Set(message.attachments?.map(attachment => requiredString(attachment.uploadId, "attachment.uploadId")) ?? [])], queued);
+            if (queued && receipt.queueId) {
+              this.send(socket, { type: "prompt.desktopQueued", requestId: message.requestId, threadId, queueId: receipt.queueId });
+            } else {
+              this.send(socket, { type: "turn.started", requestId: message.requestId, threadId, turn: receipt.turn });
+            }
             break;
           }
           await this.ensureDesktopOwner(threadId);
-          if (this.config.desktopOnly && message.deliveryMode === "queue") {
-            if (message.attachments?.length || message.skill) throw new Error("桌面原生队列仅接受文字，附件请用立即发送。");
-            const id = requiredString(message.clientUserMessageId, "clientUserMessageId");
-            const queueId = await this.submitTurnIdempotently(threadId, id, JSON.stringify(["queue", text]), async () => {
-              let output: string;
-              try {
-                const result = await promisify(execFile)(this.config.codexBin, ["queue", "--thread", threadId, "--message", text], { windowsHide: true, timeout: 20_000, env: { ...process.env, CODEX_HOME: this.config.codexHome } });
-                output = result.stdout;
-              } catch { throw new Error("桌面排队回执不可用，请先核对桌面队列。"); }
-              const matches = [...output.matchAll(/^Queued message ([\w-]+) for thread ([\w-]+)\.\s*$/gm)];
-              if (matches.length !== 1 || matches[0]![2] !== threadId) throw new Error("未取得匹配的队列回执，请核对桌面队列。");
-              return matches[0]![1];
-            });
-            this.send(socket, { type: "prompt.desktopQueued", requestId: message.requestId, threadId, queueId: String(queueId) });
-            break;
-          }
           const input: Array<Record<string, unknown>> = [];
           const queuedUploadIds: string[] = [];
           const queuedFileNames: string[] = [];
@@ -1050,24 +1049,58 @@ export class MobileGateway {
     return settings;
   }
 
-  private submitNativeDesktopText(threadId: string, text: string, messageId: string): Promise<unknown> {
-    return this.submitTurnIdempotently(threadId, messageId, JSON.stringify(["native-desktop-text", text]), async () => {
-      if (this.nativeDesktopTurns.has(threadId))
+  private async submitNativeDesktopPrompt(threadId: string, text: string, messageId: string, uploadIds: string[], queued: boolean) {
+    const receipt = await this.submitTurnIdempotently(threadId, messageId, JSON.stringify(["native-desktop", queued, text, uploadIds]), async () => {
+      if (!queued && this.nativeDesktopTurns.has(threadId))
         throw new GatewayRequestError("desktop_turn_pending", "上次发送还在确认，请稍候。");
-      this.nativeDesktopTurns.set(threadId, null);
+      if (!queued) this.nativeDesktopTurns.set(threadId, null);
+      const pinned: string[] = [];
+      let retainUploads = false;
       try {
+        const paths: string[] = [];
+        for (const id of uploadIds) {
+          if (!this.files) throw new Error("电脑未启用上传。");
+          const upload = await this.files.getUpload(id);
+          if (!this.files.pinUpload(id)) throw new Error("上传已过期，请重新选择文件。");
+          pinned.push(id);
+          paths.push(upload.path);
+        }
+        const prompt = paths.length
+          ? `${text}\n\n手机上传到电脑的文件（请查看这些本地文件）：\n${paths.map(path => `- ${JSON.stringify(path)}`).join("\n")}`
+          : text;
+        if (prompt.length > 20_000) throw new Error("消息和文件路径合计过长，请缩短文字或减少文件。");
+        if (queued) {
+          const result = await this.runDesktopAction({
+            action: "native-queue", threadId, prompt, codexBin: this.config.codexBin, codexHome: this.config.codexHome,
+          });
+          if (!result.queue_id) throw new DesktopActionError("桌面未返回排队回执，请核对桌面队列。", true);
+          retainUploads = true;
+          return { queueId: result.queue_id };
+        }
         const selected = this.nativeDesktopModelOverrides.get(threadId);
-        const result = await this.runDesktopAction({ action: "native-send", threadId, prompt: text,
+        const result = await this.runDesktopAction({ action: "native-send", threadId, prompt,
           ...(selected ? { model: selected.model } : {}), ...(selected?.effort ? { thinking: selected.effort } : {}) });
+        retainUploads = true;
         this.pollNativeDesktopTurn(threadId, result.previous_turn_id ?? null, result.turn_id, Date.now() + 180_000);
-        return result.turn_id ? { id: result.turn_id } : {};
+        return { turn: { ...(result.turn_id ? { id: result.turn_id } : {}), ...(paths.length ? { submittedText: prompt } : {}) } };
       } catch (error) {
-        this.nativeDesktopTurns.delete(threadId);
-        if (error instanceof DesktopActionError && error.outcomeUnknown)
-          throw new GatewayRequestError("submission_state_unknown", "桌面未确认发送结果，请核对对话后再试。");
+        if (!queued) this.nativeDesktopTurns.delete(threadId);
+        if (error instanceof DesktopActionError && error.outcomeUnknown) {
+          retainUploads = true;
+          throw new GatewayRequestError("submission_state_unknown", queued
+            ? "桌面未确认排队结果，请先核对桌面队列。"
+            : "桌面未确认发送结果，请核对对话后再试。");
+        }
         throw error;
+      } finally {
+        if (retainUploads) {
+          const retained = await Promise.allSettled(pinned.map(id => this.files!.commitUpload(id)));
+          if (retained.some(item => item.status === "rejected" || !item.value)) console.warn("[files] could not retain a desktop upload");
+        }
+        for (const id of pinned) this.files?.releaseUpload(id);
       }
     });
+    return receipt as { queueId?: string; turn?: Record<string, unknown> };
   }
 
   private pollNativeDesktopTurn(threadId: string, previous: string | null, turnId: string | undefined, deadline: number): void {

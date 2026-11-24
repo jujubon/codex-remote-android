@@ -3,12 +3,33 @@ $ErrorActionPreference = 'Stop'
 $stateDir = Join-Path $env:LOCALAPPDATA 'CodexMobileRemote'
 New-Item -ItemType Directory -Force $stateDir | Out-Null
 if ($EnableTrustedLan) {
-    $addresses = @(Get-NetIPConfiguration | Where-Object { $_.NetAdapter.HardwareInterface -and $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway } |
-        ForEach-Object { $_.IPv4Address.IPAddress } | Where-Object { $_ -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' } | Select-Object -Unique)
-    if ($addresses.Count -ne 1) { throw 'Connect the PC to one trusted LAN with a private IPv4 address, then run this again.' }
-    Set-Content -LiteralPath (Join-Path $stateDir 'lan-address.txt') -Value $addresses[0] -Encoding ASCII
-    Write-Host "App local address: http://$($addresses[0]):18788"
-    Write-Host 'Restart the Windows host to activate the LAN listener.'
+    $adapters = @(Get-NetIPConfiguration | Where-Object {
+        $_.NetAdapter.HardwareInterface -and $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway -and
+        ($_.IPv4Address.IPAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)')
+    })
+    if ($adapters.Count -ne 1) { throw 'Connect the PC to one trusted LAN with a private IPv4 address, then run this again.' }
+    $adapter = $adapters[0].InterfaceAlias
+    $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        foreach ($protocol in @('TCP', 'UDP')) {
+            $rule = @{
+                Name = "CodexRemote.TrustedLan.$protocol"
+                Direction = 'Inbound'; Action = 'Allow'; Enabled = 'True'
+                Profile = 'Private'; InterfaceAlias = $adapter
+                RemoteAddress = 'LocalSubnet'; Protocol = $protocol; LocalPort = 18788
+            }
+            if (Get-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue) {
+                Set-NetFirewallRule @rule | Out-Null
+            } else {
+                New-NetFirewallRule @rule -DisplayName "Codex Remote trusted LAN ($protocol)" | Out-Null
+            }
+        }
+    } else {
+        Write-Host 'If Windows Firewall blocks discovery, run this file as administrator on your trusted Private network.'
+    }
+    Set-Content -LiteralPath (Join-Path $stateDir 'lan-interface.txt') -Value $adapter -Encoding UTF8
+    Write-Host "Trusted LAN adapter: $adapter"
+    Write-Host 'Restart the Codex Remote host. Paired phones on the same LAN can then discover the PC.'
     return
 }
 $shortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Mobile Host.lnk'

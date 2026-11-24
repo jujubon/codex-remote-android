@@ -29,6 +29,14 @@ ngrok http http://127.0.0.1:8787
 
 等 ngrok 显示 `online`，把 `Forwarding` 左侧的 HTTPS 地址填入手机。`127.0.0.1` 是电脑端的转发目标。手机的「配对令牌」使用 Codex Remote 生成的值，ngrok 的 Authtoken 只用于电脑上的 ngrok。电脑换网络后，需要能够重新连上隧道服务。公网隧道的 TLS 在服务商处终止时，服务商有能力接触传输内容。也可以使用自己的 HTTPS 入口。参阅 [ngrok Windows 安装说明](https://ngrok.com/download/windows)和[自建反向代理说明](docs/public-reverse-proxy.md)。
 
+### 固定域名与局域网自动切换
+
+使用固定 HTTPS 域名连接时，可在 Windows 的可信专用网络上以管理员身份运行一次 `Enable-Trusted-LAN.cmd`，再重新启动 `Start-Tunnel.cmd`。手机保留原来的域名和配对令牌。连接同一局域网时，「电脑」页显示「局域网直连」。切到 5G 或 Wi-Fi 无法访问电脑时，App 使用固定域名。
+
+### 桌面对话的附件与排队
+
+桌面 IPC 可用时，手机能随消息发送内嵌附件，也能引导当前轮。桌面 IPC 不可用时，手机可以上传文件并随文字发送电脑上的文件路径，或在任务运行中排队到下一轮。
+
 ## 手机阅读窗
 
 在 Windows 解压目录双击 `Phone-Reading-Window.cmd`。手机对应入口在「电脑 → 手机阅读窗」。

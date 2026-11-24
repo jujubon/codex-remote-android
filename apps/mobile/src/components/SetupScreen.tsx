@@ -71,10 +71,10 @@ export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, on
           </label>
 
           <label>
-            <span>可信 Wi-Fi 的电脑地址（可选）</span>
+            <span>手动局域网地址（可选）</span>
             <input value={localUrl} onChange={event => setLocalUrl(event.target.value)}
               placeholder="http://192.168.0.103:18788" inputMode="url" autoCapitalize="none" autoCorrect="off" />
-            <small>找到这台已配对的电脑时走直连，离开后自动使用上面的固定域名。只在信任的局域网启用。</small>
+            <small>电脑启用可信局域网后，手机会自动发现已配对的电脑。也可在这里填写手动地址。</small>
           </label>
 
           <label>

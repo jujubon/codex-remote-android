@@ -156,7 +156,7 @@ export type ClientMessage =
 
 export type ServerMessagePayload =
   | ArchiveResult
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; projectCreation?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }
@@ -182,7 +182,7 @@ export type ServerMessagePayload =
   | { type: "approvals.snapshot"; approvals: WireApprovalRequest[] }
   | { type: "approval.resolved"; requestId?: string; approvalRequestId: number | string }
   | { type: "event"; method: string; params: unknown }
-  | { type: "status"; codexReady: boolean; detail?: string }
+  | { type: "status"; codexReady: boolean; detail?: string; desktopIpcReady?: boolean }
   | { type: "error"; requestId?: string; code: string; message: string; detail?: unknown };
 
 export type ServerMessage = ServerMessagePayload & SyncMetadata;

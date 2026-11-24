@@ -36,6 +36,8 @@ interface ConversationScreenProps {
   phaseDetail: string;
   running: boolean;
   canInterrupt: boolean;
+  canSteer: boolean;
+  desktopOnly: boolean;
   currentTurnId?: string;
   historyHasMore: boolean;
   historyLoading: boolean;
@@ -348,7 +350,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -762,7 +764,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
           thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
       </div>}
       {!settingsOpen && notice}
-      <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>
