@@ -759,8 +759,10 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
         </div>
       </dialog>
       {(running || thread.state !== 'idle' || phase !== 'connected') && <div className="composer-status" role="status">
-        {phase !== 'connected' ? '连接中断，等待恢复' : running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
-          thread.state === 'waiting_approval' ? '等待审批' : thread.state === 'waiting_input' ? '等待输入' :
+        {phase !== 'connected' ? '连接中断，等待恢复' :
+          thread.state === 'waiting_input' ? (approvals.some(approval => approval.method === 'item/tool/requestUserInput') ? '等待输入' : '等待在电脑端回答') :
+          thread.state === 'waiting_approval' ? '等待审批' :
+          running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
           thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
       </div>}
       {!settingsOpen && notice}

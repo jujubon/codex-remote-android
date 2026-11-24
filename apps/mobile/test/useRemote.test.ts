@@ -7,6 +7,27 @@ function user(id: string, content: string, createdAt: number): RemoteMessage {
   return { id, threadId: 'thread', role: 'user', content, createdAt, status: 'complete' };
 }
 
+it('keeps a desktop message containing only an image', () => {
+  const imagePath = 'C:\\Users\\alice\\AppData\\Local\\Temp\\clip.png';
+  const result = normalizeThreadPayload({
+    id: 'thread',
+    turns: [{ id: 'image-turn', items: [{ id: 'image-only', type: 'userMessage', content: [{ type: 'localImage', path: imagePath }] }] }],
+  });
+  expect(result.messages).toEqual([expect.objectContaining({
+    id: 'image-only', role: 'user', turnId: 'image-turn', content: '发送了 1 张图片',
+    attachments: [{ type: 'image', name: 'clip.png', path: imagePath }],
+  })]);
+});
+
+it('preserves the desktop waiting-input status while a turn is still open', () => {
+  const result = normalizeThreadPayload({
+    id: 'thread', status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+    turns: [{ id: 'open-turn', status: 'inProgress', items: [] }],
+  });
+  expect(result.thread?.state).toBe('waiting_input');
+  expect(result.currentTurnId).toBe('open-turn');
+});
+
 it('restores a late user message to its own turn above the final answer', () => {
   const input = { ...user('input', 'Question', 10), turnId: 'earlier' };
   const reply: RemoteMessage = { ...input, id: 'answer', role: 'assistant', assistantPhase: 'final_answer', content: 'Answer' };

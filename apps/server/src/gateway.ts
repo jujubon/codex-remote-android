@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { createHash } from "node:crypto";
 import { desktopAction, DesktopActionError } from "./windows-desktop.js";
 import { readFile } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
@@ -79,6 +80,7 @@ const MAX_TURN_SUBMISSIONS = 1_000;
 const EMPTY_THREAD_INDEX_TTL_MS = 5_000;
 const THREAD_INDEX_TTL_MS = 60_000;
 const RECENT_TURNS_TO_REPLAY = 3;
+const NATIVE_OBSERVATION_INTERVAL_MS = 5_000;
 const THREAD_SOURCE_KINDS = [
   "cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
   "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown",
@@ -115,6 +117,9 @@ export class MobileGateway {
   private readonly threadIndex = new ThreadIndexStore();
   private readonly socketThreads = new WeakMap<WebSocket, Set<string>>();
   private readonly nativeDesktopTurns = new Map<string, NodeJS.Timeout | null>();
+  private readonly nativeObservationDigests = new Map<string, string>();
+  private nativeObservationTimer?: NodeJS.Timeout;
+  private observingNativeDesktop = false;
   private readonly nativeDesktopModelOverrides = new Map<string, { model: string; effort: string | null }>();
   private threadIndexLoad: Promise<void> | null = null;
   private threadIndexLoadedAt = 0;
@@ -340,6 +345,10 @@ export class MobileGateway {
     desktopIpc?.on("diagnostic", (error: unknown) =>
       console.warn("[desktop-ipc]", error),
     );
+    if (config.desktopOnly) {
+      this.nativeObservationTimer = setInterval(() => void this.observeNativeDesktop(), NATIVE_OBSERVATION_INTERVAL_MS);
+      this.nativeObservationTimer.unref();
+    }
   }
 
   private async restoreDesktopSubscription(
@@ -438,6 +447,9 @@ export class MobileGateway {
   close(): void {
     for (const timer of this.nativeDesktopTurns.values()) if (timer) clearTimeout(timer);
     this.nativeDesktopTurns.clear();
+    clearInterval(this.nativeObservationTimer);
+    this.nativeObservationTimer = undefined;
+    this.nativeObservationDigests.clear();
     for (const socket of this.wss.clients)
       socket.close(1001, "server shutdown");
     this.wss.close();
@@ -1118,6 +1130,8 @@ export class MobileGateway {
         if (thread?.id === threadId && latest && id && (turnId ? id === turnId : id !== previous)) {
           const settings = this.nativeDesktopModelOverrides.get(threadId);
           const projected = { ...thread, name: thread.title, turns, ...(settings ? { latestThreadSettings: settings } : {}) };
+          await this.trustDesktopAttachments(projected);
+          if (!this.nativeDesktopTurns.has(threadId)) return;
           for (const socket of this.wss.clients) {
             if (this.socketThreads.get(socket)?.has(threadId))
               this.send(socket, { type: "thread", thread: { thread: projected } });
@@ -1132,6 +1146,43 @@ export class MobileGateway {
     }, 2300);
     timer.unref();
     this.nativeDesktopTurns.set(threadId, timer);
+  }
+
+  private async observeNativeDesktop(): Promise<void> {
+    if (this.observingNativeDesktop) return;
+    const watched = new Set<string>();
+    for (const socket of this.wss.clients) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const selected = [...(this.socketThreads.get(socket) ?? [])].at(-1);
+      if (selected && !this.desktopIpc?.hasOwner(selected)) watched.add(selected);
+    }
+    for (const threadId of this.nativeObservationDigests.keys()) {
+      if (!watched.has(threadId)) this.nativeObservationDigests.delete(threadId);
+    }
+    this.observingNativeDesktop = true;
+    try {
+      for (const threadId of watched) {
+        if (!this.nativeObservationTimer) break;
+        if (this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        const result = await this.runDesktopAction({ action: "native-read", threadId }).catch(() => null);
+        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        const snapshot = asRecord(result?.snapshot);
+        const thread = asRecord(snapshot?.thread);
+        if (thread?.id !== threadId || !Array.isArray(snapshot?.turns)) continue;
+        const settings = this.nativeDesktopModelOverrides.get(threadId);
+        const projected = { ...thread, name: thread.title, turns: snapshot.turns, ...(settings ? { latestThreadSettings: settings } : {}) };
+        const digest = createHash("sha256").update(JSON.stringify(projected)).digest("hex");
+        if (this.nativeObservationDigests.get(threadId) === digest) continue;
+        await this.trustDesktopAttachments(projected);
+        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        this.nativeObservationDigests.set(threadId, digest);
+        for (const socket of this.wss.clients) {
+          if (this.socketThreads.get(socket)?.has(threadId)) this.send(socket, { type: "thread", thread: { thread: projected } });
+        }
+      }
+    } finally {
+      this.observingNativeDesktop = false;
+    }
   }
 
   private async submitPreparedTurn(
@@ -1578,9 +1629,11 @@ export class MobileGateway {
       ? await this.desktopIpc.openConversation(threadId, "local", 2_500, false)
       : null;
     let metadataPayload: unknown;
+    let liveTurns: unknown[] = [];
     if (desktopThread && this.desktopIpc?.hasOwner(threadId)) {
       this.desktopThreads.set(threadId, desktopThread);
       const projected = projectDesktopLiveThread(desktopThread);
+      liveTurns = canonicalTurns(projected);
       if (this.config.desktopOnly) {
         const settings = await this.desktopIpc.readModelSettings(threadId).catch(() => null);
         if (settings) projected.latestThreadSettings = { ...asRecord(projected.latestThreadSettings), ...settings };
@@ -1592,9 +1645,13 @@ export class MobileGateway {
         : await this.bridge.request("thread/resume", { threadId, excludeTurns: true });
       if (this.config.desktopOnly && !this.desktopIpc?.ready) {
         const native = await this.runDesktopAction({ action: "native-read", threadId }).catch(() => null);
-        const live = asRecord(asRecord(native?.snapshot)?.thread);
+        const snapshot = asRecord(native?.snapshot);
+        const live = asRecord(snapshot?.thread);
         const stored = asRecord(asRecord(metadataPayload)?.thread);
-        if (live?.id === threadId && stored) metadataPayload = { thread: { ...stored, status: live.status } };
+        if (live?.id === threadId && stored) {
+          metadataPayload = { thread: { ...stored, status: live.status } };
+          if (Array.isArray(snapshot?.turns)) liveTurns = snapshot.turns;
+        }
       }
     }
     this.rememberThreadCwd(threadId, metadataPayload);
@@ -1604,12 +1661,11 @@ export class MobileGateway {
     const metadata = threadMetadataFromPayload(metadataPayload, threadId);
     const nativeSettings = this.config.desktopOnly && !this.desktopIpc?.ready ? this.nativeDesktopModelOverrides.get(threadId) : undefined;
     if (nativeSettings) metadata.latestThreadSettings = { ...asRecord(metadata.latestThreadSettings), ...nativeSettings };
-    const liveTurns = desktopThread ? canonicalTurns(projectDesktopLiveThread(desktopThread)) : [];
     const turns = mergeTurns(page.turns, liveTurns);
     if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
-    this.replayCachedReplies(socket, threadId, page.cachedTurns);
     const thread = { ...metadata, turns };
-    await this.trustDesktopAttachments(thread);
+    await this.trustDesktopAttachments({ turns: [...turns, ...page.cachedTurns] });
+    this.replayCachedItems(socket, threadId, page.cachedTurns);
     const summary = toThreadSummary(thread);
     this.upsertThreadSummary({ ...summary, status: this.mergedThreadStatus(threadId, summary.status) });
     this.send(socket, {
@@ -1630,7 +1686,8 @@ export class MobileGateway {
     knownTurnIds?: string[],
   ): Promise<void> {
     const page = await this.readTurnsPage(threadId, cursor ?? null, boundedHistoryLimit(requestedLimit), knownTurnIds);
-    this.replayCachedReplies(socket, threadId, page.cachedTurns);
+    await this.trustDesktopAttachments({ turns: [...page.turns, ...page.cachedTurns] });
+    this.replayCachedItems(socket, threadId, page.cachedTurns);
     this.send(socket, {
       type: "thread.history",
       requestId,
@@ -1684,9 +1741,8 @@ export class MobileGateway {
     }
   }
 
-  private replayCachedReplies(socket: WebSocket, threadId: string, cachedTurns: Record<string, unknown>[]): void {
-    // A client can have the user message for a turn without its finished reply.
-    // Reuse the normal item update so the reply goes back into its original turn.
+  private replayCachedItems(socket: WebSocket, threadId: string, cachedTurns: Record<string, unknown>[]): void {
+    // A cached turn may be missing its final reply or a user message containing an image.
     for (const turn of cachedTurns) {
       const turnId = turn.id;
       if (typeof turnId !== "string" || !Array.isArray(turn.items)) continue;
@@ -1696,11 +1752,14 @@ export class MobileGateway {
         : undefined;
       for (const rawItem of turn.items) {
         const item = asRecord(rawItem);
-        if (!item || item.type !== "agentMessage" || item.phase === "commentary" || typeof item.id !== "string") continue;
+        if (!item || typeof item.id !== "string") continue;
+        const finalReply = item.type === "agentMessage" && item.phase !== "commentary";
+        const hasImage = item.type === "userMessage" && canonicalContentImagePaths(item).length > 0;
+        if (!finalReply && !hasImage) continue;
         this.send(socket, {
           type: "event",
           method: "item/completed",
-          params: { threadId, turnId, completedAtMs, item },
+          params: { threadId, turnId, ...(finalReply ? { completedAtMs } : {}), item },
         });
       }
     }
@@ -1933,6 +1992,13 @@ export class MobileGateway {
   }
 }
 
+function canonicalContentImagePaths(item: Record<string, unknown>): string[] {
+  return Array.isArray(item.content) ? item.content.flatMap(value => {
+    const part = asRecord(value);
+    return part?.type === "localImage" && typeof part.path === "string" && isAbsoluteHostPath(part.path) ? [part.path] : [];
+  }) : [];
+}
+
 export function desktopAttachmentPaths(thread: Record<string, unknown>): string[] {
   const paths = new Set<string>();
   const add = (value: unknown) => {
@@ -1948,6 +2014,7 @@ export function desktopAttachmentPaths(thread: Record<string, unknown>): string[
         const type = String(input?.type ?? "").toLowerCase();
         if (type.includes("image") || type.includes("file") || type.includes("mention")) add(input?.path);
       }
+      for (const path of canonicalContentImagePaths(item)) paths.add(path);
       for (const attachmentValue of Array.isArray(item.attachments) ? item.attachments : []) {
         const attachment = asRecord(attachmentValue);
         add(attachment?.fsPath);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -57,6 +57,7 @@ describe("Desktop live turn projection", () => {
 
 class FakeBridge extends EventEmitter {
   ready = true;
+  olderTurnImagePath?: string;
   calls: Array<{ method: string; params: unknown }> = [];
   responses: Array<{ id: string | number; result: unknown }> = [];
   threadListData: Array<Record<string, unknown>> = [
@@ -75,6 +76,7 @@ class FakeBridge extends EventEmitter {
       const cursor = (params as { cursor?: string }).cursor;
       return cursor
         ? { data: [{ id: "turn-old", status: "completed", items: [
+          ...(this.olderTurnImagePath ? [{ id: "image-old", type: "userMessage", content: [{ type: "localImage", path: this.olderTurnImagePath }] }] : []),
           { id: "progress-old", type: "agentMessage", phase: "commentary", text: "Working" },
           { id: "reply-old", type: "agentMessage", phase: "final_answer", text: "Earlier final reply" },
         ] }], nextCursor: null, backwardsCursor: "newer" }
@@ -116,6 +118,9 @@ class FakeDesktop extends EventEmitter {
   async interruptTurn(threadId: string, mode: "user" | "system"): Promise<unknown> {
     this.calls.push({ method: "interrupt", threadId, params: { mode } });
     return {};
+  }
+  async resolveApproval(threadId: string, method: string, requestId: string | number, response: unknown): Promise<void> {
+    this.calls.push({ method, threadId, params: { requestId, response } });
   }
 }
 
@@ -405,7 +410,15 @@ describe("MobileGateway", () => {
   });
 
   it("opens recent history and pages older turns without a full resume payload", async () => {
-    const { bridge, port } = await start();
+    const root = await mkdtemp(join(tmpdir(), "cmr-desktop-image-"));
+    closers.push(() => rm(root, { recursive: true, force: true }));
+    const downloadsRoot = await mkdtemp(join(root, "allowed-"));
+    const files = await FileTransferManager.create({ allowedRoots: [downloadsRoot], uploadDirectory: downloadsRoot });
+    const imagePath = join(root, "clip.png");
+    await writeFile(imagePath, Buffer.from([137, 80, 78, 71]));
+    await expect(files.createDownloadTicket(imagePath)).rejects.toMatchObject({ code: "PATH_NOT_ALLOWED" });
+    const { bridge, port } = await start(undefined, undefined, undefined, undefined, files);
+    bridge.olderTurnImagePath = imagePath;
     const encoded = Buffer.from(token).toString("base64url");
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${encoded}`], { origin: "capacitor://localhost" });
     const messages: Array<Record<string, unknown>> = [];
@@ -426,6 +439,11 @@ describe("MobileGateway", () => {
     expect(bridge.calls).toContainEqual({ method: "thread/turns/list", params: { threadId: "thread-1", cursor: "older", limit: 20, sortDirection: "desc", itemsView: "full" } });
     expect(messages.find((message) => message.requestId === "older-page")?.history).toMatchObject({ nextCursor: null, hasMore: false });
     expect(messages.find(message => message.requestId === "older-page")?.turns).toEqual([]);
+    expect(messages).toContainEqual({
+      type: "event", method: "item/completed",
+      params: { threadId: "thread-1", turnId: "turn-old", item: { id: "image-old", type: "userMessage", content: [{ type: "localImage", path: imagePath }] } },
+    });
+    await expect(files.createDownloadTicket(imagePath)).resolves.toMatchObject({ fileName: "clip.png", mimeType: "image/png" });
     expect(messages).toContainEqual({
       type: "event", method: "item/completed",
       params: { threadId: "thread-1", turnId: "turn-old", item: { id: "reply-old", type: "agentMessage", phase: "final_answer", text: "Earlier final reply" } },
@@ -617,6 +635,34 @@ describe("MobileGateway", () => {
     }]);
     ws.close();
   });
+  it("routes a chosen option and a custom answer to the waiting Desktop request", async () => {
+    const desktop = new FakeDesktop();
+    const { bridge, port } = await start(desktop, undefined, { desktopOnly: true });
+    const encoded = Buffer.from(token).toString("base64url");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${encoded}`], { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    const method = "item/tool/requestUserInput";
+    const questions = [
+      { id: "choice", question: "Which route?", options: [{ label: "Wi-Fi" }, { label: "Hotspot" }] },
+      { id: "detail", question: "Enter the address.", options: [] },
+    ];
+    desktop.emit("snapshot", { ...desktop.conversation,
+      requests: [{ id: 42, method, params: { threadId: "thread-1", turnId: "turn-active", questions } }],
+    });
+    await waitFor(() => messages.some(message => message.type === "approval"));
+    expect(messages.find(message => message.type === "approval")?.approval).toMatchObject({ method, raw: { questions } });
+    ws.send(JSON.stringify({ type: "approval.resolve", approvalRequestId: "desktop:thread-1:42",
+      decision: { kind: "answerQuestions", answers: { choice: "Hotspot", detail: "Found the port" } } }));
+    await waitFor(() => messages.some(message => message.type === "approval.resolved"));
+    expect(desktop.calls).toContainEqual({ method, threadId: "thread-1", params: { requestId: 42,
+      response: { answers: { choice: { answers: ["Hotspot"] }, detail: { answers: ["Found the port"] } } },
+    } });
+    expect(bridge.responses).toEqual([]);
+    ws.close();
+  });
+
   it("keeps Desktop approvals pending when only app-server goes offline", async () => {
     const desktop = new FakeDesktop();
     const { bridge, gateway } = await start(desktop);
@@ -764,6 +810,29 @@ describe("MobileGateway", () => {
     expect(bridge.calls.some(call => call.method === "turn/start")).toBe(false);
     ws.close();
   });
+
+  it("updates an open phone chat when the native Desktop receives a picture", async () => {
+    const desktop = new FakeDesktop();
+    desktop.ready = desktop.owner = false;
+    const image = { type: "userMessage", id: "image-only", content: [{ type: "localImage", path: join(tmpdir(), "clip.png") }] };
+    let turns: unknown[] = [];
+    const { port } = await start(desktop, undefined, { desktopOnly: true }, async () => ({
+      snapshot: { thread: { id: "thread-1", status: { type: "idle" } }, turns },
+    }));
+    const encoded = Buffer.from(token).toString("base64url");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${encoded}`], { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    ws.send(JSON.stringify({ type: "thread.open", threadId: "thread-1", requestId: "initial-open" }));
+    await waitFor(() => messages.some(message => message.requestId === "initial-open" && message.type === "thread"));
+    turns = [{ id: "desktop-image-turn", status: "completed", items: [image] }];
+    await waitFor(() => messages.some(message => message.type === "thread" && !message.requestId), 6_500);
+    expect(messages.find(message => message.type === "thread" && !message.requestId)?.thread).toMatchObject({
+      thread: { id: "thread-1", turns },
+    });
+    ws.close();
+  }, 8_000);
 
   it("sends uploaded image and file references and uses the desktop queue without starting a second turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "cmr-native-files-"));

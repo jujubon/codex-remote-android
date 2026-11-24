@@ -151,7 +151,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
       {running && deliveryMode === 'queue' && (
         <div className="queue-mode-notice" role="status">
           <span aria-hidden="true" />
-          <p><strong>{canSteer ? '已选择排队' : '当前桌面连接支持排队'}</strong><small>这条提示词将在当前任务结束后作为下一轮发送。</small></p>
+          <p><strong>{canSteer ? '已选择排队' : '桌面实时控制未连接'}</strong><small>这条消息会在当前任务结束后作为下一轮发送。</small></p>
         </div>
       )}
       {files.length > 0 && desktopOnly && (!canSteer || deliveryMode === 'queue') && (

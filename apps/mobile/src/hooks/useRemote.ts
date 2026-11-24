@@ -265,6 +265,10 @@ export function attachmentsFromCanonicalUserItem(itemValue: unknown): RemoteAtta
     const input = record(inputValue);
     add(input?.path, input?.name, input?.type, input?.mimeType);
   }
+  for (const partValue of Array.isArray(item.content) ? item.content : []) {
+    const part = record(partValue);
+    if (part?.type === 'localImage') add(part.path, part.name, part.type, part.mimeType);
+  }
   for (const attachmentValue of Array.isArray(item.attachments) ? item.attachments : []) {
     const attachment = record(attachmentValue);
     add(attachment?.fsPath ?? attachment?.path, attachment?.label ?? attachment?.name, attachment?.type, attachment?.mimeType);
@@ -968,6 +972,7 @@ export function normalizeThreadPayload(payload: unknown): {
   const turns = Array.isArray(threadData.turns) ? threadData.turns : [];
   const messages: RemoteMessage[] = [];
   let currentTurnId: string | undefined;
+  const reportedState = stateFromStatus(threadData.threadRuntimeStatus ?? threadData.status);
 
   turns.forEach((turnValue, turnIndex) => {
     const turn = record(turnValue);
@@ -1000,7 +1005,7 @@ export function normalizeThreadPayload(payload: unknown): {
       cwd: stringValue(threadData.cwd) ?? '',
       modelProvider: stringValue(threadData.modelProvider) ?? '',
       updatedAt: timestamp(threadData.updatedAt ?? threadData.updated_at),
-      state: currentTurnId ? 'running' : stateFromStatus(threadData.threadRuntimeStatus ?? threadData.status),
+      state: currentTurnId && reportedState !== 'waiting_input' && reportedState !== 'waiting_approval' ? 'running' : reportedState,
       unread: 0,
       parentThreadId: stringValue(threadData.parentThreadId) ?? subagentMetadataFromSource(threadData.source).parentThreadId ?? null,
       agentNickname: stringValue(threadData.agentNickname) ?? subagentMetadataFromSource(threadData.source).agentNickname ?? null,
@@ -2924,7 +2929,7 @@ export function useRemote(config: RemoteConfig | null) {
     () => approvals.filter((approval) => !approval.threadId || approval.threadId === selectedThreadId),
     [approvals, selectedThreadId],
   );
-  const running = selectedThread?.state === 'running';
+  const running = selectedThread?.state === 'running' || selectedThread?.state === 'waiting_input' || selectedThread?.state === 'waiting_approval';
   const canSteer = !(desktopOnly && desktopIpcReady === false);
   const canInterrupt = canSteer && Boolean(selectedThreadId && turnIds[selectedThreadId]);
 
