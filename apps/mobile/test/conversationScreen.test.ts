@@ -215,23 +215,50 @@ describe('turn process disclosure', () => {
   }).messages;
   const layout = (messages: RemoteMessage[]) => groupConversationMessages(messages).map(entry =>
     entry.type === 'message' ? entry.message.id : entry.messages.map(item => item.id));
+  const labels = (messages: RemoteMessage[], currentTurnId?: string) => groupConversationMessages(messages)
+    .flatMap(entry => entry.type === 'process' ? [processLabel(entry, currentTurnId)] : []);
 
   it('folds commentary with its tools, retaining the same layout after caching without raw detail', () => {
     const messages = snapshot({ turnStartedAtMs: 1_700_000_000_000, finalAssistantStartedAtMs: 1_700_000_285_000, durationMs: 303_104 });
     expect(layout(messages.map(({ detail, ...message }) => message))).toEqual(['user', ['progress', 'tool'], 'answer']);
-    expect(processLabel(messages)).toBe('用时 4 分钟 45 秒');
-    expect(processLabel(snapshot({ durationMs: 3_000 }))).toBe('用时 3 秒');
-    expect(processLabel(snapshot())).toBe('执行过程');
-    expect(processLabel(snapshot(), 'turn')).toBe('执行中');
+    expect(labels(messages)).toEqual(['用时 4 分钟 45 秒']);
+    expect(labels(snapshot({ durationMs: 3_000 }))).toEqual(['用时 3 秒']);
+    expect(labels(snapshot())).toEqual(['执行过程']);
+    expect(labels(snapshot(), 'turn')).toEqual(['执行中']);
   });
 
-  it('leaves unmarked answers, user follow-ups and failed tools visible and separates turns', () => {
+  it('keeps failed commands in the same collapsed process with their original details', () => {
+    const failures = [542, 1500, 237].map((durationMs, index) => ({
+      type: 'commandExecution', id: `failed-${index}`, command: 'check build', status: 'failed', durationMs,
+      aggregatedOutput: `Failure ${index}`,
+    }));
+    const messages = snapshot({
+      durationMs: 731_000,
+      items: [items[0], items[1], failures[0], items[2], ...failures.slice(1), items[3]],
+    });
+    expect(layout(messages)).toEqual(['user', ['progress', 'failed-0', 'tool', 'failed-1', 'failed-2'], 'answer']);
+    expect(labels(messages)).toEqual(['用时 12 分钟 11 秒']);
+    const process = groupConversationMessages(messages)[1];
+    expect(process?.type === 'process' && process.messages.filter(item => item.status === 'failed'))
+      .toEqual(failures.map(failure => expect.objectContaining({
+        id: failure.id, durationMs: failure.durationMs, content: `$ check build\n${failure.aggregatedOutput}`,
+      })));
+  });
+
+  it('keeps user follow-ups and unmarked replies in place and gives each turn its own timing', () => {
     const [, progress, tool, answer] = snapshot();
     const legacy = { ...answer!, id: 'legacy', assistantPhase: undefined };
-    const failed = { ...tool!, id: 'error', status: 'failed' as const };
     const followup = { ...snapshot()[0]!, id: 'followup' };
-    expect(layout([progress!, legacy, tool!, followup, progress!, failed, tool!, { ...progress!, turnId: 'another' }, answer!]))
-      .toEqual([['progress'], 'legacy', ['tool'], 'followup', ['progress'], 'error', ['tool'], ['progress'], 'answer']);
+    const withFollowup = [
+      progress!, legacy, tool!, followup,
+      { ...tool!, id: 'after-followup' }, { ...answer!, turnDurationMs: 3_000 },
+      { ...progress!, id: 'second-progress', turnId: 'another', turnDurationMs: 3_000 },
+    ];
+    expect(layout(withFollowup)).toEqual([
+      ['progress'], 'legacy', ['tool'], 'followup', ['after-followup'], 'answer', ['second-progress'],
+    ]);
+    expect(labels(withFollowup)).toEqual(['执行过程', '执行过程', '用时 3 秒', '用时 3 秒']);
+    expect(labels(withFollowup, 'turn')).toEqual(['执行过程', '执行过程', '执行中', '用时 3 秒']);
   });
 });
 

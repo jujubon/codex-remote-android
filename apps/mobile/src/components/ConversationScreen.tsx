@@ -178,19 +178,30 @@ function nearBottom(element: HTMLElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_DISTANCE;
 }
 
+type ConversationGroup = {
+  type: 'tool-group' | 'process';
+  id: string;
+  messages: RemoteMessage[];
+  agentTargets: AgentTarget[];
+  agentTargetsByMessage: Record<string, AgentTarget[]>;
+  turnSummary?: { turnId: string; durationMs?: number };
+};
+
 export type ConversationEntry =
   | { type: 'message'; message: RemoteMessage; agentTargets: AgentTarget[] }
-  | { type: 'tool-group' | 'process'; id: string; messages: RemoteMessage[]; agentTargets: AgentTarget[]; agentTargetsByMessage: Record<string, AgentTarget[]> };
+  | ConversationGroup;
 
 export function groupConversationMessages(messages: RemoteMessage[]): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
+  const lastProcessByTurn = new Map<string, ConversationGroup>();
+  const durationByTurn = new Map<string, number>();
   let pending: RemoteMessage[] = [];
   const messageEntry = (message: RemoteMessage): ConversationEntry => ({
     type: 'message', message, agentTargets: subagentsFromMessage(message),
   });
   const flush = () => {
-    const process = !!pending[0]?.turnId;
-    if (!process && pending.length === 1) entries.push(messageEntry(pending[0]!));
+    const turnId = pending[0]?.turnId;
+    if (!turnId && pending.length === 1) entries.push(messageEntry(pending[0]!));
     else if (pending.length) {
       const targetsByMessage: Record<string, AgentTarget[]> = {};
       const targets = new Map<string, AgentTarget>();
@@ -199,27 +210,37 @@ export function groupConversationMessages(messages: RemoteMessage[]): Conversati
         targetsByMessage[message.id] = messageTargets;
         for (const target of messageTargets) mergeAgentTarget(targets, target);
       }
-      entries.push({
-        type: process ? 'process' : 'tool-group', id: `${process ? 'process' : 'tools'}:${pending[0]!.id}`, messages: pending,
+      const group: ConversationGroup = {
+        type: turnId ? 'process' : 'tool-group', id: `${turnId ? 'process' : 'tools'}:${pending[0]!.id}`, messages: pending,
         agentTargets: targets.size > 0 ? [...targets.values()] : EMPTY_AGENT_TARGETS,
         agentTargetsByMessage: targetsByMessage,
-      });
+      };
+      entries.push(group);
+      if (turnId) lastProcessByTurn.set(turnId, group);
     }
     pending = [];
   };
   for (const message of messages) {
+    if (message.turnId && message.turnDurationMs != null) {
+      durationByTurn.set(message.turnId, message.turnDurationMs);
+    }
     if (pending.length && pending[0]!.turnId !== message.turnId) flush();
     const isProcess = message.role === 'tool' || (message.role === 'assistant' && message.assistantPhase === 'commentary' && !!message.turnId);
-    if (isProcess && message.status !== 'failed') pending.push(message);
+    if (isProcess) pending.push(message);
     else { flush(); entries.push(messageEntry(message)); }
   }
   flush();
+  // A user follow-up can split a turn into several process groups. Only the
+  // last group carries the overall timing, even when it arrived on another item.
+  for (const [turnId, group] of lastProcessByTurn) {
+    group.turnSummary = { turnId, durationMs: durationByTurn.get(turnId) };
+  }
   return entries;
 }
 
-export function processLabel(messages: RemoteMessage[], currentTurnId?: string): string {
-  if (currentTurnId && messages[0]?.turnId === currentTurnId) return '执行中';
-  const duration = messages.find(message => message.turnDurationMs != null)?.turnDurationMs;
+export function processLabel({ turnSummary }: ConversationGroup, currentTurnId?: string): string {
+  if (currentTurnId && turnSummary?.turnId === currentTurnId) return '执行中';
+  const duration = turnSummary?.durationMs;
   if (duration == null) return '执行过程';
   const seconds = Math.floor(duration / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -648,7 +669,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
               >
                 <summary>
                   <ChevronRightIcon className="tool-group-disclosure" />
-                  {entry.type === 'process' ? <span className="process-label">{processLabel(entry.messages, currentTurnId)}</span> : <>
+                  {entry.type === 'process' ? <span className="process-label">{processLabel(entry, currentTurnId)}</span> : <>
                     <strong>工具调用 · {entry.messages.length}</strong>
                     <small>{entry.messages.map((message) => message.toolName || '工具').slice(0, 3).join('、')}{entry.messages.length > 3 ? '…' : ''}</small>
                     <span className="tool-group-summary-actions">
