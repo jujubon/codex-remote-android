@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="手机阅读窗" Width="500" MinWidth="420" MaxHeight="760"
+        Title="手机投屏" Width="500" MinWidth="420" MaxHeight="760"
         SizeToContent="Height" WindowStartupLocation="CenterScreen"
         Background="#F7F6FA" Foreground="#282137"
         FontFamily="Microsoft YaHei UI" FontSize="14">
@@ -26,7 +26,7 @@
   </Window.Resources>
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="22,20">
-      <TextBlock FontSize="25" FontWeight="SemiBold" Text="手机阅读窗" Margin="0,0,0,14"/>
+      <TextBlock FontSize="25" FontWeight="SemiBold" Text="手机投屏" Margin="0,0,0,14"/>
       <GroupBox Header="本地 Wi-Fi">
         <StackPanel>
           <TextBlock Foreground="#625B71" Text="手机与电脑连同一个 Wi-Fi，并在手机设置里开启无线调试。" Margin="0,0,0,8"/>

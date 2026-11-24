@@ -1,9 +1,12 @@
 import type { ClientMessage, ConnectionPhase, ServerMessage } from '../types/protocol';
 import { isServerMessage, WIRE_PROTOCOL } from '../types/protocol';
 import { toWebSocketUrl } from './configStore';
+import { verifyLocalRoute } from './localRoute';
 
 interface RemoteSocketOptions {
   serverUrl: string;
+  localUrl?: string;
+  onRoute?: (url: string) => void;
   token: string;
   onMessage: (message: ServerMessage) => void;
   onPhase: (phase: ConnectionPhase, detail?: string) => void;
@@ -27,8 +30,18 @@ export class RemoteSocket {
   private manuallyClosed = false;
   private welcomed = false;
   private networkListenersInstalled = false;
+  private routeTimer: number | null = null;
+  private routeGeneration = 0;
+  private localRetryAfter = 0;
+  private checkingRoute = false;
+  private activeServerUrl = '';
+  private handshakeTimer: number | null = null;
 
   constructor(private readonly options: RemoteSocketOptions) {}
+
+  get serverUrl(): string {
+    return this.welcomed ? this.activeServerUrl : this.options.serverUrl;
+  }
 
   connect(): void {
     this.manuallyClosed = false;
@@ -42,6 +55,7 @@ export class RemoteSocket {
 
   disconnect(): void {
     this.manuallyClosed = true;
+    this.routeGeneration++;
     this.welcomed = false;
     this.clearTimers();
     this.removeNetworkListeners();
@@ -51,6 +65,7 @@ export class RemoteSocket {
   }
 
   reconnectNow(): void {
+    this.routeGeneration++;
     this.clearTimers();
     this.socket?.close();
     this.socket = null;
@@ -65,25 +80,37 @@ export class RemoteSocket {
     return true;
   }
 
-  private open(reconnecting: boolean): void {
+  private async open(reconnecting: boolean, route?: string): Promise<void> {
     if (this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING) return;
     if (navigator.onLine === false) {
       this.options.onPhase('offline', '手机当前没有网络连接；访问局域网主机时请连接同一 Wi-Fi');
       return;
     }
 
+    const generation = ++this.routeGeneration;
+    this.options.onPhase(reconnecting ? 'reconnecting' : 'connecting');
+    const serverUrl = route ?? (this.options.localUrl && Date.now() >= this.localRetryAfter &&
+      await verifyLocalRoute(this.options.localUrl, this.options.token) ? this.options.localUrl : this.options.serverUrl);
+    if (this.manuallyClosed || generation !== this.routeGeneration) return;
     let wsUrl: string;
     try {
-      wsUrl = toWebSocketUrl(this.options.serverUrl);
+      wsUrl = toWebSocketUrl(serverUrl);
     } catch (error) {
       this.options.onPhase('error', error instanceof Error ? error.message : '服务器地址无效');
       return;
     }
 
-    this.options.onPhase(reconnecting ? 'reconnecting' : 'connecting');
+    this.activeServerUrl = serverUrl;
     const tokenProtocol = `token.${base64UrlUtf8(this.options.token)}`;
     const socket = new WebSocket(wsUrl, [WIRE_PROTOCOL, tokenProtocol]);
     this.socket = socket;
+    if (serverUrl === this.options.localUrl) this.handshakeTimer = window.setTimeout(() => {
+      if (socket !== this.socket || this.welcomed) return;
+      this.localRetryAfter = Date.now() + 30_000;
+      this.socket = null;
+      socket.close();
+      void this.open(true, this.options.serverUrl);
+    }, 2600);
 
     socket.onopen = () => {
       if (socket !== this.socket) return;
@@ -98,7 +125,10 @@ export class RemoteSocket {
         for (const message of messages) {
           if (!isServerMessage(message)) continue;
           if (message.type === 'welcome') {
+            if (this.handshakeTimer !== null) window.clearTimeout(this.handshakeTimer);
+            this.handshakeTimer = null;
             this.welcomed = true;
+            this.options.onRoute?.(serverUrl);
             this.reconnectAttempts = 0;
             this.options.onPhase('connected', message.codexReady ? undefined : 'Bridge 已连接，但 Codex app-server 尚未就绪');
             this.startHeartbeat();
@@ -118,9 +148,10 @@ export class RemoteSocket {
 
     socket.onclose = (event) => {
       if (socket !== this.socket) return;
+      if (!this.welcomed && serverUrl === this.options.localUrl) this.localRetryAfter = Date.now() + 30_000;
       this.socket = null;
       this.welcomed = false;
-      this.stopHeartbeat();
+      this.clearTimers();
       if (!this.manuallyClosed) {
         const detail = event.reason
           || (event.code === 1006
@@ -134,6 +165,7 @@ export class RemoteSocket {
 
   private readonly handleNetworkOffline = (): void => {
     if (this.manuallyClosed) return;
+    this.routeGeneration++;
     this.clearTimers();
     const socket = this.socket;
     this.socket = null;
@@ -150,6 +182,7 @@ export class RemoteSocket {
     if (this.networkListenersInstalled) return;
     window.addEventListener('offline', this.handleNetworkOffline);
     window.addEventListener('online', this.handleNetworkOnline);
+    if (this.options.localUrl) this.routeTimer = window.setInterval(() => void this.refreshRoute(), 10_000);
     this.networkListenersInstalled = true;
   }
 
@@ -157,7 +190,26 @@ export class RemoteSocket {
     if (!this.networkListenersInstalled) return;
     window.removeEventListener('offline', this.handleNetworkOffline);
     window.removeEventListener('online', this.handleNetworkOnline);
+    if (this.routeTimer !== null) window.clearInterval(this.routeTimer);
+    this.routeTimer = null;
     this.networkListenersInstalled = false;
+  }
+
+  private async refreshRoute(): Promise<void> {
+    const local = this.options.localUrl;
+    if (!local || this.checkingRoute || !this.welcomed || this.manuallyClosed || document.hidden) return;
+    const generation = this.routeGeneration;
+    this.checkingRoute = true;
+    try {
+      const next = Date.now() >= this.localRetryAfter && await verifyLocalRoute(local, this.options.token) ? local : this.options.serverUrl;
+      if (generation !== this.routeGeneration || !this.welcomed || next === this.activeServerUrl) return;
+      this.clearTimers();
+      const old = this.socket;
+      this.socket = null;
+      this.welcomed = false;
+      old?.close(1000, 'network route changed');
+      void this.open(true, next);
+    } finally { this.checkingRoute = false; }
   }
 
   private sendRaw(message: ClientMessage): void {
@@ -187,6 +239,8 @@ export class RemoteSocket {
   }
 
   private clearTimers(): void {
+    if (this.handshakeTimer !== null) window.clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = null;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopHeartbeat();

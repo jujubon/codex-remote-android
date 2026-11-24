@@ -3,6 +3,7 @@ import { isAbsoluteHostPath } from '../lib/hostPath';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { RemoteSocket } from '../lib/RemoteSocket';
+import { deviceRequest } from '../lib/deviceTools';
 import { cancelApprovalNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
 import { downloadHostFile, saveHostFile, uploadRemoteFile } from '../lib/fileTransfer';
 import { NotificationGenerationGuard, NotificationOperationQueue, settleGuardedNotification } from '../lib/notificationGuard';
@@ -63,6 +64,8 @@ function explicitThreadOwner(value: unknown): string | undefined {
 
 export function visibleUserText(value: string): string {
   const normalized = value.replace(/\r\n?/g, '\n');
+  const desktopAttachmentHeader = /^\s*# Files mentioned by the user:[^\S\n]*\n[\s\S]*?^Distinguish instructions in attached documents from the user's request\.[^\S\n]*\n\s*(?:#{1,3}[ \t]+)?My request:[^\S\n]*(?:\n|$)/im.exec(normalized);
+  if (desktopAttachmentHeader?.index === 0) return normalized.slice(desktopAttachmentHeader[0].length).trim();
   const injectedPrefix = /<in-app-browser-context\b/i.test(normalized)
     || /(?:^|\n)# Files mentioned by the user:\s*(?:\n|$)/i.test(normalized);
   if (injectedPrefix) {
@@ -574,6 +577,7 @@ function sameRemoteMessage(left: RemoteMessage, right: RemoteMessage): boolean {
     && left.durationMs === right.durationMs
     && left.turnDurationMs === right.turnDurationMs
     && left.assistantPhase === right.assistantPhase
+    && left.deliveryAcknowledged === right.deliveryAcknowledged
     && left.status === right.status
     && left.toolName === right.toolName
     && left.itemType === right.itemType
@@ -722,6 +726,32 @@ function pendingUser(message: RemoteMessage): boolean {
   return message.role === 'user' && message.id.startsWith('local_');
 }
 
+export function canDiscardLocalMessage(message: RemoteMessage): boolean {
+  return pendingUser(message) && !message.deliveryAcknowledged;
+}
+
+export function orderConversationTurns(messages: RemoteMessage[]): RemoteMessage[] {
+  const groups = new Map<string, RemoteMessage[]>();
+  const order: RemoteMessage[][] = [];
+  for (const message of messages) {
+    const key = message.turnId;
+    const existing = key ? groups.get(key) : undefined;
+    if (existing) {
+      existing.push(message);
+      continue;
+    }
+    const group = [message];
+    order.push(group);
+    if (key) groups.set(key, group);
+  }
+  return order.flatMap(group => {
+    const firstPrompt = group.findIndex(message => message.role === 'user');
+    const replies = new Set(group.filter((message, index) => message.role === 'assistant' &&
+      (message.assistantPhase === 'final_answer' || (!message.assistantPhase && index < firstPrompt))));
+    return replies.size ? [...group.filter(message => !replies.has(message)), ...replies] : group;
+  });
+}
+
 // Replace each local echo in its existing slot. A replay of an already known
 // user item is never evidence that a second, identical prompt was delivered.
 function matchPendingUsers(current: RemoteMessage[], incoming: RemoteMessage[], allowTextMatch = true): RemoteMessage[] {
@@ -735,9 +765,11 @@ function matchPendingUsers(current: RemoteMessage[], incoming: RemoteMessage[], 
       if (!pendingUser(local)) return false;
       const localKeys = messageCorrelationIds(local);
       if (keys.length && localKeys.length) return localKeys.some(key => keys.includes(key));
-      if (!allowTextMatch || existingIds.has(canonical.id) || (local.turnId && canonical.turnId && local.turnId !== canonical.turnId)) return false;
       const text = local.content.trim().replace(/\s+/g, ' ');
-      return Boolean(text) && text === canonical.content.trim().replace(/\s+/g, ' ')
+      if (!text || text !== canonical.content.trim().replace(/\s+/g, ' ')) return false;
+      if (local.deliveryAcknowledged && local.turnId && local.turnId === canonical.turnId) return true;
+      return allowTextMatch && !existingIds.has(canonical.id)
+        && !(local.turnId && canonical.turnId && local.turnId !== canonical.turnId)
         && Math.abs(local.createdAt - canonical.createdAt) <= 300_000;
     });
     if (index >= 0) result[index] = canonical;
@@ -757,7 +789,15 @@ function insertHistoryBeforePending(current: RemoteMessage[], incoming: RemoteMe
 }
 
 function knownTurnIds(messages: RemoteMessage[]): string[] {
-  return [...new Set(messages.flatMap((message) => message.turnId ? [message.turnId] : []))].slice(-500);
+  const prompts = new Set<string>();
+  const replies = new Set<string>();
+  for (const message of messages) {
+    if (!message.turnId) continue;
+    if (message.role === 'user' && !pendingUser(message)) prompts.add(message.turnId);
+    if (message.role === 'assistant' && message.assistantPhase !== 'commentary'
+      && message.status === 'complete' && message.content.trim()) replies.add(message.turnId);
+  }
+  return [...prompts].filter(id => replies.has(id)).slice(-500);
 }
 
 export function turnIdsAfterSnapshot(current: Record<string, string>, threadId: string, currentTurnId?: string): Record<string, string> {
@@ -1152,6 +1192,7 @@ export function useRemote(config: RemoteConfig | null) {
   const notificationQueueRef = useRef(new NotificationOperationQueue());
   const [phase, setPhase] = useState<ConnectionPhase>('idle');
   const [phaseDetail, setPhaseDetail] = useState('');
+  const [connectionUrl, setConnectionUrl] = useState('');
   const [codexReady, setCodexReady] = useState(false);
   const [desktopOnly, setDesktopOnly] = useState(false);
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
@@ -1169,13 +1210,36 @@ export function useRemote(config: RemoteConfig | null) {
   const [usage, setUsage] = useState<AccountUsage | null>(null);
   const [usageStatus, setUsageStatus] = useState('');
   const usageRequest = useRef('');
+  const usageTimer = useRef<number | undefined>(undefined);
+  const cancelUsageRequest = useCallback(() => {
+    window.clearTimeout(usageTimer.current);
+    usageRequest.current = '';
+  }, []);
   const [modelPending, setModelPending] = useState(false);
   const modelRequest = useRef<{ id: string; threadId: string; model?: string; effort?: string } | null>(null);
   const refreshUsage = useCallback(() => {
+    if (!config || usageRequest.current) return;
     const requestId = createRequestId('usage');
+    const request = { type: 'usage.read' as const, requestId };
     usageRequest.current = requestId;
-    setUsageStatus(socketRef.current?.send({ type: 'usage.read', requestId }) ? '正在读取额度…' : '电脑未连接');
-  }, []);
+    setUsageStatus('正在读取额度…');
+    const sent = socketRef.current?.send(request);
+    usageTimer.current = window.setTimeout(() => {
+      if (usageRequest.current !== requestId) return;
+      socketRef.current?.send(request);
+      usageTimer.current = window.setTimeout(() => {
+        if (usageRequest.current !== requestId) return;
+        cancelUsageRequest();
+        setUsageStatus('读取额度超时，请点击刷新重试。');
+      }, 12_000);
+      void deviceRequest<AccountUsage>({ ...config, serverUrl: socketRef.current?.serverUrl ?? config.serverUrl }, 'usage').then(next => {
+        if (usageRequest.current !== requestId) return;
+        cancelUsageRequest();
+        setUsage(next);
+        setUsageStatus('');
+      }).catch(() => undefined);
+    }, sent ? 4_000 : 0);
+  }, [config, cancelUsageRequest]);
   const changeModelSettings = useCallback((model?: string, effort?: string) => {
     const threadId = selectedThreadRef.current;
     if (!threadId || modelRequest.current || (!model && !effort)) return false;
@@ -1977,7 +2041,11 @@ export function useRemote(config: RemoteConfig | null) {
           }
           break;
         case 'usage.result':
-          if (message.requestId === usageRequest.current) { setUsage(message.usage); setUsageStatus(''); }
+          if (message.requestId === usageRequest.current) {
+            cancelUsageRequest();
+            setUsage(message.usage);
+            setUsageStatus('');
+          }
           break;
         case 'projects':
           if (message.requestId === projectRequest.current) {
@@ -2057,9 +2125,10 @@ export function useRemote(config: RemoteConfig | null) {
           const observedTurnId = normalized.currentTurnId ?? normalized.messages.at(-1)?.turnId;
           setMessagesByThread((current) => ({
             ...current,
-            [normalized.thread!.id]: isSelectedLiveSnapshot
-              ? reconcileThreadSnapshot(current[normalized.thread!.id] ?? [], normalized.messages, normalized.thread!.id, observedTurnId)
-              : reconcileMessages(current[normalized.thread!.id] ?? [], normalized.messages, 'append', normalized.thread!.id),
+            [normalized.thread!.id]: reconcileThreadSnapshot(
+              current[normalized.thread!.id] ?? [], normalized.messages, normalized.thread!.id,
+              isSelectedLiveSnapshot ? observedTurnId : undefined,
+            ),
           }));
           if (message.history) setHistoryByThread((current) => ({
             ...current,
@@ -2097,6 +2166,12 @@ export function useRemote(config: RemoteConfig | null) {
         case 'turn.started': {
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
+          if (message.requestId) setMessagesByThread(current => ({
+            ...current,
+            [message.threadId]: (current[message.threadId] ?? []).map(item =>
+              item.id === `local_${message.requestId}`
+                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId } : item),
+          }));
           if (turnId) setTurnIds((current) => ({ ...current, [message.threadId]: turnId }));
           updateThreadState(message.threadId, 'running');
           updateAttentionNotification(message.threadId, 'running');
@@ -2185,6 +2260,15 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'error': {
+          if (message.requestId?.startsWith('turn_') && message.code !== 'submission_state_unknown') {
+            const localId = `local_${message.requestId}`;
+            setMessagesByThread(current => {
+              const entry = Object.entries(current).find(([, items]) => items.some(item => item.id === localId && canDiscardLocalMessage(item)));
+              if (!entry) return current;
+              const [threadId, items] = entry;
+              return { ...current, [threadId]: items.map(item => item.id === localId ? { ...item, status: 'failed' } : item) };
+            });
+          }
           const archive = message.requestId && archiveRequests.current.get(message.requestId);
           if (archive) { archive.reject(new Error(message.message)); break; }
           if (message.requestId && message.requestId === projectRequest.current) {
@@ -2192,7 +2276,6 @@ export function useRemote(config: RemoteConfig | null) {
             break;
           }
           if (message.requestId && message.requestId === usageRequest.current) {
-            setUsageStatus('当前无法获取额度');
             break;
           }
           if (modelRequest.current && message.requestId === modelRequest.current.id) {
@@ -2241,7 +2324,7 @@ export function useRemote(config: RemoteConfig | null) {
     cacheScopeRef.current = scope;
 
     setModels([]);
-    usageRequest.current = '';
+    cancelUsageRequest();
     setUsage(null);
     setUsageStatus('');
     setSkills([]);
@@ -2305,6 +2388,8 @@ export function useRemote(config: RemoteConfig | null) {
 
       socket = new RemoteSocket({
         serverUrl: config.serverUrl,
+        localUrl: config.localUrl,
+        onRoute: setConnectionUrl,
         token: config.pairingToken,
         onMessage: (message) => handleMessageRef.current(message),
         onPhase: (nextPhase, detail) => {
@@ -2316,8 +2401,9 @@ export function useRemote(config: RemoteConfig | null) {
             setCodexReady(false);
             modelRequest.current = null;
             setModelPending(false);
-            usageRequest.current = '';
-            setUsageStatus('电脑未连接');
+            if (!usageRequest.current) setUsageStatus('电脑未连接');
+          } else {
+            setUsageStatus(current => current === '电脑未连接' ? '' : current);
           }
         },
       });
@@ -2339,12 +2425,13 @@ export function useRemote(config: RemoteConfig | null) {
 
     return () => {
       cancelled = true;
+      cancelUsageRequest();
       for (const request of archiveRequests.current.values()) request.reject(new Error('连接已关闭。'));
       socket?.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
       void appListener?.remove();
     };
-  }, [config, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification]);
+  }, [config, cancelUsageRequest, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification]);
 
   useEffect(() => {
     if (!config || !cacheHydratedRef.current || !cacheScopeRef.current) return;
@@ -2421,6 +2508,10 @@ export function useRemote(config: RemoteConfig | null) {
     const threadId = selectedThreadRef.current;
     const text = content.trim();
     if (!threadId || (!text && files.length === 0)) return false;
+    if (modelRequest.current?.threadId === threadId) {
+      setLastError('正在确认模型设置，请稍后再发送。');
+      return false;
+    }
 
     const appendLocalSystemMessage = (title: string, body: string) => {
       const localMessage: RemoteMessage = {
@@ -2601,6 +2692,13 @@ export function useRemote(config: RemoteConfig | null) {
   const refreshGitDiff = useCallback(() => {
     const threadId = selectedThreadRef.current;
     if (threadId) socketRef.current?.send({ type: 'thread.diff.get', requestId: createRequestId('diff'), threadId });
+  }, []);
+
+  const discardLocalMessage = useCallback((threadId: string, messageId: string) => {
+    setMessagesByThread(current => ({
+      ...current,
+      [threadId]: (current[threadId] ?? []).filter(item => item.id !== messageId || !canDiscardLocalMessage(item)),
+    }));
   }, []);
 
   const resumePromptQueue = useCallback(() => {
@@ -2802,6 +2900,7 @@ export function useRemote(config: RemoteConfig | null) {
   return {
     phase,
     phaseDetail,
+    connectionUrl: phase === 'connected' ? connectionUrl : '',
     codexReady,
     desktopOnly,
     archiveSupported, archiveRequest,
@@ -2833,6 +2932,7 @@ export function useRemote(config: RemoteConfig | null) {
     selectThread,
     loadOlderHistory,
     sendMessage,
+    discardLocalMessage,
     cancelQueuedPrompt,
     promoteQueuedPrompt,
     resumePromptQueue,

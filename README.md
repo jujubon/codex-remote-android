@@ -6,7 +6,7 @@
 
 准备一台能正常使用 **Codex Desktop** 的 Windows 电脑和一部 **Android 7.0 或更高版本**的手机。先在电脑端登录 Codex、打开一个对话，并确认可以正常发送消息。
 
-1. 从 [Releases](https://github.com/jujubon/codex-remote-android/releases) 下载 Android 0.9.5 和 Windows 0.9.5，分别为 `Codex-Remote-0.9.5.apk` 和 `Codex-Remote-Windows-0.9.5.zip`。也可按下文从源码构建。
+1. 从 [Releases](https://github.com/jujubon/codex-remote-android/releases) 下载同一版本的 Android APK 和 Windows ZIP。也可按下文从源码构建。发布流程见 [版本发布](docs/releases.md)。
 2. 在手机上安装 APK。把 Windows ZIP **完整解压到固定文件夹**。直接在压缩包预览里双击 `.cmd` 会让它找不到同目录的 PowerShell 脚本。
 3. 第一次建议让手机和电脑连到同一可信 Wi-Fi。在解压目录双击 **`Start.cmd`**。电脑窗口会显示 `App address` 和 `Pairing token`。启动器优先使用 Codex 附带的 Node.js；如果提示找不到 `node.exe`，安装 Node.js 22.12 或更高版本后重试。
 4. 在手机的「连接设置」分别填入这两项，点「保存并连接」。看到项目列表后，打开电脑上已有的对话并发送一条消息，在桌面核对回复。使用期间请让电脑保持唤醒，并让 Codex Desktop 和配套服务保持运行。

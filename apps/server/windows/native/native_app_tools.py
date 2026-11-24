@@ -21,9 +21,11 @@ from control_contract import check_app_tools_contract
 from tool_schema import validate_arguments
 from endpoint_hint import PIPE_NAME, MAX_ENDPOINT_CANDIDATES, discover_native_endpoints
 
-ALLOWED_TOOLS = frozenset({'read_thread', 'list_projects', 'set_thread_title', 'create_thread', 'fork_thread', 'navigate_to_codex_page'})
-WRITE_TOOLS = frozenset({'set_thread_title', 'create_thread', 'fork_thread', 'navigate_to_codex_page'})
+WRITE_TOOLS = frozenset({'set_thread_title', 'create_thread', 'fork_thread', 'navigate_to_codex_page', 'send_message_to_thread'})
+ALLOWED_TOOLS = WRITE_TOOLS | {'read_thread', 'list_projects'}
 THREAD_ID = re.compile(r'^[A-Za-z0-9_-]{20,100}$')
+MODEL_ID = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$')
+THINKING_LEVELS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
 
 
 class NativeToolError(DesktopControlError):
@@ -206,6 +208,11 @@ class NativeAppTools:
                     'reason': 'native-app-tools-confirmation-lost' if dispatched else 'native-app-tools-unavailable'}
 
     def thread(self, thread_id: str, expected_identity: str) -> dict:
+        snapshot = self.thread_snapshot(thread_id, expected_identity)
+        row = snapshot['thread']
+        return {k: row.get(k) for k in ('id', 'title', 'hostId', 'kind', 'status', 'cwd')}
+
+    def thread_snapshot(self, thread_id: str, expected_identity: str) -> dict:
         result = self.call('read_thread', {'threadId': thread_id, 'turnLimit': 1,
                            'includeOutputs': False, 'maxOutputCharsPerItem': 0},
                            source_thread_id=thread_id, expected_identity=expected_identity,
@@ -216,7 +223,44 @@ class NativeAppTools:
         if (not isinstance(row, dict) or row.get('id') != thread_id
                 or row.get('kind') != 'codex' or row.get('hostId') != 'local'):
             raise NativeToolError('native-thread-target-unverified')
-        return {k: row.get(k) for k in ('id', 'title', 'hostId', 'kind', 'status', 'cwd')}
+        return result['data']
+
+    def check_model_override(self, thread_id: str, expected_identity: str, model: str, thinking: str | None) -> dict:
+        self.thread_snapshot(thread_id, expected_identity)
+        args = {'threadId': thread_id, 'hostId': 'local', 'prompt': 'check', 'model': model}
+        if thinking is not None:
+            args['thinking'] = thinking
+        with self._connection(expected_identity, 5.0) as (_, catalog):
+            schema = next((row.get('inputSchema') for row in catalog['tools'] if isinstance(row, dict)
+                           and row.get('namespace') == 'codex_app' and row.get('name') == 'send_message_to_thread'), None)
+            if self._arguments_valid('send_message_to_thread', args, thread_id) and validate_arguments(args, schema):
+                return {'state': 'confirmed'}
+        return {'state': 'rejected', 'reply': '当前桌面版本不支持从手机指定这个模型或思考强度。'}
+
+    def send_text(self, thread_id: str, prompt: str, expected_identity: str, operation_id: str,
+                  *, model: str | None = None, thinking: str | None = None) -> dict:
+        before = self.thread_snapshot(thread_id, expected_identity)
+        status = before['thread'].get('status')
+        if not isinstance(status, dict) or status.get('type') not in ('idle', 'notLoaded'):
+            return {'state': 'rejected', 'reply': '桌面对话仍在运行或状态未确认，请等待本轮结束后再发送。'}
+        turns = before.get('turns')
+        if not isinstance(turns, list) or (turns and (not isinstance(turns[-1], dict) or not isinstance(turns[-1].get('id'), str))):
+            return {'state': 'rejected', 'reply': '无法核对原对话的最新消息。'}
+        args = {'threadId': thread_id, 'hostId': 'local', 'prompt': prompt}
+        if model is not None:
+            args['model'] = model
+        if thinking is not None:
+            args['thinking'] = thinking
+        result = self.call('send_message_to_thread', args,
+                           source_thread_id=thread_id, expected_identity=expected_identity,
+                           operation_id=operation_id, mutation=True)
+        if result['state'] != 'confirmed':
+            return {'state': result['state'], 'reply': '桌面未返回可确认的发送回执。'}
+        data = result['data']
+        if data.get('threadId', thread_id) != thread_id or data.get('hostId', 'local') != 'local':
+            return {'state': 'unknown', 'reply': '桌面没有确认同一个对话。'}
+        return {'state': 'confirmed', 'previous_turn_id': turns[-1]['id'] if turns else None,
+                'turn_id': data.get('turnId') if isinstance(data.get('turnId'), str) else None}
 
     @staticmethod
     def _arguments_valid(tool: str, args: dict, source: str) -> bool:
@@ -225,6 +269,14 @@ class NativeAppTools:
         if tool == 'read_thread':
             return (args == {'threadId': source, 'turnLimit': 1, 'includeOutputs': False,
                              'maxOutputCharsPerItem': 0})
+        if tool == 'send_message_to_thread':
+            prompt = args.get('prompt')
+            model, thinking = args.get('model'), args.get('thinking')
+            return (not set(args) - {'threadId', 'hostId', 'prompt', 'model', 'thinking'}
+                    and args.get('threadId') == source and args.get('hostId') == 'local'
+                    and isinstance(prompt, str) and 1 <= len(prompt.strip()) <= 20000
+                    and ('model' not in args or isinstance(model, str) and MODEL_ID.fullmatch(model) is not None)
+                    and ('thinking' not in args or isinstance(thinking, str) and thinking in THINKING_LEVELS))
         if tool == 'fork_thread':
             return args == {'threadId': source, 'environment': {'type': 'same-directory'}}
         if tool == 'navigate_to_codex_page':

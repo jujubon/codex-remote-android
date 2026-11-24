@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { useEffect, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
+import { MonitorIcon } from './Icons';
 
 type ReaderState = { state: 'idle' | 'connecting' | 'sharing'; detail?: string; controlAvailable?: boolean };
 type ReadingApp = { id: string; name: string };
@@ -18,10 +19,15 @@ export async function stopCrossNetworkReader() {
   if (Capacitor.getPlatform() === 'android') await reader.stop().catch(() => undefined);
 }
 
-export function PhoneReader({ config, connected }: { config: RemoteConfig; connected: boolean }) {
+export function PhoneReader({ config, deviceConfig = config, desktop, supported }: {
+  config: RemoteConfig;
+  deviceConfig?: RemoteConfig;
+  desktop?: DeviceStatus['reader'];
+  supported?: boolean;
+}) {
   const [status, setStatus] = useState<ReaderState>({ state: 'idle' });
-  const [desktop, setDesktop] = useState<DeviceStatus['reader']>();
-  const [configureRemote, setConfigureRemote] = useState(false);
+  const [localOpened, setLocalOpened] = useState(false);
+  const [preferredMode, setPreferredMode] = useState<'wifi' | 'remote'>();
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [allowControls, setAllowControls] = useState(false);
@@ -32,9 +38,8 @@ export function PhoneReader({ config, connected }: { config: RemoteConfig; conne
   const canShare = endpoint?.protocol === 'https:' || endpoint?.protocol === 'wss:';
   const active = status.state !== 'idle';
   const canControl = status.controlAvailable && target;
-  const localActive = connected && desktop?.localActive;
-  const remoteReady = connected && desktop?.remoteReady;
-  const showRemote = active || ((configureRemote || remoteReady) && !localActive);
+  const localActive = localOpened || desktop?.localActive;
+  const mode = active ? 'remote' : preferredMode ?? (canShare && deviceConfig.serverUrl === config.serverUrl ? 'remote' : 'wifi');
 
   useEffect(() => {
     if (!native || pending) return;
@@ -47,21 +52,22 @@ export function PhoneReader({ config, connected }: { config: RemoteConfig; conne
     return () => { mounted = false; clearInterval(timer); };
   }, [native, pending]);
 
-  useEffect(() => {
-    setDesktop(undefined);
-    if (!native || !connected) return;
-    let mounted = true;
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      if (!document.hidden) {
-        const next = await deviceRequest<DeviceStatus>(config, 'status').catch(() => undefined);
-        if (mounted) setDesktop(next?.reader);
-      }
-      if (mounted) timer = setTimeout(() => void refresh(), 4000);
+  useEffect(() => { setLocalOpened(false); }, [desktop, config]);
+
+  async function openLocal() {
+    if (pending || localActive || active || supported === false) return;
+    setPending(true);
+    setFeedback('正在打开 Wi-Fi 投屏…');
+    try {
+      await deviceRequest<{ alreadyOpen: boolean }>(deviceConfig, 'reader/open-local');
+      setLocalOpened(true);
+      setFeedback('');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : '未确认电脑投屏窗口已打开。');
+    } finally {
+      setPending(false);
     }
-    void refresh();
-    return () => { mounted = false; clearTimeout(timer); };
-  }, [config, native, connected]);
+  }
 
   function enableControls(checked: boolean) {
     setAllowControls(checked);
@@ -80,7 +86,12 @@ export function PhoneReader({ config, connected }: { config: RemoteConfig; conne
         setStatus({ state: 'idle' });
       } else {
         if (endpoint.protocol === 'wss:') endpoint.protocol = 'https:';
+        setFeedback('正在电脑上打开接收窗口…');
+        await deviceRequest(config, 'reader/open-remote');
+        setLocalOpened(false);
+        setFeedback('请在手机上确认屏幕共享。');
         await reader.start({ address: endpoint.origin, target: allowControls ? target : undefined });
+        setFeedback('');
         setStatus({ state: 'connecting' });
         setAllowControls(false);
         setTarget('');
@@ -93,24 +104,22 @@ export function PhoneReader({ config, connected }: { config: RemoteConfig; conne
   }
 
   return <section className="computer-reader">
-    <h2>手机阅读窗</h2>
-    {active ? <p>跨网投屏</p> : localActive
-      ? <p role="status">本地 Wi-Fi 投屏中。在电脑关闭小窗可结束。</p>
-      : <p>同一 Wi-Fi 时，在 Windows 打开「手机阅读窗」。已配对的手机可直接连接。</p>}
-    {native && !active && !localActive && !showRemote && <div>
-      <button type="button" className="secondary-button" onClick={() => setConfigureRemote(true)}>跨网投屏</button>
+    <header className="reader-heading"><span className="reader-icon"><MonitorIcon /></span><div>
+      <h2>手机投屏</h2>
+      <p>{active ? '正在跨网共享' : localActive ? 'Wi-Fi 投屏中' : '在电脑上查看手机屏幕'}</p>
+    </div></header>
+    {native && !active && <div className="reader-mode" role="group" aria-label="投屏方式">
+      <button type="button" aria-pressed={mode === 'wifi'} disabled={pending} onClick={() => { setPreferredMode('wifi'); setFeedback(''); }}>同一 Wi‑Fi</button>
+      <button type="button" aria-pressed={mode === 'remote'} disabled={pending} onClick={() => { setPreferredMode('remote'); setFeedback(''); }}>跨网投屏</button>
     </div>}
-    {native && showRemote && !active && <>
-      <p>{remoteReady
-        ? '电脑已打开跨网窗口。可以在手机上确认共享。'
-        : '先在电脑的「手机阅读窗」点「改用跨网」。'}</p>
-      {!canShare && <p>请先在连接设置填入 HTTPS 隧道地址。</p>}
-    </>}
-    {native && showRemote && canShare && !active && <div className="computer-reader-controls">
+    {native && !active && <p>{mode === 'wifi'
+      ? '同一 Wi‑Fi 下使用，首次连接需在 Windows 上完成无线调试配对。'
+      : canShare ? '支持 5G 和不同 Wi‑Fi。电脑自动打开窗口，手机确认后开始共享。' : '请在连接设置中填写固定 HTTPS 地址。'}</p>}
+    {native && mode === 'remote' && canShare && !active && <div className="computer-reader-controls">
       <label className="computer-reader-toggle">
-        <input type="checkbox" checked={allowControls} disabled={pending}
+        <span>允许电脑翻页</span>
+        <input type="checkbox" role="switch" checked={allowControls} disabled={pending}
           onChange={event => enableControls(event.target.checked)} />
-        允许电脑翻页
       </label>
       {allowControls && <>
         <p>电脑可在所选 App 内滑动翻页。确认投屏后，保持手机解锁并打开该 App。</p>
@@ -127,14 +136,13 @@ export function PhoneReader({ config, connected }: { config: RemoteConfig; conne
         </label>
       </>}
     </div>}
-    {native && showRemote && <div>
-      <button className={active ? 'secondary-button' : 'primary-button'} type="button"
-        disabled={pending || (!active && (!canShare || (allowControls && !canControl)))} onClick={() => void toggle()}>
-        {active ? '停止投屏' : '开始跨网投屏'}
-      </button>
-    </div>}
+    {native && <button className={active ? 'secondary-button reader-action' : 'primary-button reader-action'} type="button"
+      disabled={pending || supported === false || (mode === 'wifi' ? !!localActive : !active && (!canShare || (allowControls && !canControl)))}
+      onClick={() => void (mode === 'wifi' ? openLocal() : toggle())}>
+      {active ? '停止投屏' : pending ? '正在连接电脑…' : mode === 'wifi' ? '在电脑打开 Wi-Fi 投屏' : '开始跨网投屏'}
+    </button>}
     {(feedback || status.detail || active) && <p role="status">
-      {feedback || status.detail || (status.state === 'sharing' ? '正在共享屏幕。' : '正在连接电脑阅读窗…')}
+      {feedback || status.detail || (status.state === 'sharing' ? '正在共享屏幕。' : '正在连接电脑投屏窗口…')}
     </p>}
   </section>;
 }

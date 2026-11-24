@@ -1,7 +1,16 @@
-param([switch]$Background, [switch]$EnableAutostart, [switch]$DisableAutostart, [switch]$Vpn, [switch]$Tunnel)
+param([switch]$Background, [switch]$EnableAutostart, [switch]$DisableAutostart, [switch]$Vpn, [switch]$Tunnel, [switch]$EnableTrustedLan)
 $ErrorActionPreference = 'Stop'
 $stateDir = Join-Path $env:LOCALAPPDATA 'CodexMobileRemote'
 New-Item -ItemType Directory -Force $stateDir | Out-Null
+if ($EnableTrustedLan) {
+    $addresses = @(Get-NetIPConfiguration | Where-Object { $_.NetAdapter.HardwareInterface -and $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway } |
+        ForEach-Object { $_.IPv4Address.IPAddress } | Where-Object { $_ -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' } | Select-Object -Unique)
+    if ($addresses.Count -ne 1) { throw 'Connect the PC to one trusted LAN with a private IPv4 address, then run this again.' }
+    Set-Content -LiteralPath (Join-Path $stateDir 'lan-address.txt') -Value $addresses[0] -Encoding ASCII
+    Write-Host "App local address: http://$($addresses[0]):18788"
+    Write-Host 'Restart the Windows host to activate the LAN listener.'
+    return
+}
 $shortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Mobile Host.lnk'
 if ($EnableAutostart) {
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
@@ -19,13 +28,16 @@ if ($DisableAutostart) {
 $runtime = Get-AppxPackage 'OpenAI.CodexPrimaryRuntime*' | Sort-Object Version -Descending | Select-Object -First 1
 $nodePath = if ($runtime) { Join-Path $runtime.InstallLocation 'dependencies\node\bin\node.exe' }
 if (!$nodePath -or !(Test-Path -LiteralPath $nodePath)) { $nodePath = (Get-Command node.exe).Source }
-$env:CODEX_BIN = (Get-Command codex.exe -ErrorAction SilentlyContinue).Source
+$desktop = Get-AppxPackage 'OpenAI.Codex' | Sort-Object Version -Descending | Select-Object -First 1
+$desktopBin = if ($desktop) { Join-Path $desktop.InstallLocation 'app\resources\codex.exe' }
+$env:CODEX_BIN = if ($desktopBin -and (Test-Path -LiteralPath $desktopBin)) { $desktopBin } else { (Get-Command codex.exe -ErrorAction SilentlyContinue).Source }
 if (!$env:CODEX_BIN) { $env:CODEX_BIN = "$env:LOCALAPPDATA\Programs\OpenAI\Codex\bin\codex.exe" }
 if (!(Test-Path -LiteralPath $env:CODEX_BIN)) { throw 'Install or open Codex Desktop first.' }
 $env:CODEX_HOME = Join-Path $env:USERPROFILE '.codex'
 $env:CMR_PYTHON = Join-Path $PSScriptRoot 'python\python.exe'
 if (!(Test-Path -LiteralPath $env:CMR_PYTHON)) { $env:CMR_PYTHON = (Get-Command python.exe).Source }
 $env:CMR_STATE_DIRECTORY = $stateDir
+$env:CMR_PHONE_READER_SCRIPT = Join-Path $PSScriptRoot 'Phone-Reading-Window.ps1'
 if (!$env:CMR_PHONE_DROP_DIR) {
     $desktopDirectory = [Environment]::GetFolderPath('DesktopDirectory')
     if ($desktopDirectory) { $env:CMR_PHONE_DROP_DIR = Join-Path $desktopDirectory 'PhoneDrop' }

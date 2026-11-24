@@ -9,6 +9,7 @@ import WebSocket from "ws";
 import { MobileGateway, accountUsage, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
 import type { ServerConfig } from "../src/config.js";
 import { PromptQueueStore } from "../src/prompt-queue.js";
+import { DesktopActionError, type desktopAction } from "../src/windows-desktop.js";
 
 
 it("maps account limits without duplicate buckets or inventing missing windows", () => {
@@ -71,8 +72,11 @@ class FakeBridge extends EventEmitter {
     if (method === "thread/turns/list") {
       const cursor = (params as { cursor?: string }).cursor;
       return cursor
-        ? { data: [{ id: "turn-old", status: "completed", items: [] }], nextCursor: null, backwardsCursor: "newer" }
-        : { data: [{ id: "turn-new", status: "completed", items: [] }], nextCursor: "older", backwardsCursor: null };
+        ? { data: [{ id: "turn-old", status: "completed", items: [
+          { id: "progress-old", type: "agentMessage", phase: "commentary", text: "Working" },
+          { id: "reply-old", type: "agentMessage", phase: "final_answer", text: "Earlier final reply" },
+        ] }], nextCursor: null, backwardsCursor: "newer" }
+        : { data: [{ id: "turn-new", status: "completed", items: [{ id: "reply-new", type: "agentMessage", text: "Final reply" }] }], nextCursor: "older", backwardsCursor: null };
     }
     if (method === "model/list") {
       return { data: [{ id: "model-1", model: "model-1", displayName: "Model One", description: "Test model", hidden: false, isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "Balanced" }] }] };
@@ -132,9 +136,10 @@ const config: ServerConfig = {
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => { while (closers.length) await closers.pop()?.(); });
 
-async function start(desktop?: FakeDesktop, promptQueue?: PromptQueueStore) {
+async function start(desktop?: FakeDesktop, promptQueue?: PromptQueueStore, overrides?: Partial<ServerConfig>,
+                     runDesktopAction?: typeof desktopAction) {
   const bridge = new FakeBridge();
-  const gateway = new MobileGateway(bridge as never, config, desktop as never, undefined, promptQueue);
+  const gateway = new MobileGateway(bridge as never, { ...config, ...overrides }, desktop as never, undefined, promptQueue, runDesktopAction);
   const server = createServer();
   server.on("upgrade", (request, socket, head) => gateway.handleUpgrade(request, socket, head));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -405,16 +410,25 @@ describe("MobileGateway", () => {
     ws.on("message", (data) => messages.push(JSON.parse(data.toString())));
     await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
 
-    ws.send(JSON.stringify({ type: "thread.open", requestId: "open-page", threadId: "thread-1", historyLimit: 20 }));
+    ws.send(JSON.stringify({ type: "thread.open", requestId: "open-page", threadId: "thread-1", historyLimit: 20, knownTurnIds: ["turn-new"] }));
     await waitFor(() => messages.some((message) => message.type === "thread" && message.requestId === "open-page"));
     expect(bridge.calls).toContainEqual({ method: "thread/resume", params: { threadId: "thread-1", excludeTurns: true } });
     expect(bridge.calls).toContainEqual({ method: "thread/turns/list", params: { threadId: "thread-1", limit: 20, sortDirection: "desc", itemsView: "full" } });
     expect(messages.find((message) => message.requestId === "open-page")?.history).toMatchObject({ nextCursor: "older", hasMore: true });
+    expect(messages.find((message) => message.requestId === "open-page")?.thread).toMatchObject({
+      thread: { turns: [{ id: "turn-new", items: [{ id: "reply-new", text: "Final reply" }] }] },
+    });
 
-    ws.send(JSON.stringify({ type: "thread.history", requestId: "older-page", threadId: "thread-1", cursor: "older", limit: 20 }));
+    ws.send(JSON.stringify({ type: "thread.history", requestId: "older-page", threadId: "thread-1", cursor: "older", limit: 20, knownTurnIds: ["turn-old"] }));
     await waitFor(() => messages.some((message) => message.type === "thread.history" && message.requestId === "older-page"));
     expect(bridge.calls).toContainEqual({ method: "thread/turns/list", params: { threadId: "thread-1", cursor: "older", limit: 20, sortDirection: "desc", itemsView: "full" } });
     expect(messages.find((message) => message.requestId === "older-page")?.history).toMatchObject({ nextCursor: null, hasMore: false });
+    expect(messages.find(message => message.requestId === "older-page")?.turns).toEqual([]);
+    expect(messages).toContainEqual({
+      type: "event", method: "item/completed",
+      params: { threadId: "thread-1", turnId: "turn-old", item: { id: "reply-old", type: "agentMessage", phase: "final_answer", text: "Earlier final reply" } },
+    });
+    expect(messages.some(message => (message.params as { item?: { id: string } } | undefined)?.item?.id === "progress-old")).toBe(false);
     ws.close();
   });
 
@@ -699,6 +713,53 @@ describe("MobileGateway", () => {
     await waitFor(() => messages.some((message) => message.type === "error" && message.requestId === "uncertain-turn"));
     expect(desktop.calls.map((call) => call.method)).toEqual(["steer"]);
     expect(messages.find((message) => message.requestId === "uncertain-turn")).toMatchObject({ type: "error", code: "submission_state_unknown" });
+    ws.close();
+  });
+
+  it("sends text through the verified native desktop when follower IPC is absent", async () => {
+    const desktop = new FakeDesktop();
+    desktop.ready = desktop.owner = false;
+    const actions: string[] = [];
+    const { bridge, port } = await start(desktop, undefined, { desktopOnly: true }, async request => {
+      actions.push(request.action);
+      if (request.action === "native-send") {
+        if (request.threadId === "uncertain") throw new DesktopActionError("No receipt", true);
+        expect(request).toMatchObject({ threadId: "thread-1", prompt: "Review", model: "model-1", thinking: "medium" });
+        return { previous_turn_id: "turn-old" };
+      }
+      if (request.action === "native-model-check") {
+        expect(request).toMatchObject({ threadId: "thread-1", model: "model-1", thinking: "medium" });
+        return {};
+      }
+      return { snapshot: { thread: { id: "thread-1", status: { type: "idle" } },
+        turns: [{ id: "turn-new", status: "completed", items: [{ id: "reply", type: "agentMessage", text: "OK" }] }] } };
+    });
+    const encoded = Buffer.from(token).toString("base64url");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${encoded}`], { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    ws.send(JSON.stringify({ type: "thread.open", threadId: "thread-1", requestId: "desktop-open" }));
+    await waitFor(() => actions.filter(action => action === "native-read").length === 1);
+    ws.send(JSON.stringify({ type: "thread.settings", threadId: "thread-1", model: "model-1", effort: "medium", requestId: "select-model" }));
+    await waitFor(() => messages.some(message => message.requestId === "select-model"));
+    expect(messages.find(message => message.requestId === "select-model")).toMatchObject({
+      type: "thread.settings.updated", settings: { model: "model-1", effort: "medium" },
+    });
+    ws.send(JSON.stringify({ type: "thread.settings", threadId: "thread-1", model: "model-1", effort: "high", requestId: "unsupported-effort" }));
+    await waitFor(() => messages.some(message => message.requestId === "unsupported-effort"));
+    expect(messages.find(message => message.requestId === "unsupported-effort")?.type).toBe("error");
+    const turn = { type: "turn.start", threadId: "thread-1", text: "Review", clientUserMessageId: "client-id" };
+    ws.send(JSON.stringify({ ...turn, requestId: "one" }));
+    ws.send(JSON.stringify({ ...turn, requestId: "duplicate" }));
+    ws.send(JSON.stringify({ ...turn, requestId: "steer", deliveryMode: "steer" }));
+    ws.send(JSON.stringify({ ...turn, threadId: "uncertain", requestId: "unknown" }));
+    await waitFor(() => messages.filter(message => message.type === "turn.started").length === 2);
+    await waitFor(() => messages.some(message => message.requestId === "unknown" && message.code === "submission_state_unknown"));
+    expect(messages.find(message => message.requestId === "steer")).toMatchObject({ code: "desktop_route_limited" });
+    expect(actions.filter(action => action === "native-send")).toHaveLength(2);
+    await waitFor(() => messages.some(message => message.type === "thread" && JSON.stringify(message.thread).includes('"text":"OK"')), 3500);
+    expect(bridge.calls.some(call => call.method === "turn/start")).toBe(false);
     ws.close();
   });
 

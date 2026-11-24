@@ -240,6 +240,7 @@ export interface RemoteAttachment {
 }
 
 export interface RemoteMessage {
+  deliveryAcknowledged?: boolean;
   id: string;
   threadId: string;
   turnId?: string;

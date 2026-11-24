@@ -4,12 +4,15 @@ interface InlineOptions {
   keyPrefix: string;
 }
 
+const createdThreadDirective = /^::created-thread\{(?:threadId|clientThreadId)="[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}"\}\s*$/i;
+const localFileTarget = /^(?:\/?[a-z]:[/\\]|\/(?!\/)|file:\/\/\/)/i;
+
 /**
  * Deliberately small, safe Markdown renderer for Codex turn output.
  * It produces React nodes only: HTML in model output is rendered as text.
  */
 function renderInline(source: string, { keyPrefix }: InlineOptions): ReactNode[] {
-  const expression = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_)/g;
+  const expression = /\[(?<label>[^\]]+)\]\((?:<(?<wrappedTarget>[^<>\n]+)>|(?<target>[^\s)]+))\)|`(?<code>[^`]+)`|\*\*(?<strong>[^*]+)\*\*|__(?<strongUnderscores>[^_]+)__|\*(?<emphasis>[^*]+)\*|_(?<emphasisUnderscores>[^_]+)_/g;
   const nodes: ReactNode[] = [];
   let index = 0;
   let last = 0;
@@ -17,14 +20,18 @@ function renderInline(source: string, { keyPrefix }: InlineOptions): ReactNode[]
     const position = match.index ?? 0;
     if (position > last) nodes.push(source.slice(last, position));
     const key = `${keyPrefix}-${index++}`;
-    if (match[2] && match[3]) {
-      nodes.push(<a key={key} href={match[3]} target="_blank" rel="noreferrer">{match[2]}</a>);
-    } else if (match[4]) {
-      nodes.push(<code key={key}>{match[4]}</code>);
-    } else if (match[5] || match[6]) {
-      nodes.push(<strong key={key}>{match[5] ?? match[6]}</strong>);
-    } else if (match[7] || match[8]) {
-      nodes.push(<em key={key}>{match[7] ?? match[8]}</em>);
+    const { label, wrappedTarget, target, code, strong, strongUnderscores, emphasis, emphasisUnderscores } = match.groups!;
+    const destination = wrappedTarget ?? target ?? '';
+    if (/^https?:\/\/\S+$/i.test(destination)) {
+      nodes.push(<a key={key} href={destination} target="_blank" rel="noreferrer">{label}</a>);
+    } else if (localFileTarget.test(destination)) {
+      nodes.push(<code key={key}>{label}</code>);
+    } else if (code) {
+      nodes.push(<code key={key}>{code}</code>);
+    } else if (strong || strongUnderscores) {
+      nodes.push(<strong key={key}>{strong ?? strongUnderscores}</strong>);
+    } else if (emphasis || emphasisUnderscores) {
+      nodes.push(<em key={key}>{emphasis ?? emphasisUnderscores}</em>);
     } else {
       nodes.push(match[0]);
     }
@@ -59,15 +66,16 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   </div>;
 }
 
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content, hideDesktopDirectives = false }: { content: string; hideDesktopDirectives?: boolean }) {
   const lines = content.replace(/\r\n?/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
   let cursor = 0;
   let blockIndex = 0;
+  const isDesktopDirective = (line: string) => hideDesktopDirectives && createdThreadDirective.test(line);
 
   while (cursor < lines.length) {
     const line = lines[cursor] ?? '';
-    if (!line.trim()) {
+    if (!line.trim() || isDesktopDirective(line)) {
       cursor += 1;
       continue;
     }
@@ -145,7 +153,7 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
 
     const paragraph: string[] = [line];
     cursor += 1;
-    while (cursor < lines.length && lines[cursor]?.trim() && !/^```/.test(lines[cursor] ?? '') && !/^(#{1,4})\s+/.test(lines[cursor] ?? '') && !/^\s*>\s?/.test(lines[cursor] ?? '') && !isListLine(lines[cursor] ?? '')) {
+    while (cursor < lines.length && lines[cursor]?.trim() && !isDesktopDirective(lines[cursor] ?? '') && !/^```/.test(lines[cursor] ?? '') && !/^(#{1,4})\s+/.test(lines[cursor] ?? '') && !/^\s*>\s?/.test(lines[cursor] ?? '') && !isListLine(lines[cursor] ?? '')) {
       paragraph.push(lines[cursor] ?? '');
       cursor += 1;
     }

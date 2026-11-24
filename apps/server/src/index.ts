@@ -1,8 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHmac } from "node:crypto";
+import { BlockList } from "node:net";
+import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { ReaderStream } from "./reader-stream.js";
+import { LocalReaderError, localReaderLauncher } from "./local-reader.js";
 import { DeviceTools } from "./device-tools.js";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
 import { buildCodexEnvironment, loadConfig } from "./config.js";
@@ -37,10 +41,29 @@ const device = new DeviceTools(
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
 
-const reader = new ReaderStream(config.port === 65535 ? 8788 : config.port + 1);
+const readerViewerPort = config.port === 65535 ? 8788 : config.port + 1;
+const reader = new ReaderStream(readerViewerPort, Date.now,
+  localReaderLauncher(process.env.CMR_PHONE_READER_SCRIPT, readerViewerPort),
+  localReaderLauncher(process.env.CMR_PHONE_READER_SCRIPT, readerViewerPort, true));
 const server = createServer((request, response) => void handleHttp(request, response));
+let localServer: ReturnType<typeof createServer> | undefined;
+let localHost = "";
+let localListenerTimer: ReturnType<typeof setInterval> | undefined;
 
 async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const proofRequest = /^\/api\/local-proof\?nonce=([a-f0-9]{32})$/.exec(request.url ?? "");
+  if (request.method === "GET" && proofRequest && request.socket.localPort === 18788 && request.socket.localAddress === localHost) {
+    const origin = request.headers.origin;
+    if (origin && !config.allowedOrigins.has(origin)) {
+      json(response, 403, { error: "origin_not_allowed" });
+      return;
+    }
+    if (origin) response.setHeader("access-control-allow-origin", origin);
+    json(response, 200, {
+      proof: createHmac("sha256", config.token).update(`codex-remote-local-v1:${proofRequest[1]}`).digest("hex"),
+    });
+    return;
+  }
   if (request.method === "GET" && request.url === "/health") {
     response.writeHead(bridge.ready ? 200 : 503, {
       "content-type": "application/json; charset=utf-8",
@@ -49,7 +72,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.9.5",
+      version: "0.9.11",
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,
@@ -137,7 +160,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
       }
       json(response, 404, { error: "not_found" });
     } catch (error) {
-      const status = error instanceof FileTransferError ? error.httpStatus : 500;
+      const status = error instanceof FileTransferError ? error.httpStatus : error instanceof LocalReaderError ? 409 : 500;
       json(response, status, { error: error instanceof Error ? error.message : "file transfer failed" });
     }
     return;
@@ -151,11 +174,23 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, { ...await device.status(), reader: reader.status() });
     return;
   }
+  if (request.method === "GET" && request.url === "/api/device/usage") {
+    json(response, 200, await gateway.readAccountUsage());
+    return;
+  }
   if (!device.supported || request.method !== "POST") {
     json(response, 404, { error: "此电脑未提供设备工具。" });
     return;
   }
   switch (request.url) {
+    case "/api/device/reader/open-local":
+      request.resume();
+      json(response, 200, await reader.openLocal());
+      return;
+    case "/api/device/reader/open-remote":
+      request.resume();
+      json(response, 200, await reader.openRemote());
+      return;
     case "/api/device/clipboard/read":
       json(response, 200, await device.clipboardRead());
       return;
@@ -215,11 +250,13 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[server] received ${signal}; shutting down`);
   clearInterval(heartbeat);
   clearInterval(fileCleanup);
+  clearInterval(localListenerTimer);
   device.stopHold();
   reader.close();
   gateway.close();
   await desktopIpc.stop();
   await bridge.stop();
+  localServer?.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5_000).unref();
 }
@@ -244,3 +281,32 @@ server.listen(config.port, config.host, () => {
   if (config.packagedNodeReplRuntime)
     console.log(`[server] packaged Node REPL runtime ${config.packagedNodeReplRuntime.nodeRepl}`);
 });
+localHost = await readFile(join(dirname(config.promptQueueFile), "lan-address.txt"), "utf8").then(value => value.trim(), () => "");
+if (config.host === "127.0.0.1" && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(localHost)) {
+  const refreshLocalListener = () => {
+    const adapter = Object.values(networkInterfaces()).flat().find(entry => entry?.family === "IPv4" && entry.address === localHost);
+    const prefix = Number(adapter?.cidr?.split("/")[1]);
+    if (!adapter || !Number.isInteger(prefix) || prefix < 1 || prefix > 32) {
+      localServer?.close();
+      localServer = undefined;
+      return;
+    }
+    if (localServer) return;
+    const subnet = new BlockList();
+    subnet.addSubnet(localHost, prefix);
+    const listener = createServer((request, response) => void handleHttp(request, response));
+    localServer = listener;
+    listener.prependListener("connection", socket => {
+      if (!socket.remoteAddress || !subnet.check(socket.remoteAddress)) socket.destroy();
+    });
+    listener.on("upgrade", (request, socket, head) => gateway.handleUpgrade(request, socket, head));
+    listener.on("error", error => {
+      if (localServer === listener) localServer = undefined;
+      console.warn("[server] LAN listener unavailable:", error.message);
+    });
+    listener.listen(18788, localHost);
+  };
+  refreshLocalListener();
+  localListenerTimer = setInterval(refreshLocalListener, 5000);
+  localListenerTimer.unref();
+}

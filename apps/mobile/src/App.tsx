@@ -173,7 +173,7 @@ export function App() {
     );
   }
 
-  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} connected={remote.phase === 'connected'} />;
+  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} />;
 
   if (!config || showSettings) {
     return (
@@ -259,9 +259,11 @@ export function App() {
           onOpenThread={openNestedThread}
           onLoadAttachment={remote.loadHostAttachment}
           onDownloadAttachment={remote.downloadHostAttachment}
+          onDiscardLocalMessage={remote.discardLocalMessage}
         />
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
+          connectionUrl={remote.connectionUrl}
           phase={remote.phase}
           detail={phaseDetail}
           onReconnect={remote.reconnect}

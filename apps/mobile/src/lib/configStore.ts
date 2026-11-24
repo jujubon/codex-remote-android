@@ -14,11 +14,27 @@ const SecureTokenPlugin = registerPlugin<SecureTokenPluginApi>('SecureToken');
 export const DEFAULT_SERVER_URL = '';
 
 const SERVER_URL_KEY = 'codex.remote.server-url';
+const LOCAL_URL_KEY = 'codex.remote.local-url';
 const PAIRING_TOKEN_KEY = 'codex.remote.pairing-token';
 
 export interface RemoteConfig {
   serverUrl: string;
+  localUrl?: string;
   pairingToken: string;
+}
+
+export function normalizeLocalUrl(input: string): string | undefined {
+  const normalized = normalizeServerUrl(input);
+  if (!normalized) return undefined;
+  const url = new URL(normalized);
+  const parts = url.hostname.split('.').map(Number);
+  const privateHost = parts.length === 4 && (
+    parts[0] === 10 || (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31)
+    || (parts[0] === 192 && parts[1] === 168)
+  );
+  if (!privateHost || !['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
+      url.pathname !== '/' || url.search || url.hash) throw new Error('局域网地址请填写电脑的私有 IPv4 地址和端口。');
+  return url.origin;
 }
 
 export function normalizeServerUrl(input: string): string {
@@ -64,31 +80,39 @@ async function getSecureToken(): Promise<string> {
 }
 
 export async function loadRemoteConfig(): Promise<RemoteConfig | null> {
-  const [{ value: serverUrl }, pairingToken] = await Promise.all([
+  const [{ value: serverUrl }, { value: localUrl }, pairingToken] = await Promise.all([
     Preferences.get({ key: SERVER_URL_KEY }),
+    Preferences.get({ key: LOCAL_URL_KEY }),
     getSecureToken(),
   ]);
   if (!serverUrl || !pairingToken) return null;
-  return { serverUrl, pairingToken };
+  return { serverUrl, localUrl: localUrl ?? undefined, pairingToken };
 }
 
 export async function saveRemoteConfig(config: RemoteConfig): Promise<RemoteConfig> {
   const serverUrl = normalizeServerUrl(config.serverUrl);
   toWebSocketUrl(serverUrl);
+  const localUrl = normalizeLocalUrl(config.localUrl ?? '');
+  if (localUrl && !['https:', 'wss:'].includes(new URL(serverUrl).protocol)) {
+    throw new Error('使用自动切换时，请把固定 HTTPS 域名填在服务器地址。');
+  }
   const pairingToken = config.pairingToken.trim();
   if (!pairingToken) throw new Error('请输入配对令牌');
 
   await Preferences.set({ key: SERVER_URL_KEY, value: serverUrl });
+  if (localUrl) await Preferences.set({ key: LOCAL_URL_KEY, value: localUrl });
+  else await Preferences.remove({ key: LOCAL_URL_KEY });
   if (Capacitor.isNativePlatform()) {
     await SecureTokenPlugin.set({ key: PAIRING_TOKEN_KEY, value: pairingToken });
   } else {
     window.localStorage.setItem(PAIRING_TOKEN_KEY, pairingToken);
   }
-  return { serverUrl, pairingToken };
+  return { serverUrl, localUrl, pairingToken };
 }
 
 export async function clearRemoteConfig(): Promise<void> {
   await Preferences.remove({ key: SERVER_URL_KEY });
+  await Preferences.remove({ key: LOCAL_URL_KEY });
   if (Capacitor.isNativePlatform()) {
     try {
       await SecureTokenPlugin.remove({ key: PAIRING_TOKEN_KEY });

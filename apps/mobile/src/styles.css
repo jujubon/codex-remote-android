@@ -187,6 +187,7 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 .message-label strong { color: #555550; font-weight: 600; }
 .message-label time { color: #a0a09a; }
 .role-user .message-label { justify-content: flex-end; }
+.message-delete-local { display: block; margin: 6px 0 0 auto; }
 .message-bubble { color: #2c2c29; }
 .role-assistant .message-bubble { padding-right: 5px; }
 .role-user .message-bubble { padding: 9px 11px; border: 1px solid #dededa; border-radius: 10px 3px 10px 10px; background: #f0f0ed; }

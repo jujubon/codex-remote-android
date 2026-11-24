@@ -1,6 +1,28 @@
-﻿param([switch]$Check)
+﻿param([switch]$Check, [switch]$FromPhone, [switch]$RemoteFromPhone)
 
 $ErrorActionPreference = 'Stop'
+$viewerPort = 8788
+if (($FromPhone -or $RemoteFromPhone) -and $env:CMR_READER_VIEWER_PORT) {
+    $viewerPort = [int]$env:CMR_READER_VIEWER_PORT
+    if ($viewerPort -lt 1 -or $viewerPort -gt 65535) { throw 'Invalid reader viewer port.' }
+}
+
+function Start-ViewerWindow {
+    $url = "http://127.0.0.1:$viewerPort/"
+    $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
+    if (!(Test-Path -LiteralPath $edge)) { $edge = Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe' }
+    if (Test-Path -LiteralPath $edge) {
+        Start-Process -FilePath $edge -ArgumentList "--app=$url", '--window-size=420,820'
+    } else {
+        Start-Process -FilePath $url
+    }
+}
+
+if ($RemoteFromPhone) {
+    Start-ViewerWindow
+    [Console]::WriteLine('reader:open')
+    return
+}
 . (Join-Path $PSScriptRoot 'PhoneReader.Core.ps1')
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
@@ -19,6 +41,15 @@ if ($Check) {
     Write-Output "Phone Reader UI ready, scrcpy $($tools.Version)"
     return
 }
+if ($FromPhone -and !$toolsReady) {
+    [Console]::WriteLine('reader:missing')
+    return
+}
+if ($FromPhone) {
+    $window.ShowInTaskbar = $false
+    $window.ShowActivated = $false
+    $window.Opacity = 0
+}
 
 $script:readerOperation = $null
 $script:reading = $null
@@ -28,12 +59,15 @@ $script:remoteProbe = $null
 $script:localReport = $null
 $script:reportedActive = $false
 $script:reportAgain = [DateTime]::MinValue
+$script:windowDeadline = [DateTime]::MaxValue
+$readerLock = [Threading.Mutex]::new($false, 'Local\CodexRemotePhoneReader')
+$script:ownsReaderLock = $false
 Add-Type -AssemblyName System.Net.Http
 $handler = [System.Net.Http.HttpClientHandler]::new()
 $handler.UseProxy = $false
 $handler.AllowAutoRedirect = $false
 $hostClient = [System.Net.Http.HttpClient]::new($handler)
-$hostClient.BaseAddress = [Uri]'http://127.0.0.1:8788/'
+$hostClient.BaseAddress = [Uri]"http://127.0.0.1:$viewerPort/"
 $hostClient.Timeout = [TimeSpan]::FromSeconds(2)
 $hostClient.DefaultRequestHeaders.Add('X-CMR-Reader-Viewer', '1')
 $timer = New-Object Windows.Threading.DispatcherTimer
@@ -64,7 +98,13 @@ function Update-LocalReport {
     if ($script:localReport -and $script:localReport.Task.IsCompleted) {
         try {
             $reply = $script:localReport.Task.GetAwaiter().GetResult()
-            $reply.Dispose()
+            try {
+                if ($script:reading -and !$script:reading.Process.HasExited -and
+                    $reply.Headers.Contains('X-CMR-Reader-Switch') -and
+                    $reply.Headers.GetValues('X-CMR-Reader-Switch') -contains 'remote') {
+                    [void]$script:reading.Process.CloseMainWindow()
+                }
+            } finally { $reply.Dispose() }
         } catch {
             # Local mirroring can run without the paired Windows service.
         } finally {
@@ -80,14 +120,8 @@ function Update-LocalReport {
 }
 
 function Open-CrossNetworkViewer {
-    $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
-    if (!(Test-Path -LiteralPath $edge)) { $edge = Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe' }
-    if (Test-Path -LiteralPath $edge) {
-        Start-Process -FilePath $edge -ArgumentList '--app=http://127.0.0.1:8788/', '--window-size=420,820'
-    } else {
-        Start-Process -FilePath 'http://127.0.0.1:8788/'
-    }
-    Set-ReaderStatus '跨网窗口已打开。在手机「电脑 → 手机阅读窗」确认共享。'
+    Start-ViewerWindow
+    Set-ReaderStatus '跨网窗口已打开。在手机「电脑 → 手机投屏」确认共享。'
 }
 
 function Start-AdbAction([string[]]$Arguments, [string]$Message, [scriptblock]$OnComplete, [string]$InputText = '', [string]$Notice = '') {
@@ -105,6 +139,7 @@ function Refresh-ReaderDevices([string]$Notice = '', [switch]$AutoOpen) {
     Start-AdbAction -Arguments @('devices','-l') -Message '正在查找手机…' -Notice $Notice -OnComplete {
         param($Result, $AfterConnect)
         if ($Result.ExitCode -ne 0) {
+            if ($FromPhone) { Close-PhoneReaderLaunch 'failed'; return }
             Set-ReaderStatus '无法读取无线设备。请重试本地或改用跨网。' $true
             return
         }
@@ -117,6 +152,8 @@ function Refresh-ReaderDevices([string]$Notice = '', [switch]$AutoOpen) {
 
         if ($ready.Count -eq 1 -and $script:autoOpen -and !$script:remoteProbe) {
             Open-PhoneReadingWindow
+        } elseif ($FromPhone) {
+            Close-PhoneReaderLaunch $(if ($ready.Count -gt 1) { 'multiple' } else { 'no-device' })
         } elseif ($ready.Count -gt 0) {
             Set-ReaderStatus '无线调试已连接，可以打开本地投屏。'
         } elseif ($AfterConnect) {
@@ -131,16 +168,39 @@ function Refresh-ReaderDevices([string]$Notice = '', [switch]$AutoOpen) {
     }
 }
 
+function Close-PhoneReaderLaunch([string]$Reason) {
+    [Console]::WriteLine("reader:$Reason")
+    $window.Close()
+}
+
+function Release-ReaderLock {
+    if ($script:ownsReaderLock) {
+        $readerLock.ReleaseMutex()
+        $script:ownsReaderLock = $false
+    }
+}
+
 function Open-PhoneReadingWindow {
     $selected = $controls.Devices.SelectedItem
     if (!$selected -or $script:reading) { return }
     try {
-        $argsForReader = @(Get-ReaderArguments $selected.Serial ($controls.Topmost.IsChecked -eq $true) ($controls.ScreenOff.IsChecked -eq $true))
+        try { $script:ownsReaderLock = $readerLock.WaitOne(0) } catch [Threading.AbandonedMutexException] { $script:ownsReaderLock = $true }
+        if (!$script:ownsReaderLock) {
+            if ($FromPhone) { Close-PhoneReaderLaunch 'busy'; return }
+            Set-ReaderStatus '电脑上已有本地投屏小窗。' $true
+            return
+        }
+        $argsForReader = @(Get-ReaderArguments $selected.Serial ($controls.Topmost.IsChecked -eq $true) (!$FromPhone -and $controls.ScreenOff.IsChecked -eq $true))
         $script:reading = Start-ReaderChild -File $tools.Scrcpy -Arguments $argsForReader -Adb $tools.Adb
+        if ($FromPhone) { $script:windowDeadline = [DateTime]::UtcNow.AddSeconds(6) }
         $script:minimizedForReading = $false
         Set-ReaderStatus '正在打开阅读窗…'
         Update-ReaderButtons
-    } catch { Set-ReaderStatus $_.Exception.Message $true }
+    } catch {
+        Release-ReaderLock
+        if ($FromPhone) { Close-PhoneReaderLaunch 'failed'; return }
+        Set-ReaderStatus $_.Exception.Message $true
+    }
 }
 
 $controls.Refresh.Add_Click({ Refresh-ReaderDevices -AutoOpen })
@@ -204,6 +264,7 @@ $timer.Add_Tick({
         } elseif ($operation -and [DateTime]::UtcNow -ge $operation.Deadline) {
             $script:readerOperation = $null
             $operation.Child.Process.Dispose()
+            if ($FromPhone) { Close-PhoneReaderLaunch 'failed'; return }
             Set-ReaderStatus '这次连接未及时返回，请检查手机上的调试授权后重试。' $true
             Update-ReaderButtons
         }
@@ -212,6 +273,11 @@ $timer.Add_Tick({
                 if (!$script:reading.Stdout.IsCompleted -or !$script:reading.Stderr.IsCompleted) { return }
                 $closed = Receive-ReaderChild $script:reading
                 $script:reading = $null
+                if ($FromPhone) {
+                    if (!$script:minimizedForReading) { Close-PhoneReaderLaunch 'failed' } else { $window.Close() }
+                    return
+                }
+                Release-ReaderLock
                 if ($script:minimizedForReading) { $window.WindowState = 'Normal' }
                 if ($closed.ExitCode -eq 0) { Set-ReaderStatus '阅读窗已关闭。' }
                 else {
@@ -225,7 +291,10 @@ $timer.Add_Tick({
                 if (!$script:minimizedForReading -and $script:reading.Process.MainWindowHandle -ne [IntPtr]::Zero) {
                     $window.WindowState = 'Minimized'
                     $script:minimizedForReading = $true
+                    if ($FromPhone) { [Console]::WriteLine('reader:open') }
                     Set-ReaderStatus '本地 Wi-Fi 投屏中。关闭小窗后可切换为跨网投屏。'
+                } elseif ($FromPhone -and !$script:minimizedForReading -and [DateTime]::UtcNow -ge $script:windowDeadline) {
+                    $script:reading.Process.Kill()
                 }
             }
         }
@@ -240,6 +309,7 @@ $window.Add_Loaded({
     $timer.Start()
     if ($toolsReady) {
         Refresh-ReaderDevices -AutoOpen
+        if ($FromPhone -and $script:readerOperation) { $script:readerOperation.Deadline = [DateTime]::UtcNow.AddSeconds(4) }
     } else {
         Set-ReaderStatus "请下载官方 $($tools.Asset).zip，并把文件夹完整解压到 $($tools.Directory)。" $true
         Update-ReaderButtons
@@ -254,7 +324,18 @@ $window.Add_Closing({
 })
 $window.Add_Closed({
     $timer.Stop()
+    if ($FromPhone -and $script:reportedActive) {
+        # The previous report must finish before sending the final inactive state.
+        if ($script:localReport) {
+            try { $script:localReport.Task.GetAwaiter().GetResult().Dispose() } catch {}
+            $script:localReport.Message.Dispose()
+        }
+        Start-LocalReport $false
+        try { $script:localReport.Task.GetAwaiter().GetResult().Dispose() } catch {}
+    }
     $hostClient.Dispose()
     if ($script:localReport) { $script:localReport.Message.Dispose() }
+    Release-ReaderLock
+    $readerLock.Dispose()
 })
 [void]$window.ShowDialog()

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption } from '../types/protocol';
 import { ApprovalCard } from './ApprovalCard';
 import { CompactionStatusBar } from './CompactionStatusBar';
-import { isContextCompactionItem } from '../hooks/useRemote';
+import { isContextCompactionItem, orderConversationTurns } from '../hooks/useRemote';
 import { Composer } from './Composer';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ConversationContextPanel, isContextMessage, latestReasoning } from './ConversationContextPanel';
@@ -58,6 +58,7 @@ interface ConversationScreenProps {
   onOpenThread: (threadId: string) => void;
   onLoadAttachment: (path: string) => Promise<{ url: string; fileName: string; mimeType: string; size: number }>;
   onDownloadAttachment: (path: string) => void;
+  onDiscardLocalMessage: (threadId: string, messageId: string) => void;
 }
 
 
@@ -326,7 +327,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment }: ConversationScreenProps) {
+export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -362,7 +363,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
   }, [messages, compaction, thread.id]);
   const reasoning = useMemo(() => latestReasoning(messages, currentTurnId), [currentTurnId, messages]);
   const conversationEntries = useMemo(
-    () => resolveConversationEntryAgentNames(groupConversationMessages(visibleMessages), threadSubagents),
+    () => resolveConversationEntryAgentNames(groupConversationMessages(orderConversationTurns(visibleMessages)), threadSubagents),
     [threadSubagents, visibleMessages],
   );
   const historyEntryGrowth = historyAnchorRef.current
@@ -627,7 +628,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
               </div>
             )}
             {renderedWindow.entries.map((entry) => entry.type === 'message' ? (
-              <MessageBubble key={entry.message.id} message={entry.message} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} />
+              <MessageBubble key={entry.message.id} message={entry.message} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} onDiscardLocalMessage={onDiscardLocalMessage} />
             ) : (
               <details
                 className={`tool-call-group${entry.type === 'process' ? ' turn-process' : ''}${entry.messages.some((message) => message.status === 'streaming') ? ' is-streaming' : ''}`}

@@ -71,7 +71,13 @@ export function compactCache(snapshot: RemoteCacheSnapshot): RemoteCacheSnapshot
       // app restart before the fresh snapshot arrives.
       .filter((message) => !(message.status === 'streaming' && message.itemType?.toLowerCase().includes('reasoning')))
       .slice(-MAX_MESSAGES_PER_THREAD)
-      .map(({ detail: _detail, ...message }) => message);
+      .map(({ detail, ...message }) => {
+        if (message.role === 'user' && message.id.startsWith('local_') && detail && typeof detail === 'object'
+          && 'clientUserMessageId' in detail && typeof detail.clientUserMessageId === 'string') {
+          return { ...message, detail: { clientUserMessageId: detail.clientUserMessageId } };
+        }
+        return message;
+      });
   }
   const historyByThread = Object.fromEntries(
     Object.entries(sanitized.historyByThread).filter(([threadId]) => allowed.has(threadId)),

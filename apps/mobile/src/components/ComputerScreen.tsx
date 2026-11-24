@@ -1,13 +1,15 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import type { ConnectionPhase } from '../types/protocol';
+import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { ConnectionStatus } from './ConnectionStatus';
 import { PhoneReader } from './CrossNetworkReader';
 import { DeviceTools } from './DeviceTools';
 import { MonitorIcon, SettingsIcon } from './Icons';
 
-export function ComputerScreen({ config, phase, detail, onReconnect, onSettings, footer, notice }: {
+export function ComputerScreen({ config, connectionUrl, phase, detail, onReconnect, onSettings, footer, notice }: {
   config: RemoteConfig;
+  connectionUrl?: string;
   phase: ConnectionPhase;
   detail: string;
   onReconnect: () => void;
@@ -15,7 +17,11 @@ export function ComputerScreen({ config, phase, detail, onReconnect, onSettings,
   footer: ReactNode;
   notice: ReactNode;
 }) {
-  const endpoint = URL.canParse(config.serverUrl) ? new URL(config.serverUrl).host : '';
+  const active = connectionUrl || config.serverUrl;
+  const endpoint = URL.canParse(active) ? new URL(active).host : '';
+  const deviceConfig = useMemo(() => active === config.serverUrl ? config : { ...config, serverUrl: active }, [config, active]);
+  const connected = phase === 'connected';
+  const { status, updateStatus } = useDeviceStatus(deviceConfig, connected, true);
   return <main className="app-screen computer-screen">
     <header className="top-bar computer-top-bar">
       <span className="project-symbol"><MonitorIcon /></span>
@@ -25,10 +31,10 @@ export function ComputerScreen({ config, phase, detail, onReconnect, onSettings,
     <div className="computer-scroll">
       <section className="computer-connection" aria-label="连接状态">
         <ConnectionStatus phase={phase} detail={detail} onReconnect={onReconnect} />
-        {endpoint && <span>{endpoint}</span>}
+        {endpoint && <span>{connected && config.localUrl && (active === config.localUrl ? '局域网直连 · ' : '固定域名 · ')}{endpoint}</span>}
       </section>
-      <PhoneReader config={config} connected={phase === 'connected'} />
-      <DeviceTools config={config} phase={phase} />
+      <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
+      <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}
     {footer}

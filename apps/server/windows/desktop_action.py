@@ -9,8 +9,31 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'native'))
-from desktop_control import WindowsDesktopPipe, pipe_server_identity
+from desktop_control import DesktopControlError, WindowsDesktopPipe, pipe_server_identity
 from native_app_tools import NativeAppTools
+from endpoint_hint import discover_native_endpoints
+
+
+def current_desktop_tools():
+    # WindowsApps is managed by MSIX; the pipe name alone never establishes identity.
+    packages = Path(os.environ['ProgramFiles']) / 'WindowsApps'
+    for path in discover_native_endpoints():
+        if 'codex-app-tools-' not in path:
+            continue
+        try:
+            with WindowsDesktopPipe(1.5, path=path) as pipe:
+                ident, _, image = pipe_server_identity(pipe)
+            relative = Path(image).resolve(strict=True).relative_to(packages)
+            if (len(relative.parts) != 3
+                    or not re.fullmatch(r'OpenAI\.Codex_[0-9.]+_(?:x64|arm64)__2p2nqsd0c76g0', relative.parts[0], re.I)
+                    or relative.parts[1].lower() != 'app' or relative.name.lower() not in ('chatgpt.exe', 'codex.exe')):
+                continue
+            tools = NativeAppTools(endpoint=path)
+            if {'read_thread', 'send_message_to_thread'} <= tools.capabilities(ident):
+                return tools, ident
+        except (OSError, ValueError, TimeoutError, DesktopControlError):
+            continue
+    raise ValueError('verified-desktop-tools-unavailable')
 
 
 def find_project(projects, directory):
@@ -54,6 +77,18 @@ def new_project(name, get_projects):
 
 
 def run(request):
+    if request['action'] in ('native-send', 'native-read', 'native-model-check'):
+        try:
+            tools, identity = current_desktop_tools()
+            thread = request['threadId']
+            if request['action'] == 'native-read':
+                return {'state': 'confirmed', 'snapshot': tools.thread_snapshot(thread, identity)}
+            if request['action'] == 'native-model-check':
+                return tools.check_model_override(thread, identity, request['model'], request.get('thinking'))
+        except Exception:
+            return {'state': 'rejected', 'reply': '新版桌面接口暂不可用，请检查 Codex Desktop。'}
+        return tools.send_text(thread, request['prompt'], identity, uuid.uuid4().hex,
+                               model=request.get('model'), thinking=request.get('thinking'))
     with WindowsDesktopPipe() as pipe:
         identity, _, _ = pipe_server_identity(pipe)
     tools = NativeAppTools()

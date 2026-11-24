@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { LocalReaderError } from "./local-reader.js";
+import { setTimeout as wait } from "node:timers/promises";
 
 const MAX_FRAME_BYTES = 160 * 1024;
 const VIEWER_IDLE_MS = 15_000;
@@ -31,8 +33,11 @@ export class ReaderStream {
     private sequence = 0;
     private readonly viewer;
     private expiry?: NodeJS.Timeout;
+    private localLaunch?: Promise<{ alreadyOpen: boolean }>;
+    private remoteLaunch?: Promise<{ alreadyOpen: boolean }>;
 
-    constructor(private readonly viewerPort: number, private readonly now = Date.now) {
+    constructor(private readonly viewerPort: number, private readonly now = Date.now, private readonly launchLocal?: () => Promise<void>,
+        private readonly launchRemote?: () => Promise<void>) {
         this.viewer = createServer((request, response) => this.serveViewer(request, response));
         this.viewer.on("error", error => console.warn("[phone-reader]", error.message));
     }
@@ -42,12 +47,48 @@ export class ReaderStream {
         return typeof bound === "object" && bound !== null ? bound.port : undefined;
     }
 
-    status(): { localActive: boolean; remoteReady: boolean } {
+    status(): { localActive: boolean; remoteReady: boolean; canOpenLocal?: boolean } {
         const now = this.now();
         return {
             localActive: now - this.localSeen <= LOCAL_IDLE_MS,
             remoteReady: now - this.viewerSeen <= VIEWER_IDLE_MS,
+            ...(this.launchLocal ? { canOpenLocal: true } : {}),
         };
+    }
+
+    async openLocal(): Promise<{ alreadyOpen: boolean }> {
+        if (!this.launchLocal) throw new LocalReaderError("请使用支持手机启动阅读窗的 Windows 配套服务。");
+        this.prune();
+        if (this.stream || this.remoteLaunch) throw new LocalReaderError("请先停止跨网投屏，再打开 Wi-Fi 投屏。");
+        if (this.status().localActive) return { alreadyOpen: true };
+        if (this.localLaunch) return this.localLaunch;
+        const launch = this.launchLocal().then(() => {
+            this.localSeen = this.now();
+            return { alreadyOpen: false };
+        });
+        this.localLaunch = launch;
+        try { return await launch; }
+        finally { this.localLaunch = undefined; }
+    }
+
+    async openRemote(): Promise<{ alreadyOpen: boolean }> {
+        if (!this.launchRemote || !this.viewer.listening) throw new LocalReaderError("电脑尚未启用跨网投屏。");
+        if (this.remoteLaunch) return this.remoteLaunch;
+        if (this.localLaunch) throw new LocalReaderError("Wi-Fi 投屏正在启动，请稍后重试。");
+        if (this.status().remoteReady && !this.status().localActive) return { alreadyOpen: true };
+        const start = async () => {
+            for (let attempt = 0; this.status().localActive && attempt < 28; attempt++) await wait(250);
+            if (this.status().localActive) throw new LocalReaderError("电脑上的 Wi-Fi 投屏窗口尚未关闭。");
+            if (!this.status().remoteReady) {
+                await this.launchRemote!();
+                for (let attempt = 0; !this.status().remoteReady && attempt < 28; attempt++) await wait(250);
+            }
+            if (!this.status().remoteReady) throw new LocalReaderError("接收窗口没有响应。请确认 Windows 已登录后重试。");
+            return { alreadyOpen: false };
+        };
+        this.remoteLaunch = start();
+        try { return await this.remoteLaunch; }
+        finally { this.remoteLaunch = undefined; }
     }
 
     listen(): void {
@@ -88,9 +129,9 @@ export class ReaderStream {
         if (request.method !== "POST") return this.json(response, 404, { error: "not_found" });
         if (request.url === "/api/reader/start") {
             const { localActive, remoteReady } = this.status();
-            if (localActive) return this.json(response, 409, { error: "请先关闭电脑上的本地投屏小窗。" });
+            if (localActive || this.localLaunch) return this.json(response, 409, { error: "请先关闭电脑上的本地投屏小窗。" });
             if (!remoteReady)
-                return this.json(response, 409, { error: "请先在电脑的「手机阅读窗」选择「改用跨网」。" });
+                return this.json(response, 409, { error: "请先在电脑的「手机投屏」选择「改用跨网」。" });
             if (this.stream) return this.json(response, 409, { error: "已有屏幕共享，请先停止后再打开。" });
             const id = randomUUID();
             const controls = request.headers["x-cmr-reader-controls"] === "1" ? {} : undefined;
@@ -189,7 +230,7 @@ export class ReaderStream {
             const active = request.headers["x-cmr-reader-local"];
             if (active !== "0" && active !== "1") return void response.writeHead(400).end();
             this.localSeen = active === "1" ? this.now() : -Infinity;
-            return void response.writeHead(204).end();
+            return void response.writeHead(204, this.remoteLaunch && active === "1" ? { "x-cmr-reader-switch": "remote" } : {}).end();
         }
         if (request.method === "POST" && request.url === "/stop") {
             this.endStream();
@@ -237,7 +278,7 @@ export class ReaderStream {
 
 const page = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>手机阅读窗 · 跨网</title>
+<title>手机投屏 · 跨网</title>
 <style>
 body{margin:0;background:#16141c;color:#eee9fa;font:14px system-ui;display:grid;height:100dvh;grid-template-rows:auto 1fr auto}
 header,footer{padding:8px 14px;background:#262033}
@@ -250,10 +291,10 @@ main p{position:absolute;text-align:center;margin:20px;line-height:1.65}
 p,footer{color:#c2b8d4}
 [hidden]{display:none}
 </style></head><body>
-<header><strong>手机阅读窗 · 跨网</strong><nav aria-label="阅读控制">
+<header><strong>手机投屏 · 跨网</strong><nav aria-label="阅读控制">
 <button data-action="previous" disabled>上一页</button><button data-action="next" disabled>下一页</button>
 <button id="stop" disabled>结束投屏</button></nav></header>
-<main><p role="status">等待手机共享屏幕。<br>在 Codex Remote 的「电脑 → 手机阅读窗」点「开始跨网投屏」。</p><img alt="手机共享的画面" hidden></main>
+<main><p role="status">等待手机共享屏幕。<br>在 Codex Remote 的「电脑 → 手机投屏」点「开始跨网投屏」。</p><img alt="手机共享的画面" hidden></main>
 <footer role="status" hidden></footer>
 <script src="/viewer.js"></script></body></html>`;
 

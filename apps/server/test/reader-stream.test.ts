@@ -12,10 +12,14 @@ describe("cross-network reader", () => {
     let sender: Server;
     let viewerUrl: string;
     let senderUrl: string;
+    let launchLocal: () => Promise<void>;
+    let launchRemote: () => Promise<void>;
 
     beforeEach(async () => {
         now = 30000;
-        reader = new ReaderStream(0, () => now);
+        launchLocal = async () => {};
+        launchRemote = async () => { await view(); };
+        reader = new ReaderStream(0, () => now, () => launchLocal(), () => launchRemote());
         reader.listen();
         for (let i = 0; reader.localPort === undefined && i < 200; i++) await delay(10);
         if (reader.localPort === undefined) throw new Error("Reader failed to bind");
@@ -53,6 +57,54 @@ describe("cross-network reader", () => {
         method: "POST",
         body,
         headers: { "x-cmr-reader-session": id, "content-type": "image/jpeg" },
+    });
+
+    it("waits for the desktop to open once for concurrent Wi-Fi launch requests", async () => {
+        let count = 0;
+        let confirm!: () => void;
+        launchLocal = () => new Promise<void>(resolve => { count++; confirm = resolve; });
+        await view();
+        const first = reader.openLocal();
+        const second = reader.openLocal();
+        expect(reader.status()).toMatchObject({ localActive: false, canOpenLocal: true });
+        expect((await start()).status).toBe(409);
+        confirm();
+        expect(await first).toEqual({ alreadyOpen: false });
+        expect(await second).toEqual({ alreadyOpen: false });
+        expect(await reader.openLocal()).toEqual({ alreadyOpen: true });
+        expect(count).toBe(1);
+        expect(reader.status().localActive).toBe(true);
+    });
+
+    it("switches a reporting Wi-Fi viewer to cross-network and opens the receiver once", async () => {
+        const report = (active: string) => fetch(viewerUrl + "/local", {
+            method: "POST", headers: { ...headers, "x-cmr-reader-local": active },
+        });
+        let launches = 0;
+        launchRemote = async () => { launches++; await view(); };
+        await report("1");
+        const first = reader.openRemote();
+        const second = reader.openRemote();
+        expect((await report("1")).headers.get("x-cmr-reader-switch")).toBe("remote");
+        expect((await start()).status).toBe(409);
+        await report("0");
+        expect(await first).toEqual({ alreadyOpen: false });
+        expect(await second).toEqual({ alreadyOpen: false });
+        expect(await reader.openRemote()).toEqual({ alreadyOpen: true });
+        expect(launches).toBe(1);
+        expect((await start()).status).toBe(201);
+    });
+
+    it("keeps an active cross-network stream and allows retry after a launch error", async () => {
+        await view();
+        expect((await start()).status).toBe(201);
+        await expect(reader.openLocal()).rejects.toThrow("先停止跨网投屏");
+        expect((await fetch(viewerUrl + "/stop", { method: "POST", headers })).status).toBe(204);
+        launchLocal = async () => { throw new Error("no-device"); };
+        await expect(reader.openLocal()).rejects.toThrow("no-device");
+        expect(reader.status().localActive).toBe(false);
+        launchLocal = async () => {};
+        await expect(reader.openLocal()).resolves.toEqual({ alreadyOpen: false });
     });
 
     it("requires a local viewer and an active session and clears the image after stop", async () => {
@@ -144,18 +196,18 @@ describe("cross-network reader", () => {
             method: "POST",
             headers: { ...extraHeaders, "x-cmr-reader-local": status },
         });
-        expect(reader.status()).toEqual({ localActive: false, remoteReady: false });
+        expect(reader.status()).toEqual({ localActive: false, remoteReady: false, canOpenLocal: true });
         expect((await local("1", {})).status).toBe(403);
         expect((await local("1", { ...headers, Origin: "https://remote.invalid" })).status).toBe(403);
         expect((await local("1")).status).toBe(204);
         await view();
-        expect(reader.status()).toEqual({ localActive: true, remoteReady: true });
+        expect(reader.status()).toEqual({ localActive: true, remoteReady: true, canOpenLocal: true });
         expect((await start()).status).toBe(409);
         expect((await local("0")).status).toBe(204);
         expect(reader.status().localActive).toBe(false);
         expect((await local("1")).status).toBe(204);
         now += 6500;
-        expect(reader.status()).toEqual({ localActive: false, remoteReady: true });
+        expect(reader.status()).toEqual({ localActive: false, remoteReady: true, canOpenLocal: true });
         expect((await start()).status).toBe(201);
     });
 });

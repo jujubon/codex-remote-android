@@ -13,6 +13,7 @@ interface SetupScreenProps {
 
 export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, onForget, onFullRefresh }: SetupScreenProps) {
   const [serverUrl, setServerUrl] = useState(initialConfig?.serverUrl ?? DEFAULT_SERVER_URL);
+  const [localUrl, setLocalUrl] = useState(initialConfig?.localUrl ?? '');
   const [pairingToken, setPairingToken] = useState(initialConfig?.pairingToken ?? '');
   const [showToken, setShowToken] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -26,6 +27,7 @@ export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, on
     try {
       const saved = await saveRemoteConfig({
         serverUrl: normalizeServerUrl(serverUrl),
+        localUrl,
         pairingToken,
       });
       onSaved(saved);
@@ -66,6 +68,13 @@ export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, on
               required
             />
             <small>支持可信私有局域网、Tailscale、localhost；公网请使用 HTTPS/WSS。</small>
+          </label>
+
+          <label>
+            <span>可信 Wi-Fi 的电脑地址（可选）</span>
+            <input value={localUrl} onChange={event => setLocalUrl(event.target.value)}
+              placeholder="http://192.168.0.103:18788" inputMode="url" autoCapitalize="none" autoCorrect="off" />
+            <small>找到这台已配对的电脑时走直连，离开后自动使用上面的固定域名。只在信任的局域网启用。</small>
           </label>
 
           <label>

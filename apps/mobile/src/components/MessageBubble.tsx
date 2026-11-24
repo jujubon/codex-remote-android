@@ -3,6 +3,7 @@ import type { RemoteAttachment, RemoteMessage } from '../types/protocol';
 import { DiffView } from './DiffView';
 import { Markdown } from './Markdown';
 import { ChevronRightIcon } from './Icons';
+import { canDiscardLocalMessage } from '../hooks/useRemote';
 
 export function displayTime(timestamp: number, source?: RemoteMessage['timestampSource']): string {
   if (!source || source === 'turn' || !timestamp || timestamp <= 0) return '';
@@ -100,6 +101,7 @@ function AttachmentGallery({ message, onLoad, onDownload }: {
 }
 
 interface MessageBubbleProps {
+  onDiscardLocalMessage?: (threadId: string, messageId: string) => void;
   message: RemoteMessage;
   agentTargets?: Array<{ id: string; label: string; state: string }>;
   onOpenAgent?: (agentId: string) => void;
@@ -139,16 +141,15 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
     && sameAttachments(left.attachments, right.attachments)
   );
   return messageEqual && sameAgentTargets(previous.agentTargets, next.agentTargets)
+    && left.deliveryAcknowledged === right.deliveryAcknowledged
+    && previous.onDiscardLocalMessage === next.onDiscardLocalMessage
     && previous.onOpenAgent === next.onOpenAgent
     && previous.onLoadAttachment === next.onLoadAttachment
     && previous.onDownloadAttachment === next.onDownloadAttachment;
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, agentTargets = [], onOpenAgent, onLoadAttachment, onDownloadAttachment }: MessageBubbleProps) {
-  const [detailsOpen, setDetailsOpen] = useState(message.status === 'failed');
-  useEffect(() => {
-    if (message.status === 'failed') setDetailsOpen(true);
-  }, [message.status]);
+export const MessageBubble = memo(function MessageBubble({ message, agentTargets = [], onOpenAgent, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: MessageBubbleProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const isUser = message.role === 'user';
   const isTool = message.role === 'tool';
@@ -170,7 +171,7 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
       ? <DiffView diff={message.content} />
       : isTool
         ? <pre><code>{message.content}</code></pre>
-        : <Markdown content={message.content} />}
+        : <Markdown content={message.content} hideDesktopDirectives={message.role === 'assistant'} />}
     <AttachmentGallery message={message} onLoad={onLoadAttachment} onDownload={onDownloadAttachment} />
   </>;
 
@@ -234,6 +235,9 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
               {body()}
               {message.status === 'streaming' && <span className="typing-caret" />}
             </div>
+            {onDiscardLocalMessage && canDiscardLocalMessage(message) &&
+              <button type="button" className="secondary-button message-delete-local"
+                onClick={() => onDiscardLocalMessage(message.threadId, message.id)}>删除本地消息</button>}
           </>
         )}
       </div>

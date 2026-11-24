@@ -3,21 +3,21 @@ import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import type { RemoteConfig } from '../lib/configStore';
 import type { ConnectionPhase } from '../types/protocol';
-import { deviceRequest, QUICK_SHARE_KEY, readPhoneClipboard, writePhoneClipboard, type DeviceStatus, type HoldDuration } from '../lib/deviceTools';
+import { useDeviceStatus } from '../hooks/useDeviceStatus';
+import { deviceRequest, QUICK_SHARE_KEY, readPhoneClipboard, shareFileToComputer, writePhoneClipboard, type DeviceStatus, type HoldDuration } from '../lib/deviceTools';
 import { CloseIcon } from './Icons';
 
-export function DeviceTools({ config, phase, runningThreadId }: {
+export function DeviceTools({ config, status, updateStatus, runningThreadId }: {
   config: RemoteConfig;
-  phase: ConnectionPhase;
+  status?: DeviceStatus;
+  updateStatus: (status: DeviceStatus) => void;
   runningThreadId?: string;
 }) {
-  const [status, setStatus] = useState<DeviceStatus>();
-  const [loadingStatus, setLoadingStatus] = useState(true);
   const [operating, setOperating] = useState(false);
   const [minutes, setMinutes] = useState<HoldDuration>(runningThreadId ? 'task' : 60);
-  const [statusRefresh, setStatusRefresh] = useState(0);
   const [quickShare, setQuickShare] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; error?: boolean }>();
+  const sharePicker = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (runningThreadId || !Capacitor.isNativePlatform()) return;
@@ -25,41 +25,10 @@ export function DeviceTools({ config, phase, runningThreadId }: {
       .catch(error => setFeedback({ text: message(error), error: true }));
   }, [runningThreadId]);
 
-  const connected = phase === 'connected';
-  useEffect(() => {
-    let active = true;
-    setLoadingStatus(true);
-    void deviceRequest<DeviceStatus>(config, 'status').then(value => {
-      if (active) {
-        setStatus(value);
-        setFeedback(current => current?.error ? undefined : current);
-      }
-    }).catch(error => {
-      if (active) {
-        setStatus(undefined);
-        setFeedback({ text: message(error), error: true });
-      }
-    }).finally(() => { if (active) setLoadingStatus(false); });
-    return () => { active = false; };
-  }, [config, connected, statusRefresh]);
-
-  const pending = loadingStatus || operating;
-  useEffect(() => {
-    if (pending || !status?.awakeUntil) return;
-    let active = true;
-    const timer = setInterval(() => {
-      void deviceRequest<DeviceStatus>(config, 'status').then(next => {
-        if (active) setStatus(next);
-      }).catch(() => undefined);
-    }, 5000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [config, pending, status?.awakeUntil]);
+  const disabled = operating || status?.supported === false;
 
   async function run(operation: () => Promise<string>) {
-    if (pending) return;
+    if (disabled) return;
     setOperating(true);
     setFeedback(undefined);
     try { setFeedback({ text: await operation() }); }
@@ -67,13 +36,10 @@ export function DeviceTools({ config, phase, runningThreadId }: {
     finally { setOperating(false); }
   }
 
-  const disabled = pending || !status?.supported;
-
-  return <div className="device-tools" aria-busy={pending}>
+  return <div className="device-tools" aria-busy={operating}>
       {feedback && <p className={feedback.error ? 'form-error' : 'device-feedback'} role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p>}
-      {pending && <p role="status">正在等待电脑响应…</p>}
-      {!pending && !status && <button className="secondary-button" type="button" onClick={() => setStatusRefresh(value => value + 1)}>重试读取设备状态</button>}
-      {!pending && status && !status.supported && <p role="status">此电脑未提供 Windows 设备工具。</p>}
+      {operating && <p role="status">正在等待电脑响应…</p>}
+      {status?.supported === false && <p role="status">此电脑未提供 Windows 设备工具。</p>}
       {!runningThreadId && <section>
         <h3>剪贴板</h3>
         <div className="device-actions">
@@ -94,10 +60,6 @@ export function DeviceTools({ config, phase, runningThreadId }: {
       <section>
         {!runningThreadId && <h3>电脑屏幕</h3>}
         <div className="device-actions">
-          {!runningThreadId && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
-            await deviceRequest(config, 'power/lock');
-            return 'Windows 已接收锁屏请求。';
-          })}>锁定电脑</button>}
           <label className="device-duration">保持唤醒
             <select value={minutes} onChange={event => setMinutes(event.target.value === 'task' ? 'task' : Number(event.target.value) as HoldDuration)}>
               <option value={30}>30 分钟</option>
@@ -106,12 +68,16 @@ export function DeviceTools({ config, phase, runningThreadId }: {
               {runningThreadId && <option value="task">到当前任务结束（最多 2 小时）</option>}
             </select>
           </label>
+          {!runningThreadId && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
+            await deviceRequest(config, 'power/lock');
+            return 'Windows 已接收锁屏请求。';
+          })}>锁定电脑</button>}
           <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(async () => {
-            setStatus(await deviceRequest<DeviceStatus>(config, 'power/hold', { minutes, threadId: runningThreadId }));
+            updateStatus(await deviceRequest<DeviceStatus>(config, 'power/hold', { minutes, threadId: runningThreadId }));
             return 'Windows 已接收熄屏请求，保持唤醒已启用。';
           })}>熄屏挂机</button>
-          {status?.awakeUntil && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
-            setStatus(await deviceRequest<DeviceStatus>(config, 'power/release'));
+          {status?.awakeUntil && <button type="button" className="secondary-button device-release" disabled={disabled} onClick={() => void run(async () => {
+            updateStatus(await deviceRequest<DeviceStatus>(config, 'power/release'));
             return '已取消保持唤醒，电脑恢复原休眠策略。';
           })}>停止挂机</button>}
         </div>
@@ -119,6 +85,23 @@ export function DeviceTools({ config, phase, runningThreadId }: {
       </section>
       {!runningThreadId && <section>
         <h3>发送到电脑</h3>
+        <input hidden ref={sharePicker} type="file" multiple onChange={event => {
+          const files = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = '';
+          if (!files.length) return;
+          void run(async () => {
+            const saved: string[] = [];
+            const failed: string[] = [];
+            for (const file of files) {
+              try { saved.push((await shareFileToComputer(config, file)).fileName); }
+              catch (error) { failed.push(`${file.name}（${message(error)}）`); }
+            }
+            if (failed.length) throw new Error(`已保存 ${saved.length} 个文件。未确认接收：${failed.join('、')}`);
+            return saved.length === 1 ? `已保存到电脑收件文件夹：${saved[0]}` : `已保存 ${saved.length} 个文件到电脑收件文件夹。`;
+          });
+        }} />
+        <button type="button" className="secondary-button" disabled={disabled}
+          onClick={() => sharePicker.current?.click()}>分享文件到电脑</button>
         <p>在相册、文档或浏览器的分享菜单选择「发送到电脑」。</p>
         {status?.shareError && <p role="alert">{status.shareError}</p>}
         {status?.receiveFolder && <p className="device-folder">{status.receiveFolder}{status.autoOpen ? ' · 接收后打开' : ''}</p>}
@@ -141,6 +124,7 @@ export function DevicePowerDialog({ config, phase, threadId, onClose }: {
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const { status, updateStatus } = useDeviceStatus(config, phase === 'connected');
   useEffect(() => { if (!dialog.current?.open) dialog.current?.showModal(); }, []);
 
   return <dialog className="session-dialog" ref={dialog} onClose={onClose} aria-labelledby="device-power-title">
@@ -149,7 +133,7 @@ export function DevicePowerDialog({ config, phase, threadId, onClose }: {
         <h2 id="device-power-title">熄屏挂机</h2>
         <button className="icon-button nav-icon-button" type="button" aria-label="关闭" onClick={() => dialog.current?.close()}><CloseIcon /></button>
       </header>
-      <DeviceTools config={config} phase={phase} runningThreadId={threadId} />
+      <DeviceTools config={config} status={status} updateStatus={updateStatus} runningThreadId={threadId} />
     </div>
   </dialog>;
 }
