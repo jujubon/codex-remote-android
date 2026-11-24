@@ -1,10 +1,15 @@
 package dev.codexmobile.remote;
 
+import android.annotation.TargetApi;
+import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.TetheringInterface;
+import android.net.TetheringManager;
+import android.os.Build;
 import android.os.SystemClock;
 
 import com.getcapacitor.JSObject;
@@ -13,15 +18,22 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.crypto.Mac;
@@ -45,9 +57,12 @@ public class LanDiscoveryPlugin extends Plugin {
             JSObject result = new JSObject();
             try {
                 String address = discoverOnWifi(token);
+                if (address == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    address = HotspotDiscovery.discover(getContext(), token);
+                }
                 if (address != null) result.put("address", address);
             } catch (Exception ignored) {
-                // Wi-Fi may disconnect or reject local traffic during discovery.
+                // Network availability can change during discovery.
             } finally {
                 searching.set(false);
                 call.resolve(result);
@@ -65,15 +80,59 @@ public class LanDiscoveryPlugin extends Plugin {
             LinkProperties properties = manager.getLinkProperties(network);
             if (properties == null) continue;
             for (LinkAddress link : properties.getLinkAddresses()) {
-                if (isPrivateIpv4(link.getAddress()) && link.getPrefixLength() >= 1 && link.getPrefixLength() <= 30) {
-                    return exchange(network, link, token);
+                if (!isDiscoveryAddress(link.getAddress(), link.getPrefixLength())) continue;
+                try {
+                    return exchange(network, link.getAddress(), link.getPrefixLength(), token);
+                } catch (IOException ignored) {
+                    // This Wi-Fi route may have disappeared while checking it.
+                    return null;
                 }
             }
         }
         return null;
     }
 
-    private static String exchange(Network network, LinkAddress link, String token) throws Exception {
+    @TargetApi(Build.VERSION_CODES.BAKLAVA)
+    private static final class HotspotDiscovery {
+        private static final int INTERFACE_TIMEOUT_MS = 400;
+
+        static String discover(Context context, String token) throws Exception {
+            TetheringManager manager = context.getSystemService(TetheringManager.class);
+            if (manager == null) return null;
+            CompletableFuture<Set<TetheringInterface>> downstream = new CompletableFuture<>();
+            TetheringManager.TetheringEventCallback callback = new TetheringManager.TetheringEventCallback() {
+                @Override
+                public void onTetheredInterfacesChanged(Set<TetheringInterface> interfaces) {
+                    downstream.complete(interfaces);
+                }
+            };
+            manager.registerTetheringEventCallback(Runnable::run, callback);
+            Set<TetheringInterface> interfaces;
+            try {
+                interfaces = downstream.get(INTERFACE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            } finally {
+                manager.unregisterTetheringEventCallback(callback);
+            }
+            for (TetheringInterface tether : interfaces) {
+                if (tether.getType() != TetheringManager.TETHERING_WIFI) continue;
+                try {
+                    NetworkInterface hotspot = NetworkInterface.getByName(tether.getInterface());
+                    if (hotspot == null || !hotspot.isUp()) continue;
+                    for (InterfaceAddress entry : hotspot.getInterfaceAddresses()) {
+                        if (!isDiscoveryAddress(entry.getAddress(), entry.getNetworkPrefixLength())) continue;
+                        // The tethered interface is not a Wi-Fi client Network.
+                        String address = exchange(null, entry.getAddress(), entry.getNetworkPrefixLength(), token);
+                        if (address != null) return address;
+                    }
+                } catch (IOException ignored) {
+                    // The hotspot may have been disabled since Android reported it.
+                }
+            }
+            return null;
+        }
+    }
+
+    private static String exchange(Network network, InetAddress localAddress, int prefix, String token) throws Exception {
         byte[] random = new byte[16];
         new SecureRandom().nextBytes(random);
         String nonce = hex(random);
@@ -83,10 +142,10 @@ public class LanDiscoveryPlugin extends Plugin {
         byte[] query = ("CMR1 " + nonce + " " + proof).getBytes(StandardCharsets.US_ASCII);
 
         try (DatagramSocket socket = new DatagramSocket(null)) {
-            network.bindSocket(socket);
-            socket.bind(new InetSocketAddress(link.getAddress(), 0));
+            if (network != null) network.bindSocket(socket);
+            socket.bind(new InetSocketAddress(localAddress, 0));
             socket.setBroadcast(true);
-            socket.send(new DatagramPacket(query, query.length, broadcastAddress(link), PORT));
+            socket.send(new DatagramPacket(query, query.length, broadcastAddress(localAddress, prefix), PORT));
             long end = SystemClock.elapsedRealtime() + TIMEOUT_MS;
             byte[] buffer = new byte[160];
             DatagramPacket reply = new DatagramPacket(buffer, buffer.length);
@@ -102,13 +161,14 @@ public class LanDiscoveryPlugin extends Plugin {
                     return address;
                 }
             }
+        } catch (SocketTimeoutException ignored) {
+            return null;
         }
         return null;
     }
 
-    private static InetAddress broadcastAddress(LinkAddress link) throws Exception {
-        byte[] bytes = link.getAddress().getAddress();
-        int prefix = link.getPrefixLength();
+    private static InetAddress broadcastAddress(InetAddress address, int prefix) throws Exception {
+        byte[] bytes = address.getAddress();
         for (int i = 0; i < bytes.length; i++) {
             int networkBits = Math.max(0, Math.min(8, prefix - i * 8));
             bytes[i] |= (byte) (0xff >>> networkBits);
@@ -122,6 +182,10 @@ public class LanDiscoveryPlugin extends Plugin {
         int first = bytes[0] & 0xff;
         int second = bytes[1] & 0xff;
         return first == 10 || (first == 192 && second == 168) || (first == 172 && second >= 16 && second <= 31);
+    }
+
+    private static boolean isDiscoveryAddress(InetAddress address, int prefix) {
+        return prefix >= 1 && prefix <= 30 && isPrivateIpv4(address);
     }
 
     private static String signature(Mac mac, String value) {

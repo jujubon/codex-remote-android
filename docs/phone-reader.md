@@ -28,8 +28,8 @@ Windows 解压目录中的 **Phone-Reading-Window.cmd** 同时提供本地 Wi-Fi
 
 ## 手机开热点给电脑
 
-电脑连上手机热点后，可继续用固定 HTTPS 域名连接和跨网投屏，前提是电脑能通过热点访问互联网，隧道也在线。手机是热点提供方时，当前的 Wi-Fi 自动发现不会在手机上搜索电脑。
+电脑连上手机热点后，可继续用固定 HTTPS 域名连接和跨网投屏，前提是电脑能通过热点访问互联网，隧道也在线。从 App 0.9.17 起，Android 16 及以上也会在自己提供的 Wi-Fi 热点上搜索已配对的电脑。电脑要把自己的手机热点设为 Windows 的「专用网络」，并在这块 Wi-Fi 网卡上启用可信局域网。如果系统或热点不允许发现，可以用手动地址验证是否支持直连。
 
-若要尝试对话走直连，先把自己的热点在 Windows 上设为「专用网络」，并在新版服务目录以管理员身份运行 `Enable-Trusted-LAN.cmd`，再启动 `Start-Tunnel.cmd`。在 Windows 用 `ipconfig` 找到电脑 Wi-Fi 的 IPv4，在手机「手动局域网地址」填入 `http://<电脑的 IPv4>:18788`。保留主服务器里的固定域名。手机成功验证并连到电脑后，「电脑」页显示「局域网直连」。跨网投屏的画面仍走 HTTPS 地址。
+如果当前 Wi-Fi 网卡还没启用可信局域网，在 Windows 配套服务目录以管理员身份运行 `Enable-Trusted-LAN.cmd`，再启动 `Start-Tunnel.cmd`。手动连接时，在 Windows 用 `ipconfig` 找到电脑 Wi-Fi 的 IPv4，在手机「手动局域网地址」填入 `http://<电脑的 IPv4>:18788`。保留主服务器里的固定域名。手机成功验证并连到电脑后，「电脑」页显示「局域网直连」。跨网投屏的画面仍走 HTTPS 地址。
 
 参考 [scrcpy 窗口选项](https://github.com/Genymobile/scrcpy/blob/v5.0.1/doc/window.md)、[屏幕与省电选项](https://github.com/Genymobile/scrcpy/blob/v5.0.1/doc/device.md)和 [Android 无线调试](https://developer.android.com/tools/adb#wireless-android11-command-line)。
