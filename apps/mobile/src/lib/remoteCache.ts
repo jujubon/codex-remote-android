@@ -1,4 +1,4 @@
-import type { RemoteMessage, RemoteThread } from '../types/protocol';
+import type { AccountUsage, ModelOption, RemoteMessage, RemoteThread } from '../types/protocol';
 
 export interface CachedHistoryState {
   nextCursor: string | null;
@@ -16,6 +16,8 @@ export interface RemoteCacheSnapshot {
   threadIndexVersion: number;
   selectedThreadId: string | null;
   threads: RemoteThread[];
+  models?: ModelOption[];
+  usage?: AccountUsage | null;
   messagesByThread: Record<string, RemoteMessage[]>;
   historyByThread: Record<string, CachedHistoryState>;
 }

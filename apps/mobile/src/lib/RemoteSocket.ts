@@ -7,6 +7,7 @@ interface RemoteSocketOptions {
   serverUrl: string;
   localUrl?: string;
   onRoute?: (url: string) => void;
+  onResume?: () => void;
   token: string;
   onMessage: (message: ServerMessage) => void;
   onPhase: (phase: ConnectionPhase, detail?: string) => void;
@@ -14,6 +15,7 @@ interface RemoteSocketOptions {
 
 const MAX_RECONNECT_DELAY = 20_000;
 const HEARTBEAT_INTERVAL = 20_000;
+const PROBE_TIMEOUT = 5_000;
 
 function base64UrlUtf8(value: string): string {
   const bytes = new TextEncoder().encode(value);
@@ -36,6 +38,9 @@ export class RemoteSocket {
   private checkingRoute = false;
   private activeServerUrl = '';
   private handshakeTimer: number | null = null;
+  private probe: { id: string; timer: number; resuming: boolean } | null = null;
+  private probeSequence = 0;
+  private suspended = false;
 
   constructor(private readonly options: RemoteSocketOptions) {}
 
@@ -59,19 +64,37 @@ export class RemoteSocket {
     this.welcomed = false;
     this.clearTimers();
     this.removeNetworkListeners();
-    this.socket?.close(1000, 'client disconnect');
+    const socket = this.socket;
     this.socket = null;
+    socket?.close(1000, 'client disconnect');
     this.options.onPhase('offline');
   }
 
-  reconnectNow(): void {
+  reconnectNow(reconnecting = false): void {
     this.routeGeneration++;
     this.clearTimers();
-    this.socket?.close();
+    const socket = this.socket;
     this.socket = null;
+    this.welcomed = false;
+    socket?.close();
     this.reconnectAttempts = 0;
     this.manuallyClosed = false;
-    this.open(false);
+    void this.open(reconnecting);
+  }
+
+  suspend(): void {
+    this.suspended = true;
+    this.clearProbe();
+  }
+
+  resume(): void {
+    this.suspended = false;
+    if (this.manuallyClosed || navigator.onLine === false) return;
+    if (this.socket?.readyState === WebSocket.OPEN && this.welcomed) {
+      if (!this.probe?.resuming) this.checkConnection(true);
+    } else if (this.socket?.readyState !== WebSocket.CONNECTING && this.socket?.readyState !== WebSocket.OPEN) {
+      this.reconnectNow(true);
+    }
   }
 
   send(message: ClientMessage): boolean {
@@ -104,13 +127,19 @@ export class RemoteSocket {
     const tokenProtocol = `token.${base64UrlUtf8(this.options.token)}`;
     const socket = new WebSocket(wsUrl, [WIRE_PROTOCOL, tokenProtocol]);
     this.socket = socket;
-    if (serverUrl === this.options.localUrl) this.handshakeTimer = window.setTimeout(() => {
+    const isLocal = serverUrl === this.options.localUrl;
+    this.handshakeTimer = window.setTimeout(() => {
       if (socket !== this.socket || this.welcomed) return;
-      this.localRetryAfter = Date.now() + 30_000;
+      this.clearTimers();
       this.socket = null;
       socket.close();
-      void this.open(true, this.options.serverUrl);
-    }, 2600);
+      if (isLocal) {
+        this.localRetryAfter = Date.now() + 30_000;
+        void this.open(true, this.options.serverUrl);
+      } else {
+        this.scheduleReconnect('等待电脑连接超时');
+      }
+    }, isLocal ? 2600 : 12_000);
 
     socket.onopen = () => {
       if (socket !== this.socket) return;
@@ -132,6 +161,14 @@ export class RemoteSocket {
             this.reconnectAttempts = 0;
             this.options.onPhase('connected', message.codexReady ? undefined : 'Bridge 已连接，但 Codex app-server 尚未就绪');
             this.startHeartbeat();
+          }
+          if (message.type === 'pong' && this.probe && message.id === this.probe.id) {
+            const { resuming } = this.probe;
+            this.clearProbe();
+            if (resuming) {
+              this.options.onResume?.();
+              void this.refreshRoute();
+            }
           }
           this.options.onMessage(message);
         }
@@ -175,7 +212,9 @@ export class RemoteSocket {
   };
 
   private readonly handleNetworkOnline = (): void => {
-    if (!this.manuallyClosed) this.reconnectNow();
+    if (this.manuallyClosed) return;
+    if (!this.suspended) this.resume();
+    else if (!this.socket) this.reconnectNow(true);
   };
 
   private installNetworkListeners(): void {
@@ -197,12 +236,12 @@ export class RemoteSocket {
 
   private async refreshRoute(): Promise<void> {
     const local = this.options.localUrl;
-    if (!local || this.checkingRoute || !this.welcomed || this.manuallyClosed || document.hidden) return;
+    if (!local || this.checkingRoute || !this.welcomed || this.manuallyClosed || this.suspended || document.hidden) return;
     const generation = this.routeGeneration;
     this.checkingRoute = true;
     try {
       const next = Date.now() >= this.localRetryAfter && await verifyLocalRoute(local, this.options.token) ? local : this.options.serverUrl;
-      if (generation !== this.routeGeneration || !this.welcomed || next === this.activeServerUrl) return;
+      if (generation !== this.routeGeneration || !this.welcomed || this.suspended || next === this.activeServerUrl) return;
       this.clearTimers();
       const old = this.socket;
       this.socket = null;
@@ -210,10 +249,6 @@ export class RemoteSocket {
       old?.close(1000, 'network route changed');
       void this.open(true, next);
     } finally { this.checkingRoute = false; }
-  }
-
-  private sendRaw(message: ClientMessage): void {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
   }
 
   private scheduleReconnect(reason?: string): void {
@@ -229,8 +264,27 @@ export class RemoteSocket {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = window.setInterval(() => {
-      this.sendRaw({ type: 'ping', id: `ping_${Date.now()}` });
+      if (!this.suspended && !document.hidden && !this.probe) this.checkConnection(false);
     }, HEARTBEAT_INTERVAL);
+  }
+
+  private checkConnection(resuming: boolean): void {
+    this.clearProbe();
+    const id = `ping_${++this.probeSequence}`;
+    if (!this.send({ type: 'ping', id })) {
+      this.reconnectNow(true);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      this.probe = null;
+      if (!this.suspended && !document.hidden) this.reconnectNow(true);
+    }, PROBE_TIMEOUT);
+    this.probe = { id, timer, resuming };
+  }
+
+  private clearProbe(): void {
+    if (this.probe) window.clearTimeout(this.probe.timer);
+    this.probe = null;
   }
 
   private stopHeartbeat(): void {
@@ -243,6 +297,7 @@ export class RemoteSocket {
     this.handshakeTimer = null;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.clearProbe();
     this.stopHeartbeat();
   }
 }

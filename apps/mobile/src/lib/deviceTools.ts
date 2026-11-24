@@ -57,13 +57,13 @@ export async function deviceRequest<T>(config: RemoteConfig, action: string, bod
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/device/' + action;
   const method = action === 'status' || action === 'usage' ? 'GET' : 'POST';
-  const timeoutMs = action === 'reader/open-remote' ? 25_000 : action === 'reader/open-local' ? 18_000 : 12_000;
+  const timeoutMs = action === 'reader/open-remote' ? 25_000 : action === 'reader/open-local' ? 18_000 : action === 'usage' ? 6_000 : 12_000;
   const headers: Record<string, string> = { Authorization: 'Bearer ' + config.pairingToken, 'ngrok-skip-browser-warning': '1' };
   if (body) headers['Content-Type'] = 'application/json';
   if (Capacitor.isNativePlatform()) {
     const response = await CapacitorHttp.request({
       url: url.href, method, headers, data: body, disableRedirects: true,
-      connectTimeout: 8_000, readTimeout: timeoutMs,
+      connectTimeout: Math.min(8_000, timeoutMs), readTimeout: timeoutMs,
       responseType: 'json',
     }).catch(() => { throw new Error('未收到电脑回执，请检查连接后重试。'); });
     return deviceResult<T>(response.status, response.data);

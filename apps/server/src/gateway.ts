@@ -18,7 +18,7 @@ import {
   type ThreadSummary,
 } from "@codex-mobile/protocol";
 import { authenticateUpgrade, selectedProtocol } from "./auth.js";
-import type { ServerConfig } from "./config.js";
+import { HOST_VERSION, type ServerConfig } from "./config.js";
 import { AppServerBridge } from "./app-server-bridge.js";
 import {
   DesktopIpcBridge,
@@ -466,7 +466,7 @@ export class MobileGateway {
       desktopOnly: this.config.desktopOnly,
       projectCreation: this.config.desktopOnly,
       archiveManagement: true,
-      version: "0.9.6",
+      version: HOST_VERSION,
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
       syncVersion: this.syncJournal.version,

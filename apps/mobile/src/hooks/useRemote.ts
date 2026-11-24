@@ -1210,9 +1210,11 @@ export function useRemote(config: RemoteConfig | null) {
   const [usage, setUsage] = useState<AccountUsage | null>(null);
   const [usageStatus, setUsageStatus] = useState('');
   const usageRequest = useRef('');
-  const usageTimer = useRef<number | undefined>(undefined);
+  const usageTimers = useRef<{ fallback?: number; deadline?: number }>({});
   const cancelUsageRequest = useCallback(() => {
-    window.clearTimeout(usageTimer.current);
+    window.clearTimeout(usageTimers.current.fallback);
+    window.clearTimeout(usageTimers.current.deadline);
+    usageTimers.current = {};
     usageRequest.current = '';
   }, []);
   const [modelPending, setModelPending] = useState(false);
@@ -1220,25 +1222,28 @@ export function useRemote(config: RemoteConfig | null) {
   const refreshUsage = useCallback(() => {
     if (!config || usageRequest.current) return;
     const requestId = createRequestId('usage');
-    const request = { type: 'usage.read' as const, requestId };
     usageRequest.current = requestId;
     setUsageStatus('正在读取额度…');
-    const sent = socketRef.current?.send(request);
-    usageTimer.current = window.setTimeout(() => {
+    const sent = socketRef.current?.send({ type: 'usage.read', requestId });
+    usageTimers.current.deadline = window.setTimeout(() => {
       if (usageRequest.current !== requestId) return;
-      socketRef.current?.send(request);
-      usageTimer.current = window.setTimeout(() => {
-        if (usageRequest.current !== requestId) return;
-        cancelUsageRequest();
-        setUsageStatus('读取额度超时，请点击刷新重试。');
-      }, 12_000);
+      cancelUsageRequest();
+      setUsageStatus('读取额度超时，可点击刷新重试。');
+    }, 9_000);
+    const readOverHttp = () => {
       void deviceRequest<AccountUsage>({ ...config, serverUrl: socketRef.current?.serverUrl ?? config.serverUrl }, 'usage').then(next => {
         if (usageRequest.current !== requestId) return;
         cancelUsageRequest();
         setUsage(next);
         setUsageStatus('');
-      }).catch(() => undefined);
-    }, sent ? 4_000 : 0);
+      }).catch(() => {
+        if (sent || usageRequest.current !== requestId) return;
+        cancelUsageRequest();
+        setUsageStatus('暂时无法读取额度，可点击刷新重试。');
+      });
+    };
+    if (sent) usageTimers.current.fallback = window.setTimeout(readOverHttp, 2_500);
+    else readOverHttp();
   }, [config, cancelUsageRequest]);
   const changeModelSettings = useCallback((model?: string, effort?: string) => {
     const threadId = selectedThreadRef.current;
@@ -1939,7 +1944,7 @@ export function useRemote(config: RemoteConfig | null) {
         });
         return;
       }
-      if (message.syncVersion && syncVersionRef.current && message.syncVersion !== syncVersionRef.current) {
+      if (message.type !== 'welcome' && message.syncVersion && syncVersionRef.current && message.syncVersion !== syncVersionRef.current) {
         syncVersionRef.current = message.syncVersion;
         syncCursorRef.current = 0;
       }
@@ -2275,7 +2280,7 @@ export function useRemote(config: RemoteConfig | null) {
             setProjectStatus(message.message);
             break;
           }
-          if (message.requestId && message.requestId === usageRequest.current) {
+          if (message.requestId?.startsWith('usage_')) {
             break;
           }
           if (modelRequest.current && message.requestId === modelRequest.current.id) {
@@ -2361,6 +2366,8 @@ export function useRemote(config: RemoteConfig | null) {
       const cached = await loadRemoteCache(scope);
       if (cancelled) return;
       if (cached) {
+        setModels(Array.isArray(cached.models) ? cached.models : []);
+        setUsage(Array.isArray(cached.usage?.windows) ? cached.usage : null);
         setThreads(cached.threads);
         threadsRef.current = cached.threads;
         setMessagesByThread(cached.messagesByThread);
@@ -2392,6 +2399,21 @@ export function useRemote(config: RemoteConfig | null) {
         onRoute: setConnectionUrl,
         token: config.pairingToken,
         onMessage: (message) => handleMessageRef.current(message),
+        onResume: () => {
+          const threadId = selectedThreadRef.current;
+          const syncVersion = syncVersionRef.current;
+          if (syncVersion) {
+            socket?.send({
+              type: 'sync.resume', requestId: createRequestId('resume'), syncVersion,
+              cursor: syncCursorRef.current, threadIds: threadId ? [threadId] : [],
+            });
+          } else if (threadId) {
+            socket?.send({
+              type: 'thread.open', requestId: createRequestId('open'), threadId,
+              historyLimit: 20, knownTurnIds: knownTurnIds(messagesForThread(threadId, messagesByThreadRef.current[threadId] ?? [])),
+            });
+          }
+        },
         onPhase: (nextPhase, detail) => {
           setPhase(nextPhase);
           setPhaseDetail(detail ?? '');
@@ -2411,12 +2433,14 @@ export function useRemote(config: RemoteConfig | null) {
       socket.connect();
 
       appListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) {
-          socket?.reconnectNow();
-          for (const thread of threadsRef.current) {
-            if (thread.state === 'waiting_approval' || thread.state === 'waiting_input') {
-              updateAttentionNotification(thread.id, thread.state);
-            }
+        if (!isActive) {
+          socket?.suspend();
+          return;
+        }
+        socket?.resume();
+        for (const thread of threadsRef.current) {
+          if (thread.state === 'waiting_approval' || thread.state === 'waiting_input') {
+            updateAttentionNotification(thread.id, thread.state);
           }
         }
       });
@@ -2450,6 +2474,8 @@ export function useRemote(config: RemoteConfig | null) {
         threadIndexVersion: threadIndexVersionRef.current,
         selectedThreadId,
         threads,
+        models,
+        usage,
         messagesByThread,
         historyByThread,
       };
@@ -2463,7 +2489,7 @@ export function useRemote(config: RemoteConfig | null) {
     return () => {
       if (cacheSaveTimerRef.current !== null) window.clearTimeout(cacheSaveTimerRef.current);
     };
-  }, [config, historyByThread, messagesByThread, selectedThreadId, threads]);
+  }, [config, historyByThread, messagesByThread, models, selectedThreadId, threads, usage]);
 
 
   const selectThread = useCallback((threadId: string | null) => {

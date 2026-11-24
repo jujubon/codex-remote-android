@@ -9,7 +9,7 @@ import { DeviceTools } from "./device-tools.js";
 import { mkdir, readFile } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
-import { buildCodexEnvironment, loadConfig } from "./config.js";
+import { buildCodexEnvironment, HOST_VERSION, loadConfig } from "./config.js";
 import { DesktopIpcBridge } from "./desktop-ipc-bridge.js";
 import { FileTransferError, FileTransferManager } from "./file-transfer.js";
 import { MobileGateway } from "./gateway.js";
@@ -72,7 +72,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     response.end(JSON.stringify({
       ok: bridge.ready,
       service: "codex-mobile-remote",
-      version: "0.9.11",
+      version: HOST_VERSION,
       desktopIpc: desktopIpc.ready,
       desktopIpcSupported: desktopIpc.supported,
       desktopIpcReady: desktopIpc.ready,
