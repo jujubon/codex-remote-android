@@ -22,6 +22,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Size;
 import android.view.WindowManager;
@@ -34,7 +35,6 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -75,9 +75,12 @@ public class CrossNetworkReaderService extends Service {
     private String token;
     private String session;
     private String target;
-    private byte[] lastFrame;
+    private ReaderFrameBuffer frames;
     private int density;
-    private long lastSend;
+    private long waitingForFrameSince;
+    private boolean awaitingNewFrame;
+    private boolean retriedCaptureSurface;
+    private boolean detailedControls;
     private volatile boolean stopping;
     private volatile Call inFlight;
     private Call controlCall;
@@ -171,6 +174,7 @@ public class CrossNetworkReaderService extends Service {
                 if (!result.isSuccessful()) throw new SessionEnded(replyError(result));
                 JSONObject reply = new JSONObject(result.peekBody(4096).string());
                 session = reply.getString("id");
+                detailedControls = reply.optBoolean("controlDetails");
                 if (!session.matches("[a-f0-9-]{36}")) throw new IOException("Invalid session");
                 if (target != null && !reply.optBoolean("controls"))
                     throw new SessionEnded("请将 Windows 配套服务更新到 0.9.4 后再开启电脑翻页。");
@@ -178,7 +182,7 @@ public class CrossNetworkReaderService extends Service {
             if (stopping) return;
             projection.registerCallback(callback, main);
             resize(bounds.getWidth(), bounds.getHeight());
-            lastSend = android.os.SystemClock.elapsedRealtime();
+            frames = new ReaderFrameBuffer(SystemClock.elapsedRealtime());
             worker.post(this::frame);
             if (target != null) main.post(() -> pollControls(null, null));
         } catch (SessionEnded error) {
@@ -230,7 +234,13 @@ public class CrossNetworkReaderService extends Service {
             return;
         }
         try {
-            ReaderGestureService.send(target, action, result -> pollControls(id, result));
+            ReaderGestureService.send(target, action, result -> {
+                if (!detailedControls) {
+                    if ("locked".equals(result) || "keyboard".equals(result)) result = "wrong-app";
+                    else if ("window-unavailable".equals(result)) result = "interrupted";
+                }
+                pollControls(id, result);
+            });
         } catch (RuntimeException error) {
             pollControls(id, "unavailable");
         }
@@ -242,7 +252,13 @@ public class CrossNetworkReaderService extends Service {
         int w = Math.max(2, Math.round(width * ratio / 2) * 2);
         int h = Math.max(2, Math.round(height * ratio / 2) * 2);
         if (capture != null && capture.getWidth() == w && capture.getHeight() == h) return;
+        replaceCaptureSurface(w, h);
+        awaitingNewFrame = true;
+        retriedCaptureSurface = false;
+        waitingForFrameSince = SystemClock.elapsedRealtime();
+    }
 
+    private void replaceCaptureSurface(int w, int h) {
         ImageReader next = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3);
         try {
             if (display == null) {
@@ -250,7 +266,7 @@ public class CrossNetworkReaderService extends Service {
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, next.getSurface(), null, worker);
                 if (display == null) throw new IllegalStateException("No virtual display");
             } else {
-                display.resize(w, h, density);
+                if (capture == null || capture.getWidth() != w || capture.getHeight() != h) display.resize(w, h, density);
                 display.setSurface(next.getSurface());
             }
         } catch (RuntimeException error) {
@@ -259,36 +275,46 @@ public class CrossNetworkReaderService extends Service {
         }
         if (capture != null) capture.close();
         capture = next;
-        lastFrame = null;
     }
 
     private void frame() {
         if (stopping) return;
         try {
-            byte[] jpeg = nextJpeg();
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (jpeg == null && now - lastSend >= 2000) jpeg = lastFrame;
-            if (jpeg != null && (now - lastSend >= 2000 || !Arrays.equals(lastFrame, jpeg))) {
+            byte[] captured = nextJpeg();
+            long now = SystemClock.elapsedRealtime();
+            if (captured != null) {
+                frames.capture(captured);
+                awaitingNewFrame = false;
+            }
+            if (awaitingNewFrame) {
+                long waiting = now - waitingForFrameSince;
+                if (waiting > 18_000) throw new SessionEnded("手机暂未取得共享画面。请重新授权共享，并确认选中了正确的画面。");
+                if (waiting > 6_000 && !retriedCaptureSurface) {
+                    retriedCaptureSurface = true;
+                    replaceCaptureSurface(capture.getWidth(), capture.getHeight());
+                    currentDetail = "正在恢复手机画面…";
+                }
+            }
+            byte[] jpeg = frames.next(now, !awaitingNewFrame);
+            if (jpeg != null) {
                 try (Response response = execute("frame", RequestBody.create(jpeg, JPEG))) {
                     if (response.code() == 410 || response.code() == 401) throw new SessionEnded(replyError(response));
                     if (!response.isSuccessful()) throw new IOException("Frame not accepted");
                 }
-                lastFrame = jpeg;
-                lastSend = now;
+                frames.acknowledge(jpeg, SystemClock.elapsedRealtime());
                 currentState = "sharing";
                 currentDetail = "";
             }
-            if (now - lastSend > 15_000) throw new SessionEnded("未能采集到画面，请重新共享。");
         } catch (SessionEnded error) {
             finish(error.getMessage());
             return;
         } catch (IOException error) {
-            if (android.os.SystemClock.elapsedRealtime() - lastSend > 12_000) {
-                finish("投屏连接中断，请检查网络后重试。");
+            if (SystemClock.elapsedRealtime() - frames.lastDelivery() > 15_000) {
+                finish("已采集画面，但电脑未确认收到。请检查连接后重新投屏。");
                 return;
             }
             currentState = "connecting";
-            currentDetail = "正在重试连接…";
+            currentDetail = "已采集画面，正在重试发送…";
         } catch (RuntimeException error) {
             finish("画面采集已中断，请重新开始。");
             return;
@@ -321,6 +347,16 @@ public class CrossNetworkReaderService extends Service {
                 if (out.size() > MAX_FRAME_BYTES) {
                     out.reset();
                     visible.compress(Bitmap.CompressFormat.JPEG, 40, out);
+                }
+                if (out.size() > MAX_FRAME_BYTES) {
+                    Bitmap smaller = Bitmap.createScaledBitmap(visible, Math.max(1, visible.getWidth() / 2),
+                            Math.max(1, visible.getHeight() / 2), true);
+                    try {
+                        out.reset();
+                        smaller.compress(Bitmap.CompressFormat.JPEG, 45, out);
+                    } finally {
+                        if (smaller != visible) smaller.recycle();
+                    }
                 }
                 return out.size() <= MAX_FRAME_BYTES ? out.toByteArray() : null;
             } catch (IOException error) {

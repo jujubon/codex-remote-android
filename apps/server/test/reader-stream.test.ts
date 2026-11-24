@@ -137,6 +137,7 @@ describe("cross-network reader", () => {
         await view();
         const session = await (await start(true)).json();
         expect(session.controls).toBe(true);
+        expect(session.controlDetails).toBe(true);
         expect((await turn(session.id, "next")).status).toBe(409);
         await upload(session.id);
         expect((await view()).headers.get("x-cmr-reader-session")).toBe(session.id);
@@ -152,14 +153,14 @@ describe("cross-network reader", () => {
         expect(await (await listening).json()).toEqual({ id: command.id, action: "next" });
         expect((await turn(session.id, "previous")).status).toBe(429);
 
-        const acknowledged = poll(session.id, command.id, "wrong-app");
+        const acknowledged = poll(session.id, command.id, "keyboard");
         for (let i = 0; i < 20; i++) {
             if ((await view()).headers.get("x-cmr-reader-command") === command.id) break;
             await delay(10);
         }
         const receipt = await view();
         expect(receipt.headers.get("x-cmr-reader-command")).toBe(command.id);
-        expect(receipt.headers.get("x-cmr-reader-result")).toBe("wrong-app");
+        expect(receipt.headers.get("x-cmr-reader-result")).toBe("keyboard");
         const next = await turn(session.id, "scroll-up");
         expect(next.status).toBe(202);
         expect(await (await acknowledged).json()).toEqual({ ...(await next.json()), action: "scroll-up" });
@@ -180,13 +181,23 @@ describe("cross-network reader", () => {
         expect((await poll(id)).status).toBe(410);
     });
 
-    it("drops stale images and stops accepting frames after the local viewer has gone away", async () => {
+    it("keeps the last image visible during a stall, blocks gestures, and recovers on a new frame", async () => {
         await view();
-        const { id } = await (await start()).json();
+        const { id } = await (await start(true)).json();
         await upload(id);
         now += 5000;
-        expect((await view()).status).toBe(204);
+        const stale = await view();
+        expect(stale.status).toBe(200);
+        expect(stale.headers.get("x-cmr-reader-stale")).toBe("1");
+        const conditional = await fetch(viewerUrl + "/frame?after=" + stale.headers.get("x-cmr-frame"), { headers });
+        expect(conditional.status).toBe(304);
+        expect(conditional.headers.get("x-cmr-reader-stale")).toBe("1");
+        const blocked = await turn(id, "next");
+        expect(blocked.status).toBe(409);
+        expect(blocked.headers.get("x-cmr-reader-stale")).toBe("1");
         expect((await upload(id)).status).toBe(204);
+        expect((await view()).headers.get("x-cmr-reader-stale")).toBeNull();
+        expect((await turn(id, "next")).status).toBe(202);
         now += 16000;
         expect((await upload(id)).status).toBe(410);
     });

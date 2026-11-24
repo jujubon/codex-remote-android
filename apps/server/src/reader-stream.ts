@@ -11,7 +11,7 @@ const FRAME_FRESH_MS = 4_000;
 const CONTROL_TTL_MS = 3_000;
 const CONTROL_POLL_MS = 8_000;
 const gestures = ["next", "previous", "scroll-down", "scroll-up"] as const;
-const results = ["done", "wrong-app", "unavailable", "interrupted"] as const;
+const results = ["done", "wrong-app", "locked", "keyboard", "window-unavailable", "unavailable", "interrupted"] as const;
 type Gesture = typeof gestures[number];
 type ControlResult = typeof results[number] | "expired";
 type Command = { id: string; action: Gesture; expires: number; delivered: boolean };
@@ -115,7 +115,6 @@ export class ReaderStream {
         const now = this.now();
         const age = now - this.stream.lastSeen;
         if (age > SENDER_IDLE_MS || now - this.viewerSeen > VIEWER_IDLE_MS) return this.endStream();
-        else if (age > FRAME_FRESH_MS) this.stream.frame = undefined;
         const controls = this.stream.controls;
         if (controls?.pending && controls.pending.expires <= now) {
             controls.result = { id: controls.pending.id, status: "expired" };
@@ -136,7 +135,7 @@ export class ReaderStream {
             const id = randomUUID();
             const controls = request.headers["x-cmr-reader-controls"] === "1" ? {} : undefined;
             this.stream = { id, lastSeen: this.now(), controls };
-            return this.json(response, 201, { id, controls: controls !== undefined });
+            return this.json(response, 201, { id, controls: controls !== undefined, controlDetails: true });
         }
 
         const id = request.headers["x-cmr-reader-session"];
@@ -244,6 +243,8 @@ export class ReaderStream {
             if (!isOneOf(gestures, action)) return void response.writeHead(400).end();
             if (!stream?.frame || !stream.controls || request.headers["x-cmr-reader-session"] !== stream.id)
                 return void response.writeHead(409).end();
+            if (this.now() - stream.lastSeen > FRAME_FRESH_MS)
+                return void response.writeHead(409, { "x-cmr-reader-stale": "1" }).end();
             if (stream.controls.pending) return void response.writeHead(429).end();
             const command = { id: randomUUID(), action, expires: this.now() + CONTROL_TTL_MS, delivered: false };
             stream.controls.pending = command;
@@ -257,6 +258,7 @@ export class ReaderStream {
             const frame = stream?.frame;
             if (!frame) return void response.writeHead(204).end();
             const headers: Record<string, string> = { "x-cmr-frame": String(this.sequence) };
+            if (this.now() - stream.lastSeen > FRAME_FRESH_MS) headers["x-cmr-reader-stale"] = "1";
             if (stream.controls) {
                 headers["x-cmr-reader-session"] = stream.id;
                 if (stream.controls.result) {
@@ -307,20 +309,23 @@ const controls = document.querySelectorAll('[data-action]');
 const headers = { 'x-cmr-reader-viewer': '1' };
 const keys = { ArrowLeft: 'previous', ArrowRight: 'next', ArrowUp: 'scroll-up', ArrowDown: 'scroll-down' };
 const failures = {
-  'wrong-app': '请解锁手机并回到已选的阅读 App。',
+  'wrong-app': '手机当前显示的 App 与投屏前选定的阅读 App 不一致。',
+  locked: '手机已锁屏，解锁后重试。',
+  keyboard: '键盘遮住了翻页位置，收起键盘后重试。',
+  'window-unavailable': '手机暂时无法确认阅读窗口，请关闭弹窗并回到阅读页面。',
   unavailable: '手机翻页服务不可用，请检查无障碍设置。',
   interrupted: '手机没有完成这个手势，请重试。',
   expired: '手机未及时确认，可查看画面后再试。'
 };
 let after = '', picture = '', session = '', pending = false, command = '';
-let lastGesture = -Infinity, stopped = false;
+let lastGesture = -Infinity, stopped = false, stale = false;
 
 function updateButtons() {
-  for (const button of controls) button.disabled = !session || pending;
+  for (const button of controls) button.disabled = !session || pending || stale;
 }
 function clear(text) {
   if (picture) URL.revokeObjectURL(picture);
-  picture = ''; after = ''; session = ''; pending = false; command = '';
+  picture = ''; after = ''; session = ''; pending = false; command = ''; stale = false;
   image.removeAttribute('src'); image.hidden = true; status.hidden = false;
   status.textContent = text; stop.disabled = true; feedback.hidden = true; updateButtons();
 }
@@ -334,7 +339,7 @@ stop.onclick = async () => {
   finally { stopped = false; }
 };
 async function turn(action) {
-  if (!session || pending || performance.now() - lastGesture < 450) return;
+  if (!session || pending || stale || performance.now() - lastGesture < 450) return;
   lastGesture = performance.now();
   const current = session;
   pending = true; updateButtons(); feedback.textContent = '正在等手机确认…';
@@ -350,7 +355,12 @@ async function turn(action) {
       if (session === current) command = result.id;
       return;
     }
-    feedback.textContent = response.status === 429 ? '上一条手势尚未确认。' : '请在手机上授权电脑翻页。';
+    if (response.headers.get('x-cmr-reader-stale') === '1') {
+      stale = true;
+      feedback.textContent = '正在等待新画面，恢复后可翻页。';
+    } else {
+      feedback.textContent = response.status === 429 ? '上一条手势尚未确认。' : '请在手机上授权电脑翻页。';
+    }
   } catch { if (session === current) feedback.textContent = '连接中断，请查看当前画面。'; }
   if (session === current) { pending = false; updateButtons(); }
 }
@@ -380,15 +390,19 @@ async function refresh() {
       image.src = picture; image.hidden = false; status.hidden = true; stop.disabled = false;
     }
     const nextSession = response.headers.get('x-cmr-reader-session') || '';
-    if (nextSession !== session || feedback.hidden) {
-      session = nextSession; pending = false; command = '';
-      feedback.textContent = session ? '左右键翻页 · 滚轮或上下键滚动' : '手机未开启电脑翻页';
+    const nextStale = response.headers.get('x-cmr-reader-stale') === '1';
+    const sessionChanged = nextSession !== session;
+    if (sessionChanged) { session = nextSession; pending = false; command = ''; }
+    if (sessionChanged || nextStale !== stale || feedback.hidden) {
+      stale = nextStale;
+      feedback.textContent = stale ? '正在等待新画面，恢复后可翻页。' :
+        session ? '左右键翻页 · 滚轮或上下键滚动' : '手机未开启电脑翻页';
       feedback.hidden = false; updateButtons();
     }
     if (command && response.headers.get('x-cmr-reader-command') === command) {
       const result = response.headers.get('x-cmr-reader-result');
-      feedback.textContent = result === 'done' ? '手机已执行手势' : failures[result] || '手势未确认。';
       pending = false; command = ''; updateButtons();
+      if (!stale) feedback.textContent = result === 'done' ? '手机已执行手势' : failures[result] || '手势未确认。';
     }
   } catch { clear('无法联系配套服务。'); }
   finally { setTimeout(refresh, 300); }

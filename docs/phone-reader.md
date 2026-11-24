@@ -21,9 +21,15 @@ Windows 解压目录中的 **Phone-Reading-Window.cmd** 同时提供本地 Wi-Fi
 
 ## 跨网阅读
 
-1. 启动 Windows 0.9.11 配套服务和 HTTPS 隧道，确保 Windows 已登录。手机沿用该隧道地址和配对令牌。
+1. 启动 Windows 配套服务和 HTTPS 隧道，确保 Windows 已登录。手机沿用该隧道地址和配对令牌。
 2. 在手机「电脑 → 手机投屏」选择「跨网投屏」并开始。Windows 会打开接收窗口，已有 Wi-Fi 小窗时会先请求关闭。然后在 Android 弹窗中选择要共享的内容。
-3. 想在电脑翻页时，开始前勾选「允许电脑翻页」，首次授予「Codex Remote 阅读窗翻页」无障碍权限，并选择阅读 App。投屏后保持手机解锁和阅读 App 在前台。
+3. 想在电脑翻页时，开始前勾选「允许电脑翻页」，首次授予「Codex Remote 阅读窗翻页」无障碍权限，并选择阅读 App。Android 分享授权可选同一个阅读 App 或整个屏幕。投屏后保持手机解锁和所选阅读 App 在前台。
 4. 电脑用左右方向键或「上一页／下一页」横向翻页，用滚轮或上下方向键滚动。手机通知、App 和 Windows 跨网窗口都可以结束共享。
+
+## 手机开热点给电脑
+
+电脑连上手机热点后，可继续用固定 HTTPS 域名连接和跨网投屏，前提是电脑能通过热点访问互联网，隧道也在线。手机是热点提供方时，当前的 Wi-Fi 自动发现不会在手机上搜索电脑。
+
+若要尝试对话走直连，先把自己的热点在 Windows 上设为「专用网络」，并在新版服务目录以管理员身份运行 `Enable-Trusted-LAN.cmd`，再启动 `Start-Tunnel.cmd`。在 Windows 用 `ipconfig` 找到电脑 Wi-Fi 的 IPv4，在手机「手动局域网地址」填入 `http://<电脑的 IPv4>:18788`。保留主服务器里的固定域名。手机成功验证并连到电脑后，「电脑」页显示「局域网直连」。跨网投屏的画面仍走 HTTPS 地址。
 
 参考 [scrcpy 窗口选项](https://github.com/Genymobile/scrcpy/blob/v5.0.1/doc/window.md)、[屏幕与省电选项](https://github.com/Genymobile/scrcpy/blob/v5.0.1/doc/device.md)和 [Android 无线调试](https://developer.android.com/tools/adb#wireless-android11-command-line)。
