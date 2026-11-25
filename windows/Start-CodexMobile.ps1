@@ -32,18 +32,8 @@ if ($EnableTrustedLan) {
     Write-Host 'Restart the Codex Remote host. Paired phones on the same LAN can then discover the PC.'
     return
 }
-$shortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Mobile Host.lnk'
-if ($EnableAutostart) {
-    $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-    $link.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $link.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Background'
-    $link.WorkingDirectory = $PSScriptRoot
-    $link.Save()
-    Write-Host 'Enabled. Keep this folder in its current location.'
-    return
-}
-if ($DisableAutostart) {
-    if (Test-Path -LiteralPath $shortcut) { Remove-Item -LiteralPath $shortcut }
+if ($EnableAutostart -or $DisableAutostart) {
+    & (Join-Path $PSScriptRoot 'Set-DesktopLifecycle.ps1') -Disable:$DisableAutostart
     return
 }
 $runtime = Get-AppxPackage 'OpenAI.CodexPrimaryRuntime*' | Sort-Object Version -Descending | Select-Object -First 1

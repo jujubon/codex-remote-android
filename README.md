@@ -76,11 +76,10 @@ Android 0.9.2 搭配 Windows 配套服务 0.9.1 使用。从首页底部点「�
 
 ## 后台运行与更新
 
-双击启动器时，服务在当前窗口运行，可以最小化。希望它在登录 Windows 后自动运行，先用所选模式连通一次，再双击同一文件夹里的 `Enable-Autostart.cmd`。从下次登录起，服务使用已保存的地址在后台启动。`Disable-Autostart.cmd` 用于取消登录自启。VPN、ngrok 等外部软件需要单独配置自启。
+双击启动器可手动运行服务。要让配套服务随 Codex Desktop 启停，先用所选模式连通一次，再双击同一文件夹里的 `Enable-Autostart.cmd`。登录 Windows 时只启动检测程序。打开 Codex Desktop 后启动配套服务，完全退出桌面后停止服务。已由检测程序管理的 Cloudflare 隧道也会随桌面启停。`Disable-Autostart.cmd` 可关闭此功能。单独安装的 VPN 或隧道仍由各自的设置管理。
 
-更新时，用相同签名的新版 APK 覆盖安装。电脑端先停止旧服务，将同版本 ZIP 完整解压，再启动新版。如果更换了解压目录，在新目录重新运行一次 `Enable-Autostart.cmd`。配对信息保存在当前 Windows 用户的 `%LOCALAPPDATA%\CodexMobileRemote`，通常可以继续使用原令牌。
+更新时，用相同签名的新版 APK 覆盖安装。将 Windows ZIP 完整解压到固定文件夹。如果旧配套服务是从命令窗口手动运行的，先退出旧服务，再双击新版的 `Enable-Autostart.cmd`，或按原模式手动启动。已有 0.9.19 或更新版的桌面启动检测程序会改用新目录，无需重启 Windows。配对信息保存在当前 Windows 用户的 `%LOCALAPPDATA%\CodexMobileRemote`，通常可以继续使用原令牌。
 
-如果已经用 0.6.0 配好了 ngrok 和登录自启，可把新版 Windows ZIP 解压到新的固定文件夹，双击其中的 `Enable-Autostart.cmd`。保存电脑上的工作，下次重新登录 Windows 时新服务会接手原有隧道配置。手机直接覆盖安装新版 APK，沿用原地址和配对令牌。
 
 ## 常见问题
 

@@ -7,6 +7,11 @@
 3. 提交对应源码并推送到维护者仓库。基于该提交创建 `v<版本号>` 标签。
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 
+## 0.9.19
+
+- Windows 的「启用自启」改为随 Codex Desktop 启停。登录时仅运行检测程序，打开桌面后才运行配套服务。已由检测程序管理的 Cloudflare 隧道同步启停。
+- 解压新版 Windows ZIP 后运行 `Enable-Autostart.cmd`，即可沿用原手机配对。关闭自动启停可运行 `Disable-Autostart.cmd`。这次改动在 Windows 端，Android 0.9.18 可以继续连接。
+
 ## 0.9.18
 
 - 手机会显示桌面发出的纯图片消息，历史分页可以补齐之前漏掉的图片。图片源文件仍需保存在电脑上。
