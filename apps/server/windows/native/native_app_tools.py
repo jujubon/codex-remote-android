@@ -21,7 +21,7 @@ from control_contract import check_app_tools_contract
 from tool_schema import validate_arguments
 from endpoint_hint import PIPE_NAME, MAX_ENDPOINT_CANDIDATES, discover_native_endpoints
 
-WRITE_TOOLS = frozenset({'set_thread_title', 'create_thread', 'fork_thread', 'navigate_to_codex_page', 'send_message_to_thread'})
+WRITE_TOOLS = frozenset({'set_thread_title', 'create_thread', 'fork_thread', 'navigate_to_codex_page', 'send_message_to_thread', 'set_thread_archived'})
 ALLOWED_TOOLS = WRITE_TOOLS | {'read_thread', 'list_projects'}
 THREAD_ID = re.compile(r'^[A-Za-z0-9_-]{20,100}$')
 MODEL_ID = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$')
@@ -237,6 +237,24 @@ class NativeAppTools:
                 return {'state': 'confirmed'}
         return {'state': 'rejected', 'reply': '当前桌面版本不支持从手机指定这个模型或思考强度。'}
 
+    def archive_thread(self, thread_id: str, expected_identity: str, operation_id: str) -> dict:
+        snapshot = self.thread_snapshot(thread_id, expected_identity)
+        status = snapshot['thread'].get('status')
+        turns = snapshot.get('turns')
+        final = {'completed', 'failed', 'interrupted', 'cancelled', 'canceled'}
+        idle = isinstance(status, dict) and status.get('type') in ('idle', 'notLoaded', 'systemError')
+        if not idle or not isinstance(turns, list) or any(
+                not isinstance(turn, dict) or turn.get('status') not in final for turn in turns):
+            return {'state': 'rejected', 'reply': '请在桌面任务结束后归档。'}
+        args = {'threadId': thread_id, 'hostId': 'local', 'source': 'codex', 'archived': True}
+        result = self.call('set_thread_archived', args, source_thread_id=thread_id,
+                           expected_identity=expected_identity, operation_id=operation_id, mutation=True)
+        data = result.get('data', {})
+        if result['state'] == 'confirmed' and data.get('threadId') == thread_id and data.get('archived') is True:
+            return {'state': 'confirmed', 'thread_id': thread_id}
+        return {'state': 'rejected' if result['state'] == 'rejected' else 'unknown',
+                'reply': '电脑未确认归档。请在已归档列表核对后再试。'}
+
     def send_text(self, thread_id: str, prompt: str, expected_identity: str, operation_id: str,
                   *, model: str | None = None, thinking: str | None = None) -> dict:
         before = self.thread_snapshot(thread_id, expected_identity)
@@ -286,6 +304,9 @@ class NativeAppTools:
             return args == {'threadId': source, 'environment': {'type': 'same-directory'}}
         if tool == 'navigate_to_codex_page':
             return args == {'threadId': source}
+        if tool == 'set_thread_archived':
+            return args.get('archived') is True and args == {
+                'threadId': source, 'hostId': 'local', 'source': 'codex', 'archived': True}
         if tool == 'set_thread_title':
             title = args.get('title')
             return (set(args) == {'threadId', 'source', 'title'} and args['threadId'] == source

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 type DesktopAction = {
-  action: "open" | "create" | "projects" | "native-read" | "native-send" | "native-model-check" | "native-project-create";
+  action: "open" | "create" | "projects" | "native-read" | "native-send" | "native-model-check" | "native-project-create" | "native-archive";
   threadId: string;
   cwd?: string;
   prompt?: string;

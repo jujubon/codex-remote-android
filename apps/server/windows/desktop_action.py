@@ -104,6 +104,12 @@ def run(request):
         except ValueError as error:
             return {'state': 'rejected', 'reply': str(error)}
         return {'state': 'confirmed', 'project': project}
+    if request['action'] == 'native-archive':
+        try:
+            tools, identity = current_desktop_tools(('read_thread', 'set_thread_archived'))
+            return tools.archive_thread(request['threadId'], identity, uuid.uuid4().hex)
+        except (OSError, ValueError, TimeoutError, DesktopControlError):
+            return {'state': 'rejected', 'reply': '对话仍被 Codex 占用，暂时无法通过桌面归档。请稍后重试。'}
     if request['action'] in ('native-send', 'native-read', 'native-model-check'):
         try:
             tools, identity = current_desktop_tools()

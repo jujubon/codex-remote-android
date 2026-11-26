@@ -208,6 +208,41 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("uses the confirmed Desktop archive for an idle conversation held by another writer", async () => {
+    const actions: Parameters<typeof desktopAction>[0][] = [];
+    const { bridge, port } = await start(undefined, undefined, { desktopOnly: true }, async action => {
+      actions.push(action);
+      return { thread_id: action.threadId };
+    });
+    const rpc = bridge.request.bind(bridge);
+    bridge.request = async (method, params) => {
+      const { threadId } = params as { threadId?: string };
+      if (method === "thread/read") return { thread: { id: threadId,
+        status: { type: threadId === "busy" ? "active" : "idle" }, turns: [] } };
+      if (method === "thread/archive") {
+        bridge.calls.push({ method, params });
+        throw new AppServerRequestError("thread already has an active writer", -32600, null);
+      }
+      return rpc(method, params);
+    };
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    for (const threadId of ["busy", "thread-1"]) {
+      ws.send(JSON.stringify({ type: "archive.set", threadId, requestId: threadId, archived: true }));
+      await waitFor(() => messages.some(message => message.requestId === threadId));
+    }
+    expect(messages.find(message => message.requestId === "busy")).toMatchObject({ type: "error" });
+    expect(messages.find(message => message.requestId === "thread-1")).toMatchObject({
+      type: "archive.result", threadId: "thread-1", archived: true,
+    });
+    expect(actions).toEqual([{ action: "native-archive", threadId: "thread-1" }]);
+    expect(bridge.calls.filter(call => call.method === "thread/archive")).toMatchObject([{ params: { threadId: "thread-1" } }]);
+    ws.close();
+  });
+
   it("recovers phone ownership from thread details when a fresh list omits the mobile source", async () => {
     const { bridge, port } = await start(undefined, undefined, { desktopOnly: true }, async () => ({}));
     const request = bridge.request.bind(bridge);

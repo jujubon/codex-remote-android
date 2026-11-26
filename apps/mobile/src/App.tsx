@@ -13,7 +13,7 @@ import { NewThreadSheet } from './components/NewThreadSheet';
 import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
-import { useHiddenProjects } from './lib/hiddenProjects';
+import { useHiddenProjects, useHiddenThreads, useRemovedProjects } from './lib/hiddenProjects';
 import { composerDraftKey, forgetComposerDrafts } from './lib/composerDraft';
 import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
@@ -43,7 +43,11 @@ export function App() {
   const threadBackStackRef = useRef<string[]>([]);
   const threadListPosition = useRef<ThreadListPosition>({ query: '', filter: '全部项目', scrollTop: 0 });
   const remote = useRemote(config ?? null);
-  const hidden = useHiddenProjects(remote.serverId ?? config?.serverUrl ?? '');
+  const listHost = remote.serverId ?? config?.serverUrl ?? '';
+  const hidden = useHiddenProjects(listHost);
+  const hiddenThreads = useHiddenThreads(listHost);
+  const removed = useRemovedProjects(listHost);
+  const showDirectory = (path: string) => Boolean(path) && !hidden.isHidden(path) && !removed.isHidden(path);
 
   const openRootThread = useCallback((threadId: string, target?: AttentionTarget) => {
     threadBackStackRef.current = [];
@@ -222,7 +226,7 @@ export function App() {
         </div>
       )}
       {!remote.lastError && !backgroundError && remote.queueReceipt && (
-        <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
+        <div className="error-toast receipt-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
       )}
       {(remote.lastError || backgroundError) && (
         <div className="error-toast" role="alert">
@@ -315,7 +319,10 @@ export function App() {
           attention={remote.threadAttention}
           position={threadListPosition}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
+          onArchive={remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}
+          hiddenThreads={hiddenThreads}
+          removed={removed}
           threads={remote.threads}
           phase={remote.phase}
           phaseDetail={phaseDetail}
@@ -334,8 +341,8 @@ export function App() {
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
           projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}
-          directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(p => !hidden.isHidden(p)) :
-            [...new Set(remote.threads.map(thread => thread.cwd).filter(p => p && !hidden.isHidden(p)))]}
+          directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(showDirectory) :
+            [...new Set(remote.threads.filter(thread => !thread.projectless).map(thread => thread.cwd).filter(showDirectory))]}
           models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
       )}
 

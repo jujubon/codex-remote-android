@@ -64,7 +64,7 @@ export function ArchiveDialog({ target, connected, request, onClose }: {
         {error && connected && <button type="button" disabled={changing} onClick={() => setPages({})}>刷新归档列表</button>}
       </> : <>
         <p>将「{target.title}」移到电脑的已归档对话？之后可从手机首页「管理 → 已归档对话」恢复。</p>
-        <button type="button" className="primary-button" disabled={changing || !connected || !!error} onClick={() => void change(target.id, true)}>确认归档</button>
+        <button type="button" className="primary-button" disabled={changing || !connected} onClick={() => void change(target.id, true)}>确认归档</button>
       </>}
       {changing && <p role="status">等待电脑确认…</p>}
       {!connected && <p role="status">电脑未连接。</p>}

@@ -81,6 +81,14 @@ export function ChatIcon(props: IconProps) {
   return <IconBase {...props}><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3.1A7.5 7.5 0 1 1 20 11.5Z" /><path d="M9 11.5h6" /></IconBase>;
 }
 
+export function ArchiveIcon(props: IconProps) {
+  return <IconBase {...props}><rect x="3" y="4" width="18" height="5" rx="1.3" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9m-9 4h4" /></IconBase>;
+}
+
+export function TrashIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" /></IconBase>;
+}
+
 export function MoreIcon(props: IconProps) {
   return <IconBase {...props}><g fill="currentColor" stroke="none">
     <circle cx="5" cy="12" r="1.6" />

@@ -3,7 +3,8 @@ import { threadStateLabel } from '../hooks/useRemote';
 import type { ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ChatIcon, ChevronDownIcon, CloseIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { SwipeActions } from './SwipeActions';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
 
@@ -78,10 +79,10 @@ export function writeProjectCollapsePreferences(
   }
 }
 
-export function groupThreadsByCwd(threads: RemoteThread[]): ProjectThreadGroup[] {
+export function groupThreadsByCwd(threads: RemoteThread[], isRemoved: (path: string) => boolean = () => false): ProjectThreadGroup[] {
   const byCwd = new Map<string, RemoteThread[]>();
   for (const thread of threads) {
-    const cwd = thread.projectless || !thread.cwd ? NO_PROJECT : thread.cwd;
+    const cwd = thread.projectless || !thread.cwd || isRemoved(thread.cwd) ? NO_PROJECT : thread.cwd;
     const list = byCwd.get(cwd) ?? [];
     list.push(thread);
     byCwd.set(cwd, list);
@@ -132,7 +133,10 @@ export interface ThreadListPosition {
 interface ThreadListProps {
   position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
+  onArchive?: (thread: RemoteThread) => void;
   hidden: ReturnType<typeof useHiddenProjects>;
+  hiddenThreads: ReturnType<typeof useHiddenProjects>;
+  removed: ReturnType<typeof useHiddenProjects>;
   footer: React.ReactNode;
   threads: RemoteThread[];
   attention: Record<string, AttentionTarget>;
@@ -181,6 +185,7 @@ function ThreadRow({
   onSelect,
   expandedParents,
   onToggleChildren,
+  wrap,
 }: {
   thread: RemoteThread;
   attention?: AttentionTarget;
@@ -189,6 +194,7 @@ function ThreadRow({
   onSelect: (threadId: string, target?: AttentionTarget) => void;
   expandedParents: Set<string>;
   onToggleChildren: (threadId: string) => void;
+  wrap?: (thread: RemoteThread, card: React.ReactNode) => React.ReactNode;
 }) {
   const children = childrenByParent.get(thread.id) ?? [];
   const isAgent = Boolean(thread.parentThreadId || thread.agentNickname || thread.agentRole);
@@ -200,12 +206,11 @@ function ThreadRow({
     '--thread-indent': `${Math.min(depth, 4) * 14}px`,
   } as React.CSSProperties;
 
-  return (
-    <>
-      <button
+  const card = <button
         className={`thread-card ${isAgent ? 'thread-card-agent' : ''}`}
         style={rowStyle}
         type="button"
+        aria-keyshortcuts={wrap && !isAgent ? 'ArrowLeft' : undefined}
         onClick={() => onSelect(thread.id, attention)}
       >
         <span className={`thread-state state-${thread.state}`} aria-hidden={thread.state === 'not_loaded'} aria-label={threadStateLabel(thread.state)}><span /></span>
@@ -234,7 +239,10 @@ function ThreadRow({
           </span>
         </span>
         {Boolean(thread.unread) && <span className="unread-badge">{thread.unread}</span>}
-      </button>
+      </button>;
+  return (
+    <>
+      {wrap && !isAgent ? wrap(thread, card) : card}
       {children.length > 0 && (
         <button
           className="subagent-toggle"
@@ -262,12 +270,22 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ position, onArchives, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden }: ThreadListProps) {
+function ProjectThreads({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
+  const [opened, setOpened] = useState(!collapsed);
+  if (!collapsed && !opened) setOpened(true);
+  return <div className="project-disclosure" inert={collapsed} aria-hidden={collapsed}>
+    <div className="project-threads">{opened || !collapsed ? children : null}</div>
+  </div>;
+}
+
+export function ThreadList({ position, onArchives, onArchive, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
+  const removeRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState(position.current.query);
-  const [projectMenu, setProjectMenu] = useState<string | null>(null);
+  const [swipe, setSwipe] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [filter, setFilter] = useState(position.current.filter);
 
   useLayoutEffect(() => {
@@ -275,6 +293,7 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
   }, [position]);
 
   const updateQuery = (next: string) => {
+    setSwipe(null);
     position.current.query = next;
     setQuery(next);
     position.current.scrollTop = 0;
@@ -282,6 +301,7 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
   };
 
   const updateFilter = (next: string) => {
+    setSwipe(null);
     position.current.filter = next;
     setFilter(next);
     position.current.scrollTop = 0;
@@ -308,13 +328,15 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
     const term = query.trim().toLocaleLowerCase();
     return threads.filter(thread => {
       if (!visibleInHistory(thread, visibility)) return false;
+      if (hiddenThreads.isHidden(thread.id)) return false;
       if (!thread.projectless && thread.cwd && hidden.isHidden(thread.cwd)) return false;
       if (filter === '进行中' && thread.state !== 'running') return false;
       if (filter === '待处理' && !attention[thread.id]) return false;
       return !term || [thread.title, thread.cwd, thread.preview, thread.agentNickname].some(value => value?.toLocaleLowerCase().includes(term));
     });
-  }, [threads, query, filter, hidden, visibility, attention]);
-  const groups = useMemo(() => groupThreadsByCwd(filtered), [filtered]);
+  }, [threads, query, filter, hidden, hiddenThreads, visibility, attention]);
+  const groups = useMemo(() => groupThreadsByCwd(filtered, removed.isHidden), [filtered, removed]);
+  const titles = useMemo(() => new Map(threads.map(thread => [thread.id, thread.title])), [threads]);
   const flatList = filter !== '全部项目' || Boolean(query.trim());
   const recent = useMemo(() => flatList ? [...filtered].sort((a, b) => b.updatedAt - a.updatedAt) : [], [filtered, flatList]);
 
@@ -322,8 +344,18 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
     setProjectCollapsePreferences((current) => toggleProjectCollapsePreference(cwd, items, current));
   };
 
+  const wrapThread = (thread: RemoteThread, card: React.ReactNode) => {
+    const id = `thread:${thread.id}`;
+    return <SwipeActions id={id} open={swipe === id} onChange={setSwipe} actions={[
+      { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hiddenThreads.setHidden(thread.id, true) },
+      ...(onArchive ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
+    ]}>{card}</SwipeActions>;
+  };
+
   return (
-    <main className="app-screen thread-screen">
+    <main className="app-screen thread-screen" onPointerDownCapture={event => {
+      if (swipe && (!(event.target instanceof Element) || event.target.closest<HTMLElement>('[data-swipe-id]')?.dataset.swipeId !== swipe)) setSwipe(null);
+    }}>
       <header className="top-bar thread-top-bar">
         <div className="app-identity">
           <img src="/logo.svg?v=4" alt="" className="top-logo" />
@@ -385,6 +417,29 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
             {hidden.paths.map(path => <div key={path}><span>{path}</span>
               <button type="button" className="secondary-button" onClick={() => hidden.setHidden(path, false)}>恢复显示</button></div>)}
           </section>
+          {hiddenThreads.paths.length > 0 && <section className="hidden-projects">
+            <strong>已隐藏对话（{hiddenThreads.paths.length}）</strong>
+            {hiddenThreads.paths.map(id => <div key={id}><span>{titles.get(id) || '隐藏的对话'}</span>
+              <button type="button" className="secondary-button" onClick={() => hiddenThreads.setHidden(id, false)}>恢复显示</button></div>)}
+          </section>}
+          {removed.paths.length > 0 && <section className="hidden-projects">
+            <strong>已移除项目卡片（{removed.paths.length}）</strong>
+            {removed.paths.map(path => <div key={path}><span>{path}</span>
+              <button type="button" className="secondary-button" onClick={() => removed.setHidden(path, false)}>恢复项目卡片</button></div>)}
+          </section>}
+        </div>
+      </dialog>
+      <dialog className="session-dialog" ref={removeRef} aria-labelledby="remove-project-title" onClose={() => setRemoveTarget(null)}>
+        <div className="session-sheet archive-sheet">
+          <header className="sheet-title-row">
+            <h2 id="remove-project-title">删除项目卡片</h2>
+            <button type="button" className="icon-button nav-icon-button" aria-label="取消删除" onClick={() => removeRef.current?.close()}><CloseIcon /></button>
+          </header>
+          {removeTarget && <p>从手机列表移除「{projectName(removeTarget)}」的项目卡片。对话会显示在「无项目对话」，电脑上的项目目录会保留。</p>}
+          <button type="button" className="swipe-delete-confirm" onClick={() => {
+            if (removeTarget) removed.setHidden(removeTarget, true);
+            removeRef.current?.close();
+          }}>删除项目卡片</button>
         </div>
       </dialog>
 
@@ -399,9 +454,9 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
         ) : !filtered.length ? (
           <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在「管理 → 对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { updateQuery(''); updateFilter('全部项目'); }}>查看全部项目</button></div>
         ) : flatList ? recent.map(thread => (
-          <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd) ? NO_PROJECT : projectName(thread.cwd)}</small>
+          <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd || removed.isHidden(thread.cwd)) ? NO_PROJECT : projectName(thread.cwd)}</small>
             <ThreadRow thread={thread} attention={filter === '待处理' ? attention[thread.id] : undefined}
-              childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
+              childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} wrap={wrapThread} />
           </div>
         )) : groups.map(({ cwd, items }) => {
           const ids = new Set(items.map((thread) => thread.id));
@@ -414,14 +469,16 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
           }
           const roots = items.filter((thread) => !thread.parentThreadId || !ids.has(thread.parentThreadId));
           const collapsed = projectCollapsed(cwd, items, projectCollapsePreferences);
-          return (
-            <section className={`project-group ${collapsed ? 'project-group-collapsed' : ''}`} key={cwd}>
+          const id = `project:${cwd}`;
+          const group = (
+            <section className={`project-group ${collapsed ? 'project-group-collapsed' : ''}`}>
               <header className={cwd === NO_PROJECT ? 'project-heading project-heading-no-menu' : 'project-heading'}>
                 <button
                   className="project-heading-button"
                   type="button"
                   onClick={() => toggleProject(cwd, items)}
                   aria-expanded={!collapsed}
+                  aria-keyshortcuts={cwd !== NO_PROJECT ? 'ArrowLeft ArrowRight' : undefined}
                   aria-label={`${projectName(cwd)}，${items.length} 个任务，${collapsed ? '展开目录' : '折叠目录'}`}
                 >
                   <span className="project-symbol">{cwd === NO_PROJECT ? <ChatIcon /> : <FolderIcon />}</span>
@@ -435,20 +492,20 @@ export function ThreadList({ position, onArchives, threads, attention, phase, ph
                   </span>
                 </button>
                 <button className="project-new nav-icon-button" type="button" aria-label={`在 ${projectName(cwd)} 新建对话`} disabled={phase !== 'connected'} onClick={() => onCreate(cwd === NO_PROJECT ? undefined : cwd)}><PlusIcon /></button>
-                {cwd !== NO_PROJECT && <button className="project-hide nav-icon-button" type="button" aria-label={`${projectName(cwd)} 的项目菜单`} aria-expanded={projectMenu === cwd} onClick={() => setProjectMenu(projectMenu === cwd ? null : cwd)}><MoreIcon /></button>}
+                {cwd !== NO_PROJECT && <button className="project-hide nav-icon-button" type="button" data-swipe-toggle aria-label={`${projectName(cwd)} 的项目菜单`} aria-expanded={swipe === id} onClick={() => setSwipe(swipe === id ? null : id)}><MoreIcon /></button>}
               </header>
-              {projectMenu === cwd && <div className="project-menu-actions">
-                <button type="button" onClick={() => { hidden.setHidden(cwd, true); setProjectMenu(null); }}>仅在本机隐藏此项目</button>
-              </div>}
-              {!collapsed && (
-                <div className="project-threads">
-                  {roots.map((thread) => (
-                    <ThreadRow key={thread.id} thread={thread} childrenByParent={childrenByParent} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
-                  ))}
-                </div>
-              )}
+              <ProjectThreads collapsed={collapsed}>
+                {roots.map((thread) => (
+                  <ThreadRow key={thread.id} thread={thread} childrenByParent={childrenByParent} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} wrap={wrapThread} />
+                ))}
+              </ProjectThreads>
             </section>
           );
+          return cwd === NO_PROJECT ? <div key={cwd}>{group}</div> :
+            <SwipeActions key={id} id={id} open={swipe === id} onChange={setSwipe} project actions={[
+              { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hidden.setHidden(cwd, true) },
+              { label: '删除', tone: 'delete', icon: <TrashIcon />, onSelect: () => { setRemoveTarget(cwd); removeRef.current?.showModal(); } },
+            ]}>{group}</SwipeActions>;
         })}
       </section>
       {notice && <div className="home-notice">{notice}</div>}

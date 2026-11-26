@@ -4,7 +4,7 @@ import { desktopAction, DesktopActionError } from "./windows-desktop.js";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { watchFile, unwatchFile } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { dirname, join, isAbsolute } from "node:path";
+import { basename, dirname, join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -680,22 +680,15 @@ export class MobileGateway {
           if (this.changingArchive.has(id)) throw new Error("电脑正在处理这段对话的归档操作。");
           this.changingArchive.add(id);
           try {
-            const current = message.archived
-              ? asRecord(asRecord(await this.bridge.request("thread/read", { threadId: id, includeTurns: false }))?.thread)
-              : null;
-            if (message.archived && current?.id !== id) throw new Error("电脑未确认目标对话，请刷新后再试。");
-            if (message.archived && (conversationIsActive(current) || this.isThreadActive(id) || (this.desktopQueuedFollowUps.get(id) ?? 0) > 0
-                || this.promptQueue?.list(id).some(item => ["queued", "sending", "paused", "uncertain"].includes(item.status))
-                || [...this.approvals.values()].some(request => request.params?.threadId === id))) {
-              throw new Error("请在任务和待处理操作结束后归档。");
-            }
-            const result = await this.bridge.request(message.archived ? "thread/archive" : "thread/unarchive", { threadId: id });
-            if (message.archived) this.markArchived(id);
-            else {
-              this.archivedIds.delete(id);
-              const thread = asRecord(asRecord(result)?.thread);
-              if (thread) this.upsertThreadSummary(toThreadSummary(thread));
-            }
+            await this.withMobileThread(id, async () => {
+              const result = await this.setArchiveState(id, message.archived);
+              if (message.archived) this.markArchived(id);
+              else {
+                this.archivedIds.delete(id);
+                const thread = asRecord(asRecord(result)?.thread);
+                if (thread) this.upsertThreadSummary(toThreadSummary(thread));
+              }
+            });
             this.threadIndexLoadedAt = 0;
             this.desktopIpc?.announceArchiveState(id, message.archived);
             this.send(socket, { type: "archive.result", requestId: message.requestId, threadId: id, archived: message.archived });
@@ -1132,6 +1125,35 @@ export class MobileGateway {
     }
   }
 
+  private async setArchiveState(threadId: string, archived: boolean): Promise<unknown> {
+    if (!archived) return this.bridge.request("thread/unarchive", { threadId });
+    const read = async () => asRecord(asRecord(await this.bridge.request("thread/read", { threadId, includeTurns: false }))?.thread);
+    const current = await read();
+    if (current?.id !== threadId) throw new Error("电脑未确认目标对话，请刷新后再试。");
+    if (conversationIsActive(current) || this.isThreadActive(threadId) || (this.desktopQueuedFollowUps.get(threadId) ?? 0) > 0
+        || this.promptQueue?.list(threadId).some(item => ["queued", "sending", "paused", "uncertain"].includes(item.status))
+        || [...this.approvals.values()].some(request => request.params?.threadId === threadId)) {
+      throw new Error("请在任务和待处理操作结束后归档。");
+    }
+    try {
+      return await this.bridge.request("thread/archive", { threadId });
+    } catch (error) {
+      if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
+      if (!this.config.desktopOnly) throw new Error("对话仍被 Codex 占用，释放后可重试归档。");
+    }
+
+    try {
+      const result = await this.runDesktopAction({ action: "native-archive", threadId });
+      if (result.thread_id === threadId) return result;
+    } catch (error) {
+      if (!(error instanceof DesktopActionError) || !error.outcomeUnknown) throw error;
+    }
+    // If the receipt was lost, verify the persisted state without dispatching a second write.
+    const after = await read().catch(() => null);
+    if (after?.id === threadId && typeof after.path === "string" && basename(dirname(after.path)) === "archived_sessions") return {};
+    throw new GatewayRequestError("archive_unconfirmed", "电脑未确认归档。请在已归档列表核对后再试。");
+  }
+
   private async desktopProjectSource(cwd?: string) {
     await this.ensureThreadIndex();
     const threads = this.threadIndex.snapshot().filter(row => !row.parentThreadId);
@@ -1507,6 +1529,7 @@ export class MobileGateway {
     if (this.mobileThreads.has(threadId)) {
       return this.submitTurnIdempotently(threadId, clientUserMessageId, JSON.stringify([deliveryMode, turnParams]), () =>
         this.withMobileThread(threadId, async () => {
+          if (this.archivedIds.has(threadId)) throw new GatewayRequestError("thread_archived", "请恢复这段已归档对话后再发送。");
           if (deliveryMode === "steer") return this.steerCurrentTurn(threadId, turnParams);
           if (this.appServerThreadIsActive(threadId)) throw new GatewayRequestError("turn_active", "当前任务正在执行，请选择引导或排队。");
           await this.loadMobileThread(threadId);

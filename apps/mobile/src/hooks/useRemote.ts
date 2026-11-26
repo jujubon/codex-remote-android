@@ -2124,6 +2124,7 @@ export function useRemote(config: RemoteConfig | null) {
           archiveRequests.current.get(message.requestId)?.resolve(message);
           if (message.threadId && typeof message.archived === 'boolean') {
             setQueueReceipt(message.archived ? '电脑已归档这段对话' : '电脑已恢复这段对话');
+            if (message.archived) replaceThreadsAndSyncAttention(threadsRef.current.filter(thread => thread.id !== message.threadId));
             if (message.archived && selectedThreadRef.current === message.threadId) {
               socketRef.current?.send({ type: 'thread.close', threadId: message.threadId });
               selectedThreadRef.current = null;
