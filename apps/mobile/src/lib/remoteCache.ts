@@ -1,4 +1,5 @@
 import type { AccountUsage, ModelOption, RemoteMessage, RemoteThread } from '../types/protocol';
+import { asyncQuestionDetail } from './asyncQuestions';
 
 export interface CachedHistoryState {
   nextCursor: string | null;
@@ -74,6 +75,8 @@ export function compactCache(snapshot: RemoteCacheSnapshot): RemoteCacheSnapshot
       .filter((message) => !(message.status === 'streaming' && message.itemType?.toLowerCase().includes('reasoning')))
       .slice(-MAX_MESSAGES_PER_THREAD)
       .map(({ detail, ...message }) => {
+        const question = asyncQuestionDetail({ ...message, detail });
+        if (question) return { ...message, detail: question };
         if (message.role === 'user' && message.id.startsWith('local_') && detail && typeof detail === 'object'
           && 'clientUserMessageId' in detail && typeof detail.clientUserMessageId === 'string') {
           return { ...message, detail: { clientUserMessageId: detail.clientUserMessageId } };

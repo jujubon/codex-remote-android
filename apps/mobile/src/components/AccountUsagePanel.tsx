@@ -1,4 +1,5 @@
 import type { AccountUsage } from '../types/protocol';
+import { ChevronDownIcon } from './Icons';
 
 function windowName(minutes: number | null) {
   if (!minutes) return '额度窗口';
@@ -10,7 +11,7 @@ export function AccountUsagePanel({ usage, status, refresh }: {
   usage: AccountUsage | null; status: string; refresh: () => void;
 }) {
   return <details className="account-usage" onToggle={event => { if (event.currentTarget.open) refresh(); }}>
-    <summary>账号与额度</summary>
+    <summary>账号与额度<ChevronDownIcon aria-hidden="true" /></summary>
     <div className="usage-heading"><strong>{usage?.plan?.toUpperCase() || 'Codex'}</strong>
       <button type="button" className="secondary-button" disabled={status === '正在读取额度…'} onClick={refresh}>刷新</button></div>
     {status && <p role="status">{status}</p>}

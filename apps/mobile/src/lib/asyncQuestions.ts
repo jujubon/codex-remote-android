@@ -22,22 +22,33 @@ export function describeAsyncAnswer(text: string): { text: string; ids: string[]
     const replies = Array.isArray(value) ? value : [value];
     if (replies.length === 0 || !replies.every(item =>
       item && typeof item.questionItemId === 'string' && typeof item.question === 'string' && typeof item.answer === 'string')) return;
-    return { text: replies.map(item => `${item.question}\n${item.answer}`).join('\n\n'), ids: replies.map(item => item.questionItemId) };
+    return { text: replies.map(item => item.answer).join('\n\n'), ids: replies.map(item => item.questionItemId) };
   } catch { return; }
 }
 
+export function asyncQuestionDetail(message: RemoteMessage | undefined) {
+  if (message?.role !== 'assistant') return;
+  const item = message.detail as { id?: unknown; questions?: unknown } | undefined;
+  if (typeof item?.id === 'string' && Array.isArray(item.questions) && item.questions.length) {
+    return { id: item.id, questions: item.questions };
+  }
+}
+
 export function pendingAsyncQuestions(messages: RemoteMessage[]): AsyncQuestion[] {
-  const answered = new Set(messages.flatMap(message => message.status === 'failed' ? [] : message.asyncAnswerIds ?? []));
-  return messages.flatMap(message => {
-    if (message.role !== 'assistant' || message.status !== 'complete') return [];
-    const item = message.detail as { id?: unknown; questions?: unknown } | undefined;
-    if (typeof item?.id !== 'string' || !Array.isArray(item.questions)) return [];
-    return item.questions.flatMap((question, index) => {
+  const answered = new Set(messages.flatMap(message => message.status === 'complete'
+    && (!message.id.startsWith('local_') || message.deliveryAcknowledged === true) ? message.asyncAnswerIds ?? [] : []));
+  const pending = new Map<string, AsyncQuestion>();
+  for (const message of messages) {
+    if (message.status !== 'complete') continue;
+    const item = asyncQuestionDetail(message);
+    if (!item) continue;
+    item.questions.forEach((question, index) => {
       const id = JSON.stringify(['request_user_input_async', item.id, index]);
       if (!question || typeof question.title !== 'string' || !question.title.trim() || answered.has(id)
-          || new TextEncoder().encode(id).length > 512) return [];
+          || new TextEncoder().encode(id).length > 512) return;
       const options = Array.isArray(question.options) ? question.options.filter((option: unknown): option is string => typeof option === 'string') : [];
-      return [{ id, title: question.title, options }];
+      pending.set(id, { id, title: question.title, options });
     });
-  });
+  }
+  return [...pending.values()];
 }

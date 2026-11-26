@@ -208,7 +208,7 @@ function ThreadRow({
         type="button"
         onClick={() => onSelect(thread.id, attention)}
       >
-        <span className={`thread-state state-${thread.state}`} aria-label={threadStateLabel(thread.state)}><span /></span>
+        <span className={`thread-state state-${thread.state}`} aria-hidden={thread.state === 'not_loaded'} aria-label={threadStateLabel(thread.state)}><span /></span>
         <span className="thread-main">
           <span className="thread-title-row">
             <strong>{isAgent ? thread.agentNickname || thread.title || 'Subagent' : thread.title || '未命名任务'}</strong>
@@ -224,7 +224,7 @@ function ThreadRow({
           )}
           {thread.preview && thread.preview.trim() !== thread.title?.trim() && <span className="thread-preview">{thread.preview}</span>}
           <span className="thread-meta">
-            {thread.state !== 'idle' && <span className={`state-label state-label-${thread.state}`}>{threadStateLabel(thread.state)}</span>}
+            {!['idle', 'not_loaded'].includes(thread.state) && <span className={`state-label state-label-${thread.state}`}>{threadStateLabel(thread.state)}</span>}
             {attention && <span className="duration-label">
               {attention.kind === 'queue' ? '队列待处理' : attention.kind === 'input' ? '等待回复' : '审批待处理'} · {attention.handling === 'phone' ? '手机可处理' : attention.handling === 'desktop' ? '到电脑处理' : '打开查看'}
             </span>}
@@ -235,10 +235,6 @@ function ThreadRow({
         </span>
         {Boolean(thread.unread) && <span className="unread-badge">{thread.unread}</span>}
       </button>
-      {thread.state === 'not_loaded' && <details className="thread-state-help">
-        <summary>关于「未载入」</summary>
-        <p>这段历史保存在电脑上。点开对话后，手机会读取内容并同步当前状态。</p>
-      </details>}
       {children.length > 0 && (
         <button
           className="subagent-toggle"

@@ -337,6 +337,51 @@ describe("MobileGateway", () => {
     ws.close();
   });
 
+  it("classifies standalone chats in the first list and stages a model while Desktop owns the chat", async () => {
+    const desktop = new FakeDesktop();
+    const { bridge, port } = await start(desktop, undefined, { desktopOnly: true }, async () => ({}));
+    const cwd = join(tmpdir(), "other-companion-install", "mobile-workspaces", "12345678-1234-4123-8123-123456789abc");
+    const row = { id: "standalone", cwd, name: "Standalone", status: { type: "notLoaded" } };
+    bridge.threadListData.unshift(row, { ...row, id: "real-project", name: "Real project" });
+    const request = bridge.request.bind(bridge);
+    bridge.request = async (method, params) => {
+      const { threadId } = params as { threadId?: string };
+      if (method === "thread/read" && ["standalone", "real-project"].includes(threadId ?? "")) {
+        bridge.calls.push({ method, params });
+        return { thread: { ...row, id: threadId, threadSource: threadId === "standalone" ? "codex-remote-mobile-projectless" : null } };
+      }
+      if (threadId === "standalone" && ["thread/resume", "turn/start"].includes(method)) {
+        bridge.calls.push({ method, params });
+        return method === "thread/resume" ? { thread: row } : { turn: { id: "new-turn" } };
+      }
+      return request(method, params);
+    };
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    const send = (message: unknown) => ws.send(JSON.stringify(message));
+    send({ type: "threads.list", requestId: "list" });
+    await waitFor(() => messages.some(message => message.requestId === "list"));
+    const list = messages.find(message => message.requestId === "list")?.threads as Array<Record<string, unknown>>;
+    expect(list.find(thread => thread.id === "standalone")).toMatchObject({ projectless: true, mobileManaged: true });
+    expect(list.find(thread => thread.id === "real-project")?.projectless).not.toBe(true);
+
+    send({ type: "thread.settings", threadId: "standalone", model: "model-1", effort: "medium", requestId: "pick" });
+    await waitFor(() => messages.some(message => message.requestId === "pick"));
+    expect(messages.find(message => message.requestId === "pick")).toMatchObject({
+      type: "thread.settings.updated", settings: { model: "model-1", effort: "medium" },
+    });
+    expect(bridge.calls.some(call => ["thread/settings/update", "thread/resume"].includes(call.method))).toBe(false);
+    desktop.owner = false;
+    send({ type: "turn.start", threadId: "standalone", text: "New prompt", requestId: "next", clientUserMessageId: "next" });
+    await waitFor(() => messages.some(message => message.requestId === "next"));
+    expect(messages.find(message => message.requestId === "next")?.type).toBe("turn.started");
+    expect(bridge.calls.find(call => call.method === "turn/start")?.params).toMatchObject({ model: "model-1", effort: "medium" });
+    ws.close();
+  });
+
   it("manages a mobile-created thread inside the desktop host and releases it after the queue finishes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "cmr-managed-thread-"));
     closers.push(async () => rm(directory, { recursive: true, force: true, maxRetries: 3 }));

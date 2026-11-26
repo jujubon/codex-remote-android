@@ -3,7 +3,7 @@ import { isAbsoluteHostPath } from '../lib/hostPath';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { RemoteSocket } from '../lib/RemoteSocket';
-import { describeAsyncAnswer, pendingAsyncQuestions } from '../lib/asyncQuestions';
+import { asyncQuestionDetail, describeAsyncAnswer, pendingAsyncQuestions } from '../lib/asyncQuestions';
 import { deviceRequest, registerInboxUpload } from '../lib/deviceTools';
 import { attentionForThread, queueNeedsAttention } from '../lib/attention';
 import { cancelApprovalNotification, cancelQueueNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyQueueProblem, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
@@ -192,8 +192,8 @@ export function mergeThreadSummaries(current: RemoteThread[], incoming: ThreadSu
       currentTurnStartedAt: previous?.currentTurnStartedAt,
       lastTurnDurationMs: previous?.lastTurnDurationMs,
       tokenUsage: previous?.tokenUsage,
-      model: previous?.model,
-      effort: previous?.effort,
+      model: previous?.model ?? summary.model,
+      effort: previous?.model ? previous.effort : summary.effort,
       permissionMode: previous?.permissionMode,
     };
   });
@@ -506,8 +506,14 @@ function withoutProjectedMessageAliases(
   });
 }
 
+function preserveQuestionDetail(current: RemoteMessage | undefined, incoming: RemoteMessage): RemoteMessage {
+  const question = incoming.role === 'assistant' && !asyncQuestionDetail(incoming) ? asyncQuestionDetail(current) : undefined;
+  return question ? { ...incoming, detail: { ...record(incoming.detail), ...question } } : incoming;
+}
+
 function preserveFresherLiveMessage(current: RemoteMessage | undefined, incoming: RemoteMessage): RemoteMessage {
   if (!current) return incoming;
+  incoming = preserveQuestionDetail(current, incoming);
   if (current.assistantPhase && !incoming.assistantPhase) incoming = { ...incoming, assistantPhase: current.assistantPhase };
   if (current.turnDurationMs != null && incoming.turnDurationMs == null) incoming = { ...incoming, turnDurationMs: current.turnDurationMs };
   const preserveObservedTimestamp = current.timestampSource != null && current.timestampSource !== 'turn' && incoming.timestampSource === 'turn';
@@ -515,14 +521,15 @@ function preserveFresherLiveMessage(current: RemoteMessage | undefined, incoming
   // Reasoning summaries are replaceable activity labels, not append-only answer text.
   // A newer Desktop snapshot may legitimately replace a long old summary with a short
   // current one, so content length must never decide which reasoning text wins.
-  const currentHasLongerContent = !incomingType.includes('reasoning') && current.content.length > incoming.content.length;
+  const currentHasLongerContent = !incomingType.includes('reasoning') && !incoming.asyncAnswerIds
+    && current.content.length > incoming.content.length;
   const preventsTerminalDowngrade = current.status !== 'streaming' && incoming.status === 'streaming';
   if (!currentHasLongerContent && !preventsTerminalDowngrade && !preserveObservedTimestamp) return incoming;
   return {
     ...incoming,
     ...(preserveObservedTimestamp ? { createdAt: current.createdAt, timestampSource: current.timestampSource } : {}),
     ...((currentHasLongerContent || preventsTerminalDowngrade)
-      ? { content: current.content, detail: current.detail ?? incoming.detail }
+      ? { content: current.content, detail: asyncQuestionDetail(incoming) ? incoming.detail : current.detail ?? incoming.detail }
       : {}),
     ...(preventsTerminalDowngrade ? { status: current.status } : {}),
     completedAt: current.completedAt ?? incoming.completedAt,
@@ -544,7 +551,7 @@ export function dedupeMessages(messages: RemoteMessage[]): RemoteMessage[] {
   const byId = new Map<string, RemoteMessage>();
   for (const message of messages) {
     const previous = byId.get(message.id);
-    byId.set(message.id, previous ? { ...previous, ...message } : message);
+    byId.set(message.id, previous ? { ...previous, ...preserveQuestionDetail(previous, message) } : message);
   }
   const output: RemoteMessage[] = [];
   const correlationIndex = new Map<string, number>();
@@ -674,7 +681,8 @@ function liveInsertIndex(items: RemoteMessage[], turnId?: string): number {
 }
 
 function upsertLiveItem(items: RemoteMessage[], message: RemoteMessage): RemoteMessage[] {
-  if (items.some(item => item.id === message.id)) return upsertById(items, message);
+  const previous = items.find(item => item.id === message.id);
+  if (previous) return upsertById(items, preserveQuestionDetail(previous, message));
   const index = liveInsertIndex(items, message.turnId);
   return [...items.slice(0, index), message, ...items.slice(index)];
 }
@@ -832,7 +840,8 @@ export function reconcileMessages(
   const ownedCurrent = targetThreadId ? messagesForThread(targetThreadId, current) : [];
   const ownedIncoming = targetThreadId ? messagesForThread(targetThreadId, incoming) : [];
   if (ownedIncoming.length === 0) return ownedCurrent;
-  const authoritative = dedupeMessages(ownedIncoming);
+  const currentById = new Map(ownedCurrent.map(message => [message.id, message]));
+  const authoritative = dedupeMessages(ownedIncoming.map(message => preserveQuestionDetail(currentById.get(message.id), message)));
   const incomingIds = new Set(authoritative.map((message) => message.id));
   const incomingCorrelations = new Set(authoritative.flatMap(messageCorrelationIds));
   const overlaps = (message: RemoteMessage) => incomingIds.has(message.id)
@@ -2267,11 +2276,12 @@ export function useRemote(config: RemoteConfig | null) {
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
           const submittedText = stringValue(turn?.submittedText);
+          const displayedText = submittedText && (describeAsyncAnswer(submittedText)?.text ?? submittedText);
           if (message.requestId) setMessagesByThread(current => ({
             ...current,
             [message.threadId]: (current[message.threadId] ?? []).map(item =>
               item.id === `local_${message.requestId}`
-                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: submittedText ?? item.content } : item),
+                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: displayedText ?? item.content } : item),
           }));
           if (turnId) setTurnIds((current) => ({ ...current, [message.threadId]: turnId }));
           updateThreadState(message.threadId, 'running');

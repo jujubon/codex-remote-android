@@ -715,18 +715,6 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
                 )}
               </details>
             ))}
-            {approvals.map(approval => (
-              <div key={approval.id} className="attention-target" tabIndex={-1}
-                data-attention-kind={approvalAttention(approval.method, String(approval.wireId)).kind} data-attention-id={String(approval.wireId)}>
-                <ApprovalCard approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />
-              </div>
-            ))}
-            {questions.map(question => (
-              <div key={question.id} className="attention-target" tabIndex={-1} data-attention-kind="input" data-attention-id={question.id}>
-                <AsyncQuestionCard question={question} disabled={phase !== 'connected' || (running && !canSteer)}
-                  onAnswer={answer => onSend(encodeAsyncAnswer(question, answer), undefined, running ? 'steer' : 'auto')} />
-              </div>
-            ))}
             {needsDesktop && <p className="attention-target desktop-attention" tabIndex={-1}
               data-attention-kind={attention.kind}>此项需要在电脑上的 Codex 对话中处理。</p>}
           </div>
@@ -760,7 +748,6 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
             {selectedModel && !activeModel && <option value={selectedModel}>{selectedModel}</option>}
             {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
           </select>
-          {thread.mobileSendOnly && <small>仅用于手机普通发送</small>}
         </label>
         <label>
           <span>思考强度</span>
@@ -782,6 +769,8 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
         </label>
         {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
       </section>
+          {thread.mobileManaged && <p className="session-settings-note">模型与思考强度在手机发起的下一轮生效。</p>}
+          {thread.mobileSendOnly && <p className="session-settings-note">模型与思考强度仅用于手机普通发送。</p>}
           {accountPanel}
           {notice}
         </div>}
@@ -802,9 +791,9 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
           }}>归档这段对话</button>}
         </div>
       </dialog>
-      {(running || thread.state !== 'idle' || phase !== 'connected') && <div className="composer-status" role="status">
+      {(running || !['idle', 'not_loaded'].includes(thread.state) || phase !== 'connected') && <div className="composer-status" role="status">
         {phase !== 'connected' ? '连接中断，等待恢复' :
-          thread.state === 'waiting_input' ? (approvals.some(approval => approval.method === 'item/tool/requestUserInput') ? '等待输入' : '等待在电脑端回答') :
+          thread.state === 'waiting_input' ? (questions.length || approvals.some(approval => approval.method === 'item/tool/requestUserInput') ? '等待输入' : '等待在电脑端回答') :
           thread.state === 'waiting_approval' ? '等待审批' :
           running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
           thread.state === 'quota_limited' ? <span className="quota-status">
@@ -814,9 +803,25 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
               settingsRef.current?.showModal();
               onRefreshUsage();
             }}>查看额度</button>
-          </span> : thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
+          </span> : thread.state === 'error' ? '执行异常' : '等待同步'}
       </div>}
       {!settingsOpen && notice}
+      {(questions.length > 0 || approvals.length > 0) && (
+        <section className="conversation-attention" aria-label="待处理事项">
+          {approvals.map(approval => (
+            <div key={approval.id} className="attention-target" tabIndex={-1}
+              data-attention-kind={approvalAttention(approval.method, String(approval.wireId)).kind} data-attention-id={String(approval.wireId)}>
+              <ApprovalCard approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />
+            </div>
+          ))}
+          {questions.map(question => (
+            <div key={question.id} className="attention-target" tabIndex={-1} data-attention-kind="input" data-attention-id={question.id}>
+              <AsyncQuestionCard question={question} disabled={phase !== 'connected' || (running && !canSteer)}
+                onAnswer={answer => onSend(encodeAsyncAnswer(question, answer), undefined, running ? 'steer' : 'auto', true)} />
+            </div>
+          ))}
+        </section>
+      )}
       <Composer draftKey={draftKey} inboxFile={inboxFile} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>

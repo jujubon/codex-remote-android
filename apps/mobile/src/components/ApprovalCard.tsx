@@ -23,14 +23,18 @@ export function AsyncQuestionCard({ question, disabled, onAnswer }: {
       setSending(true);
       try { await onAnswer(answer); } finally { setSending(false); }
     }}>
-      <strong>{question.title}</strong>
+      <h3>{question.title}</h3>
       {question.options.map((option, index) => (
         <button key={index} type="button" className="secondary-button" aria-pressed={option === choice && !custom}
           disabled={disabled || sending} onClick={() => { setChoice(option); setCustom(''); }}>{option}</button>
       ))}
-      <input aria-label="自行撰写答复" value={custom} onChange={event => setCustom(event.target.value)}
-        placeholder="自行撰写答复…" disabled={disabled || sending} maxLength={4000} />
-      <button className="primary-button" type="submit" disabled={!answer || disabled || sending}>提交回答</button>
+      <div className="async-question-response">
+        <input aria-label="自行撰写答复" value={custom} onChange={event => setCustom(event.target.value)}
+          placeholder="自行撰写答复…" disabled={disabled || sending} maxLength={4000} />
+        <button className="primary-button" type="submit" disabled={!answer || disabled || sending}>
+          {sending ? '正在提交' : '提交回答'}
+        </button>
+      </div>
     </form>
   );
 }

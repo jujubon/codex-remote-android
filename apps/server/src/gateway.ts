@@ -805,8 +805,18 @@ export class MobileGateway {
         case "thread.settings": {
           const threadId = requiredString(message.threadId, "threadId");
           const mobile = await this.isMobileThread(threadId);
-          if (this.config.desktopOnly && !mobile && !this.desktopIpc?.ready && (message.model || message.effort)
-              && !message.permissionMode && !message.collaborationMode && !message.summary) {
+          const modelOnly = (message.model || message.effort)
+            && !message.permissionMode && !message.collaborationMode && !message.summary;
+          if (mobile && modelOnly) {
+            const settings = await this.withMobileThread(threadId, async () => {
+              const confirmed = await this.validateModelSelection(threadId, this.mobileModelOverrides.get(threadId)?.model, message.model, message.effort);
+              this.mobileModelOverrides.set(threadId, confirmed);
+              return confirmed;
+            });
+            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings });
+            break;
+          }
+          if (this.config.desktopOnly && !mobile && !this.desktopIpc?.ready && modelOnly) {
             const settings = await this.setNativeModelOverride(threadId, message.model, message.effort);
             this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings: { ...settings, mobileSendOnly: true } });
             break;
@@ -1148,7 +1158,7 @@ export class MobileGateway {
   private async isMobileThread(threadId: string): Promise<boolean> {
     if (!this.config.desktopOnly) return false;
     if (this.mobileThreads.has(threadId)) return true;
-    if (this.desktopThreadIds.has(threadId) || this.desktopIpc?.hasOwner(threadId)) return false;
+    if (this.desktopThreadIds.has(threadId)) return false;
     const result = await this.bridge.request("thread/read", { threadId, includeTurns: false }).catch(() => undefined);
     const thread = asRecord(asRecord(result)?.thread);
     return thread?.id === threadId && this.rememberThreadSource(thread, true);
@@ -1314,16 +1324,23 @@ export class MobileGateway {
     return (result.data ?? []).map(toModelOption);
   }
 
-  private async setNativeModelOverride(threadId: string, model?: string, effort?: string) {
-    const stored = model || this.nativeDesktopModelOverrides.has(threadId) ? undefined
-      : asRecord(asRecord(await this.bridge.request("thread/read", { threadId, includeTurns: false }))?.thread)?.model;
-    const selected = model ?? this.nativeDesktopModelOverrides.get(threadId)?.model ?? (typeof stored === "string" ? stored : undefined);
-    if (!selected) throw new Error("请先选择本对话的模型，再调整思考强度。");
+  private async validateModelSelection(threadId: string, currentModel?: string, model?: string, effort?: string) {
+    let selected = model ?? currentModel;
+    if (!selected) {
+      const metadata = threadMetadataFromPayload(await this.bridge.request("thread/read", { threadId, includeTurns: false }), threadId);
+      const stored = asRecord(metadata.latestThreadSettings)?.model;
+      if (typeof stored !== "string") throw new Error("请先选择本对话的模型，再调整思考强度。");
+      selected = stored;
+    }
     const option = (await this.listModels()).find(entry => entry.model === selected && !entry.hidden);
     if (!option) throw new Error("电脑当前的模型列表中没有这个模型，请重新选择。");
     if (effort && !option.supportedReasoningEfforts.some(entry => entry.reasoningEffort === effort))
       throw new Error("这个模型不支持所选思考强度。");
-    const settings = { model: option.model, effort: effort ?? null };
+    return { model: option.model, effort: effort ?? null };
+  }
+
+  private async setNativeModelOverride(threadId: string, model?: string, effort?: string) {
+    const settings = await this.validateModelSelection(threadId, this.nativeDesktopModelOverrides.get(threadId)?.model, model, effort);
     await this.runDesktopAction({ action: "native-model-check", threadId, model: settings.model,
       ...(settings.effort ? { thinking: settings.effort } : {}) });
     this.nativeDesktopModelOverrides.delete(threadId);
@@ -1496,7 +1513,7 @@ export class MobileGateway {
           const selected = this.mobileModelOverrides.get(threadId);
           try {
             const result = await this.bridge.request("turn/start", {
-              ...turnParams, ...(selected ? { model: selected.model, ...(selected.effort ? { effort: selected.effort } : {}) } : {}),
+              ...turnParams, ...(selected ? { model: selected.model, effort: selected.effort ?? undefined } : {}),
             });
             this.mobileModelOverrides.delete(threadId);
             this.rememberAppServerStartedTurn(threadId, result);
@@ -1652,8 +1669,11 @@ export class MobileGateway {
   }
 
   private projectThreadRuntimeStatus(thread: Record<string, unknown>): Record<string, unknown> {
-    const status = this.mergedThreadStatus(String(thread.id ?? ""), nativeSnapshotStatus(thread, canonicalTurns(thread)));
-    return { ...thread, status, threadRuntimeStatus: status };
+    const threadId = String(thread.id ?? "");
+    const status = this.mergedThreadStatus(threadId, nativeSnapshotStatus(thread, canonicalTurns(thread)));
+    const settings = this.mobileModelOverrides.get(threadId);
+    return { ...thread, status, threadRuntimeStatus: status,
+      ...(settings ? { latestThreadSettings: { ...asRecord(thread.latestThreadSettings), ...settings } } : {}) };
   }
 
   private scheduleQueueDrain(threadId: string): void {
@@ -1809,6 +1829,7 @@ export class MobileGateway {
 
   private withMembership(threads: ThreadSummary[]): ThreadSummary[] {
     return threads.map(thread => {
+      if (this.mobileThreads.has(thread.id) && !thread.mobileManaged) thread = { ...thread, mobileManaged: true };
       if (this.mobileProjectlessIds.has(thread.id) || this.projectlessIds.has(thread.id)) return { ...thread, projectless: true };
       return this.membershipKnown ? { ...thread, projectless: false } : thread;
     });
@@ -1870,6 +1891,13 @@ export class MobileGateway {
         if (cursor && seenCursors.has(cursor)) throw new Error("Codex returned a repeated thread-list cursor.");
         if (cursor) seenCursors.add(cursor);
       } while (cursor);
+      // The index can omit threadSource. Resolve standalone workspaces through
+      // persisted thread metadata before publishing the list, without resuming them.
+      const standalone = data.filter(thread => typeof thread.id === "string" && typeof thread.cwd === "string"
+        && !thread.threadSource && /[\\/]mobile-workspaces[\\/][\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}[\\/]?$/i.test(thread.cwd));
+      for (let index = 0; index < standalone.length; index += 8) {
+        await Promise.all(standalone.slice(index, index + 8).map(thread => this.isMobileThread(String(thread.id))));
+      }
       const byId = new Map(data.map((thread) => {
         this.rememberThreadSource(thread);
         const summary = toThreadSummary(thread);

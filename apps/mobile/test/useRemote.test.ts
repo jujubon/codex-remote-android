@@ -2,10 +2,36 @@ import { describe, expect, it } from 'vitest';
 import { applyPendingMessageDeltas, canonicalProjectedItems, compactionStatusFromThreadPayload, consumeThreadActivationIntent, contextCompactionItemIdsFromThreadPayload, createSelectedMessagesSelector, dedupeMessages, eventThreadId, isActiveTurnStatus, normalizeThreadPayload, optimisticAttachmentsFromUploads, permissionModeLabel, reconcileMessages, reconcileThreadSnapshot, shouldApplyPermissionModeSnapshot, shouldNotifyThreadCompletion, staleApprovalWireIds, stateFromStatus, turnIdsAfterSnapshot, visibleUserText } from '../src/hooks/useRemote';
 import type { RemoteMessage } from '../src/types/protocol';
 import { canDiscardLocalMessage, orderConversationTurns } from '../src/hooks/useRemote';
+import { encodeAsyncAnswer, pendingAsyncQuestions } from '../src/lib/asyncQuestions';
 
 function user(id: string, content: string, createdAt: number): RemoteMessage {
   return { id, threadId: 'thread', role: 'user', content, createdAt, status: 'complete' };
 }
+
+it('keeps an unanswered question through partial history, retries, and local delivery', () => {
+  const questionItem = { id: 'question', type: 'agentMessage', text: 'Choose one', questions: [{ title: 'Choose one', options: ['First', 'Second'] }] };
+  const messages = (items: unknown[], turnId = 'question-turn') =>
+    normalizeThreadPayload({ id: 'thread', turns: [{ id: turnId, status: 'completed', items }] }).messages;
+  const original = messages([questionItem]);
+  const question = pendingAsyncQuestions(original)[0]!;
+  const partial = messages([{ ...questionItem, questions: [] }]);
+  const refreshed = reconcileThreadSnapshot(original, partial);
+  expect(pendingAsyncQuestions(refreshed)).toEqual([question]);
+  expect(pendingAsyncQuestions(reconcileMessages(refreshed, partial, 'prepend'))).toEqual([question]);
+  expect(pendingAsyncQuestions([...refreshed, ...original])).toEqual([question]);
+
+  const encoded = encodeAsyncAnswer(question, 'Second');
+  const [local] = messages([{ id: 'local_answer', type: 'userMessage', content: [{ type: 'text', text: encoded }] }], 'answer-turn');
+  expect(local?.content).toBe('Second');
+  expect(pendingAsyncQuestions([...refreshed, local!])).toEqual([question]);
+  expect(pendingAsyncQuestions([...refreshed, { ...local!, status: 'failed' }])).toEqual([question]);
+  expect(pendingAsyncQuestions([...refreshed, { ...local!, deliveryAcknowledged: true }])).toEqual([]);
+
+  const [canonical] = messages([{ id: 'answer', type: 'userMessage', content: [{ type: 'text', text: encoded }] }], 'answer-turn');
+  const cached = { ...canonical!, content: 'Choose one\nSecond' };
+  expect(reconcileThreadSnapshot([cached], [canonical!])[0]?.content).toBe('Second');
+  expect(pendingAsyncQuestions([...refreshed, canonical!])).toEqual([]);
+});
 
 it('replaces the acknowledged first prompt when persisted or live history arrives in either order', () => {
   const content = [{ type: 'text', text: 'first prompt' }];
