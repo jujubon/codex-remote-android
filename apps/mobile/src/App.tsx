@@ -198,7 +198,6 @@ export function App() {
     return (
       <SetupScreen
         initialConfig={config}
-        accountPanel={config ? accountPanel : undefined}
         onSaved={(saved) => {
           if (config?.serverUrl !== saved.serverUrl || config?.pairingToken !== saved.pairingToken) {
             void stopCrossNetworkReader();

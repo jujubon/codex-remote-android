@@ -193,7 +193,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
             <span>收件箱</span><strong>{inboxFile.fileName}</strong><small>×</small>
           </button>}
           {files.map((file, index) => (
-            <button key={`${file.name}:${file.size}:${index}`} type="button" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
+            <button key={`${file.name}:${file.size}:${index}`} type="button" disabled={sending} aria-label={`移除 ${file.name}`}
+              onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
               <span>{file.type.startsWith('image/') ? '图片' : '文件'}</span>
               <strong>{file.name}</strong>
               <small>×</small>
@@ -208,11 +209,14 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           className="file-picker-input"
           type="file"
           multiple
-          accept="image/*,.txt,.md,.json,.csv,.pdf,.zip"
-          onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          onChange={(event) => {
+            const selected = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = '';
+            if (selected.length) setFiles(current => [...current, ...selected]);
+          }}
           disabled={!connected || sending}
         />
-        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending} aria-label="上传图片或文件"><PlusIcon /></button>
+        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>
         <textarea
           ref={textareaRef}
           value={content}

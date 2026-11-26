@@ -1,17 +1,16 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { DEFAULT_SERVER_URL, normalizeServerUrl, saveRemoteConfig, storageDescription, type RemoteConfig } from '../lib/configStore';
 import { EyeIcon, ShieldIcon } from './Icons';
 
 interface SetupScreenProps {
   initialConfig?: RemoteConfig | null;
-  accountPanel?: ReactNode;
   onSaved: (config: RemoteConfig) => void;
   onCancel?: () => void;
   onForget?: () => void;
   onFullRefresh?: () => Promise<void>;
 }
 
-export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, onForget, onFullRefresh }: SetupScreenProps) {
+export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFullRefresh }: SetupScreenProps) {
   const [serverUrl, setServerUrl] = useState(initialConfig?.serverUrl ?? DEFAULT_SERVER_URL);
   const [localUrl, setLocalUrl] = useState(initialConfig?.localUrl ?? '');
   const [pairingToken, setPairingToken] = useState(initialConfig?.pairingToken ?? '');
@@ -131,7 +130,6 @@ export function SetupScreen({ initialConfig, accountPanel, onSaved, onCancel, on
           )}
         </form>
 
-        {accountPanel && <div className="settings-account">{accountPanel}</div>}
         <div className="security-note">
           <ShieldIcon />
           <p>{storageDescription()}</p>

@@ -24,12 +24,21 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-:where(.top-actions button, .thread-browser nav button, .project-heading button, .attach-button, .send-button, .new-content-button) {
+:where(.primary-button, .secondary-button, .nav-icon-button, .home-nav button, .thread-browser nav button,
+  .project-heading button, .attach-button, .send-button, .new-content-button, .delivery-mode-picker button, .command-palette button) {
   transition: background-color var(--motion-press) var(--ease-out), color var(--motion-press) var(--ease-out),
-    transform var(--motion-press) var(--ease-out);
+    border-color var(--motion-press) var(--ease-out), scale var(--motion-press) var(--ease-out);
 }
-:where(.top-actions button, .thread-browser nav button, .attach-button, .send-button, .new-content-button):active:not(:disabled) {
-  transform: scale(.96);
+:where(.primary-button, .secondary-button, .nav-icon-button, .home-nav button, .thread-browser nav button,
+  .attach-button, .send-button, .new-content-button, .delivery-mode-picker button):active:not(:disabled) {
+  scale: .97;
+}
+.app-screen select, .session-dialog select, .bottom-sheet select {
+  transition: background-color var(--motion-press) var(--ease-out), border-color var(--motion-press) var(--ease-out);
+}
+.app-screen select:open, .session-dialog select:open, .bottom-sheet select:open {
+  background-color: var(--surface-pressed);
+  border-color: var(--accent);
 }
 
 .top-bar {
@@ -180,8 +189,6 @@
 .project-swipe > .swipe-content > .project-group { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .project-swipe > .swipe-options > .swipe-action + .swipe-action { box-shadow: inset 1px 0 rgb(255 255 255 / 14%); }
 .project-swipe[data-swipe-side="left"] > .swipe-options > .swipe-action + .swipe-action { box-shadow: inset -1px 0 rgb(255 255 255 / 14%); }
-.project-swipe > .swipe-options > .swipe-action > .swipe-action-label { align-self: start; margin-block-start: 9px; }
-.project-swipe:has(> .swipe-content > .project-group:not(.project-group-collapsed)) > .swipe-options > .swipe-action > .swipe-action-label { margin-block-start: 17px; }
 .swipe-delete-confirm { min-height: 44px; width: 100%; border: 0; border-radius: 10px; font-weight: 650; }
 .project-heading-button { min-height: 64px; justify-content: flex-start; gap: 10px; padding: 8px 2px 8px 11px; }
 .project-symbol {
@@ -311,7 +318,7 @@
 .session-settings-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
 .account-usage summary { display: flex; align-items: center; justify-content: space-between; min-height: 40px; color: var(--ink); }
 .account-usage summary::-webkit-details-marker { display: none; }
-.account-usage summary svg { width: 16px; height: 16px; color: var(--muted); }
+.account-usage summary svg { width: 16px; height: 16px; color: var(--muted); transition: transform var(--motion-panel) var(--ease-out); }
 .account-usage[open] summary svg { transform: rotate(180deg); }
 
 .sheet-backdrop { backdrop-filter: none; }
@@ -339,9 +346,23 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .thread-screen, .computer-screen, .conversation-body, .setup-screen { animation: screen-enter var(--motion-fade) var(--ease-out) both; }
-  .tool-call-group-items, .hidden-projects { animation: reveal-content var(--motion-fade) var(--ease-out); }
+  .command-palette, .hidden-projects, .attachment-strip { animation: reveal-content var(--motion-fade) var(--ease-out); }
   .bottom-sheet, .session-dialog[open], .agent-sheet { animation: sheet-enter var(--motion-panel) var(--ease-out) both; }
   .sheet-backdrop, .session-dialog::backdrop { animation: shade-in var(--motion-fade) var(--ease-out); }
+  @supports (interpolate-size: allow-keywords) and (transition-behavior: allow-discrete) {
+    :is(.account-usage, .tool-call-group, .turn-process, .git-diff-panel > details)::details-content {
+      interpolate-size: allow-keywords;
+      block-size: 0;
+      overflow: clip;
+      opacity: 0;
+      transition: block-size var(--motion-panel) var(--ease-out), opacity var(--motion-fade) var(--ease-out),
+        content-visibility var(--motion-panel) allow-discrete;
+    }
+    :is(.account-usage, .tool-call-group, .turn-process, .git-diff-panel > details)[open]::details-content {
+      block-size: auto;
+      opacity: 1;
+    }
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
@@ -410,8 +431,6 @@
 .list-management .hidden-projects { max-height: none; padding: 12px 0; margin: 0; border: 0; background: transparent; }
 .management-row { display: block; width: 100%; min-height: 48px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 10px 0; text-align: start; font-size: .9375rem; }
 .management-row:active { background: var(--surface-pressed); }
-.settings-account { margin-top: 20px; }
-.settings-account .account-usage { padding: 8px 0; background: transparent; max-height: none; }
 
 .home-nav {
   display: grid;
@@ -456,7 +475,7 @@
   width: 14px;
   height: 14px;
   flex: none;
-  transition: transform 160ms var(--ease-out);
+  transition: transform var(--motion-panel) var(--ease-out);
 }
 .subagent-toggle[aria-expanded=true] .subagent-chevron { transform: rotate(180deg); }
 .compaction-status .nav-icon-button { width: 32px; min-width: 32px; height: 32px; }
