@@ -41,6 +41,38 @@ afterEach(async () => {
 });
 
 describe("file transfer primitives", () => {
+  it("deletes only confirmed inbox receipts and keeps queued, pinned and changed files", async () => {
+    const { manager, root } = await fixture();
+    const inbox = new FileInbox(join(root, "inbox.json"), manager);
+    const received = join(root, "received");
+    await mkdir(received);
+    const share = join(received, "share.png");
+    await writeFile(share, "original");
+    await inbox.recordShare(share);
+    const upload = await manager.receiveUpload({ stream: Readable.from([Buffer.from("chat")]), fileName: "chat.txt" });
+    await manager.commitUpload(upload.uploadId);
+    const receipts = await inbox.list(received);
+    const chat = receipts.find(file => file.source === "chat")!;
+    const photo = receipts.find(file => file.source === "share")!;
+
+    await expect(inbox.remove(received, upload.path, async () => false)).rejects.toMatchObject({ httpStatus: 410 });
+    await expect(inbox.remove(received, chat.id, async () => true)).rejects.toMatchObject({ code: "FILE_IN_USE" });
+    manager.pinUpload(upload.uploadId);
+    await expect(inbox.remove(received, chat.id, async () => false)).rejects.toMatchObject({ code: "FILE_IN_USE" });
+    manager.releaseUpload(upload.uploadId);
+    await expect(inbox.remove(received, photo.id, async () => {
+      await writeFile(share, "replaced image bytes");
+      return false;
+    })).rejects.toMatchObject({ code: "FILE_CHANGED" });
+    expect(await readFile(share, "utf8")).toBe("replaced image bytes");
+    expect(await inbox.remove(received, chat.id, async () => false)).toEqual({ id: chat.id, deleted: true });
+    await expect(stat(upload.path)).rejects.toMatchObject({ code: "ENOENT" });
+    const [updated] = await inbox.list(received);
+    await inbox.remove(received, updated!.id, async () => false);
+    await writeFile(share, "untracked replacement");
+    expect(await inbox.list(received)).toEqual([]);
+  });
+
   it("recovers opted-in attachments after restart and keeps queued, reused and permanent files safe", async () => {
     const { manager, root, uploads } = await fixture();
     const upload = (fileName: string, deleteAfterTurn: boolean) =>

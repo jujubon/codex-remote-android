@@ -16,6 +16,7 @@ import { AccountUsagePanel } from './components/AccountUsagePanel';
 import { useHiddenProjects, useHiddenThreads, useRemovedProjects } from './lib/hiddenProjects';
 import { composerDraftKey, forgetComposerDrafts } from './lib/composerDraft';
 import { forgetAttachmentDrafts } from './lib/attachmentDrafts';
+import { loadAttachmentCleanupPreference, saveAttachmentCleanupPreference } from './lib/attachmentPreferences';
 import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
@@ -32,6 +33,7 @@ export function popThreadBackStack(stack: string[]): { previousThreadId: string 
 export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
+  const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState<boolean>();
   const [homePage, setHomePage] = useState<HomePage>('projects');
   const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
@@ -43,7 +45,7 @@ export function App() {
   const [selectedAgentByThread, setSelectedAgentByThread] = useState<Record<string, string | null>>({});
   const threadBackStackRef = useRef<string[]>([]);
   const threadListPosition = useRef<ThreadListPosition>({ query: '', filter: '全部项目', scrollTop: 0 });
-  const remote = useRemote(config ?? null);
+  const remote = useRemote(config ?? null, deleteAttachmentsAfterTurn === true);
   const listHost = remote.serverId ?? config?.serverUrl ?? '';
   const hidden = useHiddenProjects(listHost);
   const hiddenThreads = useHiddenThreads(listHost);
@@ -88,6 +90,7 @@ export function App() {
 
   useEffect(() => {
     void loadRemoteConfig().then(setConfig).catch(() => setConfig(null));
+    void loadAttachmentCleanupPreference().then(setDeleteAttachmentsAfterTurn).catch(() => setDeleteAttachmentsAfterTurn(false));
     void initializeNotifications();
     if (Capacitor.isNativePlatform()) {
       void SystemBars.setStyle({ style: SystemBarsStyle.Light });
@@ -175,6 +178,8 @@ export function App() {
     await stopCrossNetworkReader();
     if (Capacitor.isNativePlatform()) await CodexBackground.stop().catch(() => undefined);
     await clearRemoteConfig();
+    await saveAttachmentCleanupPreference(false);
+    setDeleteAttachmentsAfterTurn(false);
     if (config) {
       const scope = cacheScope(config.serverUrl, config.pairingToken);
       forgetComposerDrafts(scope);
@@ -306,6 +311,11 @@ export function App() {
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
           hostVersion={remote.hostVersion}
+          deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
+          onChangeAttachmentCleanup={async (enabled) => {
+            await saveAttachmentCleanupPreference(enabled);
+            setDeleteAttachmentsAfterTurn(enabled);
+          }}
           checkSync={remote.checkConversationSync}
           onUseInbox={file => {
             setInboxSelection({ file });

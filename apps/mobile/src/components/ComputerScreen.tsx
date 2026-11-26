@@ -10,7 +10,7 @@ import type { InboxFile } from '../lib/deviceTools';
 import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
 import { InboxPanel } from './InboxPanel';
 
-export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, onReconnect, onSettings, footer, notice }: {
+export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice }: {
   config: RemoteConfig;
   connectionUrl?: string;
   phase: ConnectionPhase;
@@ -20,6 +20,8 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
   onUseInbox: (file: InboxFile) => void;
   onReconnect: () => void;
   onSettings: () => void;
+  deleteAttachmentsAfterTurn?: boolean;
+  onChangeAttachmentCleanup: (enabled: boolean) => Promise<void>;
   footer: ReactNode;
   notice: ReactNode;
 }) {
@@ -48,7 +50,8 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
       </section>
       <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
-      <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox} onAttachmentSettings={onSettings} />
+      <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox}
+        deleteAfterTurn={deleteAttachmentsAfterTurn} onChangeAttachmentCleanup={onChangeAttachmentCleanup} />
       <UpdatePanel hostVersion={hostVersion} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}

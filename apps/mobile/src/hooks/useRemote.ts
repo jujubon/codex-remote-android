@@ -1218,7 +1218,7 @@ export function compactionStatusFromThreadPayload(payload: unknown, now = Date.n
   return null;
 }
 
-export function useRemote(config: RemoteConfig | null) {
+export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTurn = false) {
   const socketRef = useRef<RemoteSocket | null>(null);
   const [archiveSupported, setArchiveSupported] = useState(false);
   const archiveRequests = useRef(new Map<string, { resolve: (value: ArchiveResult) => void; reject: (err: Error) => void }>());
@@ -2833,7 +2833,7 @@ export function useRemote(config: RemoteConfig | null) {
             token: config.pairingToken,
             file,
             fileName: file.name,
-            deleteAfterTurn: config.deleteAttachmentsAfterTurn && attachmentCleanupRef.current,
+            deleteAfterTurn: deleteAttachmentsAfterTurn && attachmentCleanupRef.current,
           }));
         }
         for (const upload of uploads) {
@@ -2905,7 +2905,7 @@ export function useRemote(config: RemoteConfig | null) {
       if (!waitForReceipt) updateThreadState(threadId, 'running');
     }
     return receipt ?? true;
-  }, [changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
+  }, [changeModelSettings, deleteAttachmentsAfterTurn, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
 
   const refreshGitDiff = useCallback(() => {
     const threadId = selectedThreadRef.current;

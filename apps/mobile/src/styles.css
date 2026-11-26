@@ -59,10 +59,6 @@ h1, h2, h3, p { margin-top: 0; }
 .setup-form { display: grid; gap: 18px; margin-top: 28px; }
 .setup-form label, .new-thread-form label { display: grid; gap: 7px; color: #41413e; font-size: 12px; font-weight: 600; }
 .setup-form small { color: var(--muted); line-height: 1.45; font-size: 10px; font-weight: 400; }
-.setup-form .setup-attachment-setting { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
-.setup-attachment-setting input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); }
-.setup-attachment-setting span { display: grid; gap: 4px; }
-.inbox-toolbar-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 input, textarea { width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); outline: none; transition: border-color .15s, box-shadow .15s, background .15s; }
 input { height: 46px; padding: 0 12px; border-radius: 8px; font-size: 13px; }
 input::placeholder, textarea::placeholder { color: #a0a09a; }
@@ -613,7 +609,6 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 .git-diff-content { padding: 0 0 8px; }
 .git-diff-content > header { display: flex; align-items: center; justify-content: space-between; padding: 7px 2px; }
 .git-diff-content > header > div { display: grid; gap: 1px; }.git-diff-content > header strong { font-size: 9px; }.git-diff-content > header small { color: var(--muted); font-size: 7.5px; }
-.git-diff-content > header button { padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: #555550; font-size: 8px; }
 .git-diff-error, .diff-empty { margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .diff-file-list { display: grid; }
 .diff-file + .diff-file { border-top: 1px solid #dfdfda; }

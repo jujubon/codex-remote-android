@@ -38,12 +38,16 @@ export class FileInbox {
   }
 
   recordShare(path: string): Promise<void> {
+    return this.updateShares(paths => [path, ...paths.filter(previous => previous !== path)].slice(0, LIMIT));
+  }
+
+  private updateShares(update: (paths: string[]) => string[]): Promise<void> {
     const operation = this.writes.then(async () => {
       const paths = await this.shares();
       const temp = `${this.indexPath}.${randomUUID()}.tmp`;
       try {
         await mkdir(dirname(this.indexPath), { recursive: true, mode: 0o700 });
-        await writeFile(temp, JSON.stringify([path, ...paths.filter(previous => previous !== path)].slice(0, LIMIT)), { mode: 0o600 });
+        await writeFile(temp, JSON.stringify(update(paths)), { mode: 0o600 });
         await rename(temp, this.indexPath);
       } finally {
         await unlink(temp).catch(() => undefined);
@@ -87,6 +91,29 @@ export class FileInbox {
   async use(receiveFolder: string, id: unknown) {
     const entry = await this.find(receiveFolder, id);
     return this.files.registerInboxFile(entry.path);
+  }
+
+  async remove(receiveFolder: string, id: unknown, isInUse: (path: string) => Promise<boolean>) {
+    const entry = await this.find(receiveFolder, id);
+    if (await isInUse(entry.path)) {
+      throw new FileTransferError("FILE_IN_USE", "文件正在被任务或排队消息使用，请稍后再删除。", 409);
+    }
+    const actual = await lstat(entry.path).catch(() => undefined);
+    if (!actual?.isFile() || await realpath(entry.path).catch(() => undefined) !== entry.path ||
+        receiptId(entry.path, entry.source, actual) !== entry.id) {
+      throw new FileTransferError("FILE_CHANGED", "文件已移动或修改，请刷新收件箱。", 410);
+    }
+    if (this.files.isUploadPinned(entry.path)) {
+      throw new FileTransferError("FILE_IN_USE", "文件正在发送，请稍后再删除。", 409);
+    }
+    await unlink(entry.path);
+    this.lastListing = undefined;
+    await this.files.forgetDeletedInboxFile(entry.path);
+    if (entry.source === "share") {
+      await this.updateShares(paths => paths.filter(path => path !== entry.path))
+        .catch(error => console.warn("[inbox] could not remove old receipt", error));
+    }
+    return { id: entry.id, deleted: true };
   }
 
   async preview(receiveFolder: string, id: string, thumbnail: boolean) {

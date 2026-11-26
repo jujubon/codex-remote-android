@@ -241,6 +241,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
       json(response, 200, await inbox.use((await device.settings()).folder, body.id));
       return;
     }
+    case "/api/device/inbox/delete": {
+      const body = await readJsonBody(request, 2048);
+      json(response, 200, await inbox.remove((await device.settings()).folder, body.id, path => gateway.isInboxAttachmentInUse(path)));
+      return;
+    }
     case "/api/device/reader/open-local":
       request.resume();
       json(response, 200, await reader.openLocal());

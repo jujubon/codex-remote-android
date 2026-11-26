@@ -2155,6 +2155,16 @@ export class MobileGateway {
     });
   }
 
+  async isInboxAttachmentInUse(path: string): Promise<boolean> {
+    const active = new Set([...this.appServerThreadStatuses.keys(), ...this.desktopThreads.keys(), ...this.nativeDesktopTurns.keys()]);
+    const matches = await Promise.all([...active].filter(id => this.isThreadActive(id) || this.nativeDesktopTurns.has(id) ||
+      conversationIsActive(this.desktopThreads.get(id))).map(async id => {
+      const history = await this.readTurnsPage(id, null, 1).catch(() => null);
+      return history?.turns.some(turn => !isFinishedAttachmentTurn(turn) && turnReferencesAttachment(turn, path));
+    }));
+    return matches.some(Boolean) || this.promptQueue?.protectedFilePaths().has(path) === true;
+  }
+
   async cleanupCompletedAttachments(): Promise<void> {
     if (!this.files || !this.bridge.ready || this.cleaningAttachments) return;
     this.cleaningAttachments = true;
@@ -2475,11 +2485,17 @@ function attachmentTurnId(result: unknown, expectedTurnId?: unknown): string | u
 }
 
 export function completedAttachmentTurn(turn: Record<string, unknown>, file: { turnId?: string; path: string }): boolean {
-  if (!/^(completed|failed|interrupted|cancelled|canceled)$/i.test(String(turn.status))) return false;
-  if (file.turnId) return turn.id === file.turnId;
-  if (desktopAttachmentPaths({ turns: [turn] }).includes(file.path)) return true;
+  return isFinishedAttachmentTurn(turn) && (file.turnId ? turn.id === file.turnId : turnReferencesAttachment(turn, file.path));
+}
+
+function isFinishedAttachmentTurn(turn: Record<string, unknown>): boolean {
+  return /^(completed|failed|interrupted|cancelled|canceled)$/i.test(String(turn.status));
+}
+
+function turnReferencesAttachment(turn: Record<string, unknown>, path: string): boolean {
+  if (desktopAttachmentPaths({ turns: [turn] }).includes(path)) return true;
   const heading = "\n\n手机上传到电脑的文件（请查看这些本地文件）：\n";
-  const line = `- ${JSON.stringify(file.path)}`;
+  const line = `- ${JSON.stringify(path)}`;
   return Array.isArray(turn.items) && turn.items.some(value => {
     const item = asRecord(value);
     if (!item || !String(item.type).toLowerCase().includes("user")) return false;

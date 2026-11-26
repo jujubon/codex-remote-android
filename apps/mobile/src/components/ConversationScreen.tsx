@@ -12,7 +12,6 @@ import { MessageBubble } from './MessageBubble';
 import { GitDiffPanel } from './GitDiffPanel';
 import { PromptQueuePanel } from './PromptQueuePanel';
 import { TransientActivity } from './TransientActivity';
-import { ElapsedTime } from './ElapsedTime';
 import type { InboxFile } from '../lib/deviceTools';
 import { approvalAttention, type AttentionTarget } from '../lib/attention';
 
@@ -775,7 +774,6 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       <TransientActivity running={running} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
       <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
-      <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
       <PromptQueuePanel items={promptQueue} attention={attention?.kind === 'queue' ? attention : undefined}
         onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
       <dialog className="session-dialog" ref={settingsRef} aria-labelledby="session-options" onClose={() => setSettingsOpen(false)} onClick={event => {
@@ -817,6 +815,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           {thread.mobileManaged && <p className="session-settings-note">模型与思考强度在手机发起的下一轮生效。</p>}
           {thread.mobileSendOnly && <p className="session-settings-note">模型与思考强度仅用于手机普通发送。</p>}
           {accountPanel}
+          <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
           {notice}
         </div>}
       </dialog>
@@ -836,11 +835,11 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           }}>归档这段对话</button>}
         </div>
       </dialog>
-      {(running || !['idle', 'not_loaded'].includes(thread.state) || phase !== 'connected') && <div className="composer-status" role="status">
+      {(phase !== 'connected' || thread.state === 'waiting_input' || thread.state === 'waiting_approval' ||
+        (!running && !['idle', 'not_loaded'].includes(thread.state))) && <div className="composer-status" role="status">
         {phase !== 'connected' ? '连接中断，等待恢复' :
           thread.state === 'waiting_input' ? (questions.length || approvals.some(approval => approval.method === 'item/tool/requestUserInput') ? '等待输入' : '等待在电脑端回答') :
           thread.state === 'waiting_approval' ? '等待审批' :
-          running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
           thread.state === 'quota_limited' ? <span className="quota-status">
             <span>Codex 额度已达到上限</span>
             <button type="button" className="secondary-button" onClick={() => {

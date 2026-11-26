@@ -23,6 +23,7 @@ export type FileTransferErrorCode =
   | "TRANSFER_NOT_FOUND"
   | "TRANSFER_EXPIRED"
   | "TRANSFER_ALREADY_CLAIMED"
+  | "FILE_IN_USE"
   | "FILE_CHANGED";
 
 export class FileTransferError extends Error {
@@ -407,8 +408,7 @@ export class FileTransferManager {
 
   async deleteCompletedAttachment(candidate: AttachmentCleanup, protectedPaths: ReadonlySet<string>): Promise<boolean> {
     const stored = await this.uploadFileOnDisk(candidate.uploadId);
-    if (!stored || stored.path !== candidate.path || protectedPaths.has(stored.path) ||
-        [...this.uploads.values()].some(record => record.path === stored.path && record.pins > 0)) return false;
+    if (!stored || stored.path !== candidate.path || protectedPaths.has(stored.path) || this.isUploadPinned(stored.path)) return false;
     const marker = resolve(stored.directory, CLEANUP_UPLOAD_MARKER);
     const actual = await lstat(stored.path).catch(() => null);
     if (!actual?.isFile() || actual.size !== candidate.size || actual.mtimeMs !== candidate.modified ||
@@ -416,11 +416,22 @@ export class FileTransferManager {
         !(await lstat(marker).catch(() => null))?.isFile() ||
         await readFile(marker, "utf8").catch(() => null) !== JSON.stringify(candidate)) return false;
     await unlink(stored.path);
-    this.uploads.delete(candidate.uploadId);
-    this.trustedFiles.delete(stored.path);
-    await Promise.allSettled([unlink(marker), unlink(resolve(stored.directory, COMMITTED_UPLOAD_MARKER))]);
-    await rmdir(stored.directory).catch(() => undefined);
+    await this.forgetDeletedInboxFile(stored.path);
     return true;
+  }
+
+  isUploadPinned(path: string): boolean {
+    return [...this.uploads.values()].some(record => record.path === path && record.pins > 0);
+  }
+
+  async forgetDeletedInboxFile(path: string): Promise<void> {
+    this.trustedFiles.delete(path);
+    for (const [id, record] of this.uploads) if (record.path === path) this.uploads.delete(id);
+    const directory = dirname(path);
+    if (dirname(directory) !== this.uploadDirectory || !UPLOAD_ID.test(basename(directory)) ||
+        await realpath(directory).catch(() => null) !== directory) return;
+    await Promise.allSettled([unlink(resolve(directory, CLEANUP_UPLOAD_MARKER)), unlink(resolve(directory, COMMITTED_UPLOAD_MARKER))]);
+    await rmdir(directory).catch(() => undefined);
   }
 
   /** Registers one file verified by the inbox, without creating or deleting a copy. */

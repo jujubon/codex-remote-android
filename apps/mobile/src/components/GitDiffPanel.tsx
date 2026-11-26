@@ -26,18 +26,18 @@ export function GitDiffPanel({ snapshot, onRefresh }: GitDiffPanelProps) {
           </span>
           <span className="git-diff-toggle-label">{expanded ? '收起' : '展开'}</span>
         </summary>
-        <div className="git-diff-content">
+        {expanded && <div className="git-diff-content">
           <header>
             <div>
               <strong>{snapshot?.error ? '暂时无法读取' : snapshot?.files ? '工作区未提交变更' : '工作区干净'}</strong>
               <small>{snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '尚未刷新'}{snapshot?.truncated ? ' · 已截断' : ''}</small>
             </div>
-            <button type="button" onClick={onRefresh}>刷新</button>
+            <button type="button" className="secondary-button" onClick={onRefresh}>刷新</button>
           </header>
           <div className="git-diff-scroll" tabIndex={0} aria-label="Git 变更文件，可上下滚动">
             {snapshot?.error ? <p className="git-diff-error">{snapshot.error}</p> : <DiffView diff={snapshot?.diff ?? ''} />}
           </div>
-        </div>
+        </div>}
       </details>
     </section>
   );
