@@ -307,6 +307,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
   { value: 'loaded', label: '已载入', hint: '同时隐藏未载入的历史对话。' },
   { value: 'all', label: '全部', hint: '显示所有对话，包括审阅记录。' },
 ];
+const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
 export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
@@ -413,8 +414,8 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
           <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={event => updateQuery(event.target.value)} />
           {query && <button className="nav-icon-button" type="button" aria-label="清空搜索" onClick={() => updateQuery('')}><CloseIcon /></button>}
         </div>
-        <nav aria-label="对话筛选">{['全部项目', '最近', '进行中', '待处理'].map(label =>
-          <button key={label} type="button" aria-pressed={label === filter} onClick={() => updateFilter(label)}>{label}</button>
+        <nav className="segmented-controls project-filters" data-selected={Math.max(0, projectFilters.indexOf(filter))} aria-label="对话筛选">{projectFilters.map(label =>
+          <button key={label} type="button" aria-pressed={label === filter} onClick={() => { if (label !== filter) updateFilter(label); }}>{label}</button>
         )}</nav>
         <div className="project-list-toolbar">
           <span>{flatList ? `${filtered.length} 个对话` : `${groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目 · ${filtered.length} 个对话`}</span>
@@ -513,7 +514,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
           const id = `project:${cwd}`;
           const group = (
             <section className={`project-group ${collapsed ? 'project-group-collapsed' : ''}`}>
-              <header className={cwd === NO_PROJECT ? 'project-heading project-heading-no-menu' : 'project-heading'}>
+              <header className="project-heading">
                 <button
                   className="project-heading-button"
                   type="button"

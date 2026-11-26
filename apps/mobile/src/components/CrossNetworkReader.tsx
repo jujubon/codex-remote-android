@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
 import { MonitorIcon } from './Icons';
+import { ComputerCardHeading } from './ComputerCardHeading';
 
 type ReaderState = { state: 'idle' | 'connecting' | 'sharing'; detail?: string; controlAvailable?: boolean };
 type ReadingApp = { id: string; name: string };
@@ -103,26 +104,28 @@ export function PhoneReader({ config, deviceConfig = config, desktop, supported 
     }
   }
 
-  return <section className="computer-reader">
-    <header className="reader-heading"><span className="reader-icon"><MonitorIcon /></span><div>
-      <h2>手机投屏</h2>
-      <p>{active ? '正在跨网共享' : localActive ? 'Wi-Fi 投屏中' : '在电脑上查看手机屏幕'}</p>
-    </div></header>
-    {native && !active && <div className="reader-mode" role="group" aria-label="投屏方式">
+  return <section className="computer-utility computer-reader">
+    <ComputerCardHeading title="手机投屏" icon={<MonitorIcon />}>
+      {(active || localActive) && <span className="computer-status-pill" data-tone="success">
+        {active ? status.state === 'sharing' ? '跨网共享中' : '连接中' : 'Wi-Fi 投屏中'}
+      </span>}
+    </ComputerCardHeading>
+    {!native && <p className="utility-muted">打开 Android App 即可投屏。</p>}
+    {native && !active && <div className="reader-mode segmented-controls" data-selected={mode} role="group" aria-label="投屏方式">
       <button type="button" aria-pressed={mode === 'wifi'} disabled={pending} onClick={() => { setPreferredMode('wifi'); setFeedback(''); }}>同一 Wi‑Fi</button>
       <button type="button" aria-pressed={mode === 'remote'} disabled={pending} onClick={() => { setPreferredMode('remote'); setFeedback(''); }}>跨网投屏</button>
     </div>}
-    {native && !active && <p>{mode === 'wifi'
-      ? '同一 Wi‑Fi 下使用，首次连接需在 Windows 上完成无线调试配对。'
-      : canShare ? '支持 5G 和不同 Wi‑Fi。电脑自动打开窗口，手机确认后开始共享。' : '请在连接设置中填写固定 HTTPS 地址。'}</p>}
+    {native && !active && <p className="utility-muted computer-reveal" key={mode}>{mode === 'wifi'
+      ? '首次使用需在 Windows 完成无线调试配对。'
+      : canShare ? '支持 5G 和不同 Wi‑Fi，手机确认后开始共享。' : '请在连接设置中填写固定 HTTPS 地址。'}</p>}
     {native && mode === 'remote' && canShare && !active && <div className="computer-reader-controls">
-      <label className="computer-reader-toggle">
-        <span>允许电脑翻页</span>
+      <label className="computer-setting-row computer-switch">
+        <span><strong>允许电脑翻页</strong></span>
         <input type="checkbox" role="switch" checked={allowControls} disabled={pending}
           onChange={event => enableControls(event.target.checked)} />
       </label>
-      {allowControls && <>
-        <p>电脑可在所选 App 内滑动翻页。确认投屏后，保持手机解锁并打开该 App。</p>
+      {allowControls && <div className="computer-reader-controls computer-reveal">
+        <p className="utility-muted">共享期间请保持手机解锁，并打开所选阅读 App。</p>
         {!status.controlAvailable && <button className="secondary-button" type="button"
           onClick={() => void reader.openControlSettings().catch((error: Error) => setFeedback(error.message))}>
           开启「阅读窗翻页」无障碍权限
@@ -134,15 +137,15 @@ export function PhoneReader({ config, deviceConfig = config, desktop, supported 
             {apps.map(app => <option key={app.id} value={app.id}>{app.name}</option>)}
           </select>
         </label>
-      </>}
+      </div>}
     </div>}
     {native && <button className={active ? 'secondary-button reader-action' : 'primary-button reader-action'} type="button"
       disabled={pending || supported === false || (mode === 'wifi' ? !!localActive : !active && (!canShare || (allowControls && !canControl)))}
       onClick={() => void (mode === 'wifi' ? openLocal() : toggle())}>
       {active ? '停止投屏' : pending ? '正在连接电脑…' : mode === 'wifi' ? '在电脑打开 Wi-Fi 投屏' : '开始跨网投屏'}
     </button>}
-    {(feedback || status.detail || active) && <p role="status">
-      {feedback || status.detail || (status.state === 'sharing' ? '正在共享屏幕。' : '正在连接电脑投屏窗口…')}
+    {(feedback || status.detail) && <p className="computer-feedback computer-reveal" role="status">
+      {feedback || status.detail}
     </p>}
   </section>;
 }

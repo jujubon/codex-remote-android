@@ -5,7 +5,10 @@ import type { RemoteConfig } from '../lib/configStore';
 import type { ConnectionPhase } from '../types/protocol';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { deviceRequest, QUICK_SHARE_KEY, readPhoneClipboard, shareFileToComputer, writePhoneClipboard, type DeviceStatus, type HoldDuration } from '../lib/deviceTools';
-import { CloseIcon } from './Icons';
+import { ClipboardIcon, CloseIcon, MonitorIcon, UploadIcon } from './Icons';
+import { ComputerCardHeading } from './ComputerCardHeading';
+
+type DeviceTool = 'clipboard' | 'screen' | 'share';
 
 export function DeviceTools({ config, status, updateStatus, runningThreadId }: {
   config: RemoteConfig;
@@ -13,54 +16,62 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId }: {
   updateStatus: (status: DeviceStatus) => void;
   runningThreadId?: string;
 }) {
-  const [operating, setOperating] = useState(false);
+  const [activeTool, setActiveTool] = useState<DeviceTool>();
   const [minutes, setMinutes] = useState<HoldDuration>(runningThreadId ? 'task' : 60);
   const [quickShare, setQuickShare] = useState(false);
-  const [feedback, setFeedback] = useState<{ text: string; error?: boolean }>();
+  const [savingQuickShare, setSavingQuickShare] = useState(false);
+  const [feedback, setFeedback] = useState<{ tool: DeviceTool; text: string; error?: boolean }>();
   const sharePicker = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (runningThreadId || !Capacitor.isNativePlatform()) return;
     void Preferences.get({ key: QUICK_SHARE_KEY }).then(({ value }) => setQuickShare(value === '1'))
-      .catch(error => setFeedback({ text: message(error), error: true }));
+      .catch(error => setFeedback({ tool: 'share', text: message(error), error: true }));
   }, [runningThreadId]);
 
-  const disabled = operating || status?.supported === false;
+  const disabled = Boolean(activeTool) || status?.supported === false;
 
-  async function run(operation: () => Promise<string>) {
+  async function run(tool: DeviceTool, operation: () => Promise<string>) {
     if (disabled) return;
-    setOperating(true);
+    setActiveTool(tool);
     setFeedback(undefined);
-    try { setFeedback({ text: await operation() }); }
-    catch (error) { setFeedback({ text: message(error), error: true }); }
-    finally { setOperating(false); }
+    try { setFeedback({ tool, text: await operation() }); }
+    catch (error) { setFeedback({ tool, text: message(error), error: true }); }
+    finally { setActiveTool(undefined); }
   }
 
-  return <div className="device-tools" aria-busy={operating}>
-      {feedback && <p className={feedback.error ? 'form-error' : 'device-feedback'} role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p>}
-      {operating && <p role="status">正在等待电脑响应…</p>}
+  function feedbackFor(tool: DeviceTool) {
+    return activeTool === tool ? <p className="computer-feedback computer-reveal" role="status">正在等待电脑响应…</p> :
+      feedback?.tool === tool ? <p className="computer-feedback computer-reveal" data-tone={feedback.error ? 'error' : 'success'}
+        role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p> : null;
+  }
+
+  return <div className="device-tools">
       {status?.supported === false && <p role="status">此电脑未提供 Windows 设备工具。</p>}
-      {!runningThreadId && <section>
-        <h3>剪贴板</h3>
+      {!runningThreadId && <section className="computer-utility" aria-busy={activeTool === 'clipboard'}>
+        <ComputerCardHeading title="剪贴板" icon={<ClipboardIcon />} />
         <div className="device-actions">
-          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('clipboard', async () => {
             const text = await readPhoneClipboard();
             if (!text) return '手机剪贴板没有可发送的文本。';
             await deviceRequest(config, 'clipboard/write', { text });
             return '已复制到电脑剪贴板。';
           })}>发送手机剪贴板</button>
-          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('clipboard', async () => {
             const { text } = await deviceRequest<{ text: string }>(config, 'clipboard/read');
             if (!text) return '电脑剪贴板没有可拉取的文本。';
             await writePhoneClipboard(text);
             return '已复制到手机剪贴板。';
           })}>拉取电脑剪贴板</button>
         </div>
+        {feedbackFor('clipboard')}
       </section>}
-      <section>
-        {!runningThreadId && <h3>电脑屏幕</h3>}
+      <section className={runningThreadId ? undefined : 'computer-utility'} aria-busy={activeTool === 'screen'}>
+        {!runningThreadId && <ComputerCardHeading title="电脑屏幕" icon={<MonitorIcon />}>
+          {status?.awakeUntil && <span className="computer-status-pill" data-tone="success">挂机中</span>}
+        </ComputerCardHeading>}
         <div className="device-actions">
-          <label className="device-duration">保持唤醒
+          <label className="device-duration computer-setting-row">保持唤醒
             <select value={minutes} onChange={event => setMinutes(event.target.value === 'task' ? 'task' : Number(event.target.value) as HoldDuration)}>
               <option value={30}>30 分钟</option>
               <option value={60}>1 小时</option>
@@ -68,28 +79,29 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId }: {
               {runningThreadId && <option value="task">到当前任务结束（最多 2 小时）</option>}
             </select>
           </label>
-          {!runningThreadId && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(async () => {
+          {!runningThreadId && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('screen', async () => {
             await deviceRequest(config, 'power/lock');
             return 'Windows 已接收锁屏请求。';
           })}>锁定电脑</button>}
-          <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(async () => {
+          <button type="button" className="primary-button" disabled={disabled} onClick={() => void run('screen', async () => {
             updateStatus(await deviceRequest<DeviceStatus>(config, 'power/hold', { minutes, threadId: runningThreadId }));
             return 'Windows 已接收熄屏请求，保持唤醒已启用。';
           })}>熄屏挂机</button>
-          {status?.awakeUntil && <button type="button" className="secondary-button device-release" disabled={disabled} onClick={() => void run(async () => {
+          {status?.awakeUntil && <button type="button" className="secondary-button device-release" disabled={disabled} onClick={() => void run('screen', async () => {
             updateStatus(await deviceRequest<DeviceStatus>(config, 'power/release'));
             return '已取消保持唤醒，电脑恢复原休眠策略。';
           })}>停止挂机</button>}
         </div>
-        {status?.awakeUntil && <p>最晚保持至 {new Date(status.awakeUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+        {status?.awakeUntil && <p className="computer-feedback" data-tone="success">最晚保持至 {new Date(status.awakeUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+        {feedbackFor('screen')}
       </section>
-      {!runningThreadId && <section>
-        <h3>发送到电脑</h3>
+      {!runningThreadId && <section className="computer-utility" aria-busy={activeTool === 'share'}>
+        <ComputerCardHeading title="发送到电脑" icon={<UploadIcon />} />
         <input hidden ref={sharePicker} type="file" multiple onChange={event => {
           const files = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = '';
           if (!files.length) return;
-          void run(async () => {
+          void run('share', async () => {
             const saved: string[] = [];
             const failed: string[] = [];
             for (const file of files) {
@@ -102,17 +114,26 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId }: {
         }} />
         <button type="button" className="secondary-button" disabled={disabled}
           onClick={() => sharePicker.current?.click()}>分享文件到电脑</button>
-        <p>在相册、文档或浏览器的分享菜单选择「发送到电脑」。</p>
-        {status?.shareError && <p role="alert">{status.shareError}</p>}
-        {status?.receiveFolder && <p className="device-folder">{status.receiveFolder}{status.autoOpen ? ' · 接收后打开' : ''}</p>}
-        {Capacitor.isNativePlatform() && <label className="device-quick-share">
-          <input type="checkbox" checked={quickShare} onChange={event => {
+        {status?.shareError && <p className="computer-feedback" data-tone="error" role="alert">{status.shareError}</p>}
+        {(status?.receiveFolder || Capacitor.isNativePlatform()) && <details className="computer-disclosure">
+          <summary>接收设置</summary>
+          <div className="computer-receive-settings">
+        {status?.receiveFolder && <div className="computer-setting-row"><span><strong>保存位置</strong><small>{status.receiveFolder}{status.autoOpen ? ' · 接收后打开' : ''}</small></span></div>}
+        {Capacitor.isNativePlatform() && <label className="computer-setting-row computer-switch">
+          <span><strong>系统分享后直接发送</strong><small>在手机分享菜单中选择「发送到电脑」。</small></span>
+          <input type="checkbox" role="switch" checked={quickShare} disabled={savingQuickShare} onChange={event => {
             const enabled = event.target.checked;
+            setSavingQuickShare(true);
+            setFeedback(undefined);
             void Preferences.set({ key: QUICK_SHARE_KEY, value: enabled ? '1' : '0' })
               .then(() => setQuickShare(enabled))
-              .catch(error => setFeedback({ text: message(error), error: true }));
-          }} /> 在系统分享菜单选择后直接发送
+              .catch(error => setFeedback({ tool: 'share', text: message(error), error: true }))
+              .finally(() => setSavingQuickShare(false));
+          }} />
         </label>}
+          </div>
+        </details>}
+        {feedbackFor('share')}
       </section>}
   </div>;
 }

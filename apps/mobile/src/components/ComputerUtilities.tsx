@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
 import { checkLatestRelease, compareReleaseVersions, releasePage, type RemoteRelease } from '../lib/updates';
+import { ComputerCardHeading } from './ComputerCardHeading';
+import { UpdateIcon } from './Icons';
 
 type CheckResult = { ms: number; error?: string };
 const checks = ['电脑回执', 'Codex 额度请求', '对话列表同步'] as const;
@@ -31,13 +33,14 @@ export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; 
     });
   }
 
-  return <div className="connection-diagnostics">
+  return <div className="connection-diagnostics" aria-busy={running}>
     <button className="secondary-button" type="button" disabled={running} onClick={run}>{running ? '正在自检…' : '连接自检'}</button>
-    {results && <dl className="computer-check-results" aria-live="polite">{checks.map(check => {
+    {results && <dl className="computer-check-results computer-reveal" aria-live="polite">{checks.map(check => {
       const result = results[check];
       return <div key={check}>
         <dt>{check}</dt>
-        <dd>{result ? `${result.error ? '失败' : '通过'} · ${Math.round(result.ms)} ms` : '检测中…'}</dd>
+        <dd className="computer-status-pill" data-tone={!result ? undefined : result.error ? 'error' : 'success'}>
+          {result ? `${result.error ? '失败' : '通过'} · ${Math.round(result.ms)} ms` : '检测中…'}</dd>
         {result?.error && <small>{result.error}</small>}
       </div>;
     })}</dl>}
@@ -67,14 +70,16 @@ export function UpdatePanel({ hostVersion }: { hostVersion: string }) {
   const mobileComparison = release ? compareReleaseVersions(mobileVersion, release.version) : undefined;
   const hostComparison = release ? compareReleaseVersions(hostVersion, release.version) : undefined;
   const requiredHostComparison = release?.minimumHost ? compareReleaseVersions(hostVersion, release.minimumHost) : undefined;
-  return <section className="computer-utility">
-    <div className="computer-utility-header">
-      <h2>版本与更新</h2>
+  return <section className="computer-utility" aria-busy={busy}>
+    <ComputerCardHeading title="版本与更新" icon={<UpdateIcon />}>
       <button className="secondary-button" type="button" disabled={busy} onClick={() => void check()}>{busy ? '正在检查…' : '检查更新'}</button>
-    </div>
-    <div className="utility-muted">手机 {mobileVersion || (native ? '待读取' : '浏览器预览')} · 电脑 {hostVersion || '待连接'}</div>
-    {error && <p role="status">{error} <a href={releasePage} target="_blank" rel="noreferrer">查看发布页</a></p>}
-    {release && <div className="computer-update-result" aria-live="polite">
+    </ComputerCardHeading>
+    <dl className="computer-versions">
+      <div className="computer-setting-row"><dt>手机</dt><dd>{mobileVersion || (native ? '待读取' : '浏览器预览')}</dd></div>
+      <div className="computer-setting-row"><dt>电脑</dt><dd>{hostVersion || '待连接'}</dd></div>
+    </dl>
+    {error && <p className="computer-feedback" data-tone="error" role="status">{error} <a href={releasePage} target="_blank" rel="noreferrer">查看发布页</a></p>}
+    {release && <div className="computer-update-result computer-reveal" aria-live="polite">
       <strong>GitHub 最新版 {release.version}</strong>
       {mobileComparison !== undefined && <small>{mobileComparison < 0 ? '手机有新版本' : '手机已是最新版本'}</small>}
       <small>{requiredHostComparison !== undefined && requiredHostComparison < 0

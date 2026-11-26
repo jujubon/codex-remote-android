@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, loadInboxImage, type InboxFile } from '../lib/deviceTools';
-import { ChevronDownIcon, CloseIcon, EyeIcon, MoreIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChevronDownIcon, CloseIcon, EyeIcon, MoreIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
+import { ComputerCardHeading } from './ComputerCardHeading';
 
 const INBOX_PAGE_SIZE = 6;
 
@@ -152,17 +153,16 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
   }
 
   return <section className="computer-utility computer-inbox">
-    <div className="computer-utility-header">
-      <h2>手机收件箱</h2>
+    <ComputerCardHeading title="手机收件箱" icon={<ArchiveIcon />}>
       <button className="inbox-disclosure secondary-button" type="button" aria-controls={bodyId} aria-expanded={open} onClick={() => {
         setOpen(!open);
         if (!open && !loading) { setVisibleCount(INBOX_PAGE_SIZE); void refresh(); }
         if (open) setSwiped(null);
       }}>{open ? '收起' : '展开'}<ChevronDownIcon aria-hidden="true" /></button>
-    </div>
+    </ComputerCardHeading>
     <div id={bodyId} hidden={!open} className="inbox-body">
       {open && <>
-      <label className="inbox-cleanup-setting">
+      <label className="computer-setting-row computer-switch">
         <span><strong>任务结束后自动清理附件</strong><small>仅影响之后上传到对话的文件。</small></span>
         <input type="checkbox" role="switch" aria-label="任务结束后自动清理附件" checked={deleteAfterTurn === true}
           disabled={pendingSetting || deleteAfterTurn === undefined} onChange={event => void changeAttachmentCleanup(event.target.checked)} />

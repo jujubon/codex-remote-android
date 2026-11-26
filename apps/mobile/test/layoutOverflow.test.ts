@@ -165,7 +165,7 @@ describe('Android system-bar safe areas', () => {
     expect((css.match(/env\(safe-area-inset-/g) ?? [])).toHaveLength(4);
     expect(declarations('.conversation-top-bar')).toMatch(/padding-top:\s*calc\(var\(--app-safe-top\) \+ 10px\)/);
     expect(declarations('.composer-shell')).toMatch(/var\(--app-safe-bottom\)/);
-    expect(declarations('.bottom-sheet')).toMatch(/var\(--app-safe-bottom\)/);
+    expect(declarations('.session-sheet')).toMatch(/var\(--app-safe-bottom\)/);
     expect(declarations('.error-toast')).toMatch(/var\(--app-safe-bottom\)/);
     expect(declarations('.agent-sheet-backdrop')).toMatch(/var\(--app-safe-bottom\)/);
     expect(declarations('.message-stream')).toMatch(/var\(--app-safe-left\)/);

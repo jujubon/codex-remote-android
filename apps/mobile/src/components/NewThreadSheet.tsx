@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption } from '../types/protocol';
 import { isAbsoluteHostPath } from '../lib/hostPath';
-import { ChevronDownIcon, ChevronUpIcon, CloseIcon } from './Icons';
+import { ChevronDownIcon, CloseIcon } from './Icons';
 
 interface NewThreadSheetProps {
   initialDirectory?: string;
@@ -16,6 +16,7 @@ interface NewThreadSheetProps {
 }
 
 export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
+  const dialog = useRef<HTMLDialogElement>(null);
   const [prompt, setPrompt] = useState('');
   const [cwd, setCwd] = useState(initialDirectory ?? '');
   const [mode, setMode] = useState<'existing' | 'projectless' | 'newProject'>(projectMenus && !initialDirectory ? 'projectless' : 'existing');
@@ -27,6 +28,8 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
   const [modelProvider, setModelProvider] = useState('');
   const [error, setError] = useState('');
 
+  useEffect(() => { if (!dialog.current?.open) dialog.current?.showModal(); }, []);
+
   function submit(event: FormEvent) {
     event.preventDefault();
     if (mode === 'existing' && projectMenus && !selectedDirectory) { setError('请选择电脑上的已有项目'); return; }
@@ -36,17 +39,18 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
     }
     if (desktopOnly && !prompt.trim()) { setError('请输入首条任务'); return; }
     if (mode === 'newProject' && !projectName.trim()) { setError('请输入项目名称'); return; }
-    if (onStart(selectedDirectory ?? cwd, model || undefined, modelProvider || undefined, prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined)) onClose();
+    if (onStart(selectedDirectory ?? cwd, model || undefined, modelProvider || undefined, prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined)) dialog.current?.close();
     else setError('任务创建请求未发送，请确认连接状态');
   }
 
   return (
-    <div className="sheet-backdrop" role="presentation" onClick={onClose}>
-      <section className="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="new-thread-title" onClick={(event) => event.stopPropagation()}>
+    <dialog className="session-dialog new-thread-dialog" ref={dialog} aria-labelledby="new-thread-title" onClose={onClose}
+      onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
+      <div className="session-sheet">
         <div className="sheet-handle" />
         <div className="sheet-title-row">
           <h2 id="new-thread-title">新聊天</h2>
-          <button className="icon-button nav-icon-button" type="button" onClick={onClose} aria-label="关闭"><CloseIcon /></button>
+          <button className="icon-button nav-icon-button" type="button" onClick={() => dialog.current?.close()} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
           {desktopOnly && <label><span>首条消息</span><textarea required placeholder="给 Codex 发消息…" rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
@@ -71,11 +75,12 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
             <input value={projectName} onChange={event => setProjectName(event.target.value)} maxLength={100} required />
             <small>保存到电脑个人文件夹的 CodexProjects 目录下。</small>
           </label>}
-          {!desktopOnly && <button className="advanced-toggle" type="button" onClick={() => setShowAdvanced((value) => !value)}>
-            <span>模型高级设置</span>{showAdvanced ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          {!desktopOnly && <button className="advanced-toggle" type="button" aria-expanded={showAdvanced} aria-controls="new-thread-model-settings"
+            onClick={() => setShowAdvanced((value) => !value)}>
+            <span>模型高级设置</span><ChevronDownIcon />
           </button>}
-          {showAdvanced && (
-            <div className="advanced-fields">
+          {!desktopOnly && (
+            <div className="advanced-fields computer-reveal" id="new-thread-model-settings" hidden={!showAdvanced}>
               <label>
                 <span>模型（可选）</span>
                 <select value={model} onChange={(event) => setModel(event.target.value)}>
@@ -86,13 +91,13 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
               <label><span>模型提供方（自定义端点时可选）</span><input value={modelProvider} onChange={(event) => setModelProvider(event.target.value)} placeholder="使用主机默认值" autoCapitalize="none" /></label>
             </div>
           )}
-          {error && <div className="form-error">{error}</div>}
+          {error && <div className="form-error" role="alert">{error}</div>}
           <div className="sheet-actions">
-            <button className="secondary-button" type="button" onClick={onClose}>取消</button>
+            <button className="secondary-button" type="button" onClick={() => dialog.current?.close()}>取消</button>
             <button className="primary-button" type="submit">开始聊天</button>
           </div>
         </form>
-      </section>
-    </div>
+      </div>
+    </dialog>
   );
 }
