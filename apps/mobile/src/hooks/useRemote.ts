@@ -1299,6 +1299,7 @@ export function useRemote(config: RemoteConfig | null) {
   const compactionTurnIdsRef = useRef<Record<string, Set<string>>>({});
   const pendingCompactionRequestsRef = useRef<Map<string, string>>(new Map());
   const pendingThreadStartRequestsRef = useRef<Set<string>>(new Set());
+  const sendReceipts = useRef<Map<string, (accepted: boolean) => void>>(new Map());
   const notifiedCompactionFailuresRef = useRef<Set<string>>(new Set());
   const seenCompactionItemsRef = useRef<Record<string, Map<string, boolean | undefined>>>({});
   const [historyByThread, setHistoryByThread] = useState<Record<string, CachedHistoryState>>({});
@@ -2099,9 +2100,11 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'prompt.desktopQueued':
+          if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           setQueueReceipt('已加入桌面队列 · ' + message.queueId.slice(-8));
           break;
         case 'prompt.queued':
+          if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           setPromptQueueByThread((current) => ({
             ...current,
             [message.threadId]: dedupeQueueItems([...(current[message.threadId] ?? []), message.item]),
@@ -2207,6 +2210,7 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'turn.started': {
+          if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
           const submittedText = stringValue(turn?.submittedText);
@@ -2304,6 +2308,7 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'error': {
+          if (message.requestId) sendReceipts.current.get(message.requestId)?.(false);
           if (message.requestId?.startsWith('turn_') && message.code !== 'submission_state_unknown') {
             const localId = `local_${message.requestId}`;
             setMessagesByThread(current => {
@@ -2460,6 +2465,7 @@ export function useRemote(config: RemoteConfig | null) {
           setPhase(nextPhase);
           setPhaseDetail(detail ?? '');
           if (nextPhase !== 'connected') {
+            for (const finish of sendReceipts.current.values()) finish(false);
             setArchiveSupported(false);
             for (const request of archiveRequests.current.values()) request.reject(new Error('连接已断开，请重连后查看已归档列表核对。'));
             setCodexReady(false);
@@ -2492,6 +2498,7 @@ export function useRemote(config: RemoteConfig | null) {
     return () => {
       cancelled = true;
       cancelUsageRequest();
+      for (const finish of sendReceipts.current.values()) finish(false);
       for (const request of archiveRequests.current.values()) request.reject(new Error('连接已关闭。'));
       socket?.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
@@ -2575,7 +2582,7 @@ export function useRemote(config: RemoteConfig | null) {
     if (!sent) setHistoryLoadingByThread((current) => ({ ...current, [threadId]: false }));
   }, [historyLoadingByThread]);
 
-  const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto'): Promise<boolean> => {
+  const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto', waitForReceipt = false): Promise<boolean> => {
     const threadId = selectedThreadRef.current;
     const text = content.trim();
     if (!threadId || (!text && files.length === 0)) return false;
@@ -2740,6 +2747,18 @@ export function useRemote(config: RemoteConfig | null) {
       setLastError('当前未连接，消息没有发送');
       return false;
     }
+    const receipt = waitForReceipt ? new Promise<boolean>((resolve) => {
+      const finish = (accepted: boolean) => {
+        window.clearTimeout(timer);
+        sendReceipts.current.delete(requestId);
+        resolve(accepted);
+      };
+      const timer = window.setTimeout(() => {
+        finish(false);
+        if (selectedThreadRef.current === threadId) setLastError('未收到电脑发送回执，草稿已保留。请先查看对话再重发。');
+      }, 30_000);
+      sendReceipts.current.set(requestId, finish);
+    }) : undefined;
     if (deliveryMode !== 'queue') {
       const asyncAnswer = describeAsyncAnswer(prompt);
       const optimistic: RemoteMessage = {
@@ -2761,7 +2780,7 @@ export function useRemote(config: RemoteConfig | null) {
       }));
       updateThreadState(threadId, 'running');
     }
-    return true;
+    return receipt ?? true;
   }, [changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
 
   const refreshGitDiff = useCallback(() => {

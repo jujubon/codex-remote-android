@@ -14,6 +14,8 @@ import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
 import { useHiddenProjects } from './lib/hiddenProjects';
+import { composerDraftKey, forgetComposerDrafts } from './lib/composerDraft';
+import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
@@ -158,6 +160,7 @@ export function App() {
     await stopCrossNetworkReader();
     if (Capacitor.isNativePlatform()) await CodexBackground.stop().catch(() => undefined);
     await clearRemoteConfig();
+    if (config) forgetComposerDrafts(cacheScope(config.serverUrl, config.pairingToken));
     threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
     setShowSettings(false);
     setConfig(null);
@@ -209,12 +212,14 @@ export function App() {
 
   const phaseDetail = remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? '已连接电脑，Codex 服务正在等待就绪' : '');
   const homeNav = <HomeNav page={homePage} onNavigate={setHomePage} />;
+  const draftKey = composerDraftKey(cacheScope(config.serverUrl, config.pairingToken), remote.selectedThread?.id ?? '');
 
   return (
     <>
       {remote.selectedThread ? (
         <ConversationScreen
-          key={remote.selectedThread.id}
+          key={draftKey}
+          draftKey={draftKey}
           onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
           onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}

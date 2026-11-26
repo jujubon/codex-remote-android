@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
+import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
 import { PlusIcon, SendIcon, StopIcon } from './Icons';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
@@ -21,6 +22,7 @@ interface CommandOption {
 }
 
 interface ComposerProps {
+  draftKey: string;
   connected: boolean;
   running: boolean;
   canInterrupt: boolean;
@@ -28,18 +30,20 @@ interface ComposerProps {
   desktopOnly?: boolean;
   models: ModelOption[];
   skills: SkillOption[];
-  onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode) => Promise<boolean> | boolean;
+  onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode, waitForReceipt?: boolean) => Promise<boolean> | boolean;
   onInterrupt: () => void;
 }
 
-export function Composer({ connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills }: ComposerProps) {
-  const [content, setContent] = useState('');
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills }: ComposerProps) {
+  const [content, setContent] = useState(() => readComposerDraft(draftKey));
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
+
+  useEffect(() => onComposerDraftSent(draftKey, () => setContent('')), [draftKey]);
 
   useEffect(() => {
     setSelectedDeliveryMode(running ? 'steer' : 'auto');
@@ -83,13 +87,19 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
 
   const deliveryMode = effectiveDeliveryMode(running, selectedDeliveryMode, canSteer);
 
+  function changeContent(value: string) {
+    setContent(value);
+    saveComposerDraft(draftKey, value);
+  }
+
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     if (sendingRef.current || sending || (!content.trim() && files.length === 0)) return;
     sendingRef.current = true;
     setSending(true);
     try {
-      if (await onSend(content, files, deliveryMode)) {
+      if (await onSend(content, files, deliveryMode, true)) {
+        clearSentComposerDraft(draftKey, content);
         setContent('');
         setFiles([]);
         if (deliveryMode === 'queue') setSelectedDeliveryMode('steer');
@@ -102,7 +112,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
   }
 
   function chooseCommand(value: string) {
-    setContent(value);
+    changeContent(value);
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(value.length, value.length);
@@ -182,7 +192,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(event) => setContent(event.target.value)}
+          onChange={(event) => changeContent(event.target.value)}
           onKeyDown={(event) => {
             if (shouldSubmitComposerShortcut({
               key: event.key,
