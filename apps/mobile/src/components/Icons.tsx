@@ -85,6 +85,10 @@ export function ArchiveIcon(props: IconProps) {
   return <IconBase {...props}><rect x="3" y="4" width="18" height="5" rx="1.3" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9m-9 4h4" /></IconBase>;
 }
 
+export function GaugeIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M4.2 18a9 9 0 1 1 15.6 0M12 13l4-4M7 13h.01m5-5h.01m5 5h.01" /><circle cx="12" cy="13" r="1" /></IconBase>;
+}
+
 export function TrashIcon(props: IconProps) {
   return <IconBase {...props}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" /></IconBase>;
 }

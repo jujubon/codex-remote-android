@@ -48,7 +48,7 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
       </section>
       <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
-      <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox} />
+      <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox} onAttachmentSettings={onSettings} />
       <UpdatePanel hostVersion={hostVersion} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}

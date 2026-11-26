@@ -15,6 +15,7 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
   const [localUrl, setLocalUrl] = useState(initialConfig?.localUrl ?? '');
   const [pairingToken, setPairingToken] = useState(initialConfig?.pairingToken ?? '');
   const [showToken, setShowToken] = useState(false);
+  const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState(initialConfig?.deleteAttachmentsAfterTurn === true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -28,6 +29,7 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
         serverUrl: normalizeServerUrl(serverUrl),
         localUrl,
         pairingToken,
+        deleteAttachmentsAfterTurn,
       });
       onSaved(saved);
     } catch (reason) {
@@ -94,6 +96,11 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
             </div>
           </label>
 
+          <label className="setup-attachment-setting">
+            <input type="checkbox" checked={deleteAttachmentsAfterTurn} onChange={event => setDeleteAttachmentsAfterTurn(event.target.checked)} />
+            <span><strong>任务结束后删除上传的附件</strong>
+              <small>开启后，新发送的附件会在电脑确认任务结束后从电脑和收件箱清除。</small></span>
+          </label>
           {error && <div className="form-error">{error}</div>}
 
           <div className="setup-actions">

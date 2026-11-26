@@ -58,6 +58,8 @@ const device = new DeviceTools(
 );
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
+const attachmentCleanup = setInterval(() => void gateway.cleanupCompletedAttachments().catch(error => console.warn("[files] attachment cleanup", error)), 30_000);
+attachmentCleanup.unref();
 
 const readerViewerPort = config.port === 65535 ? 8788 : config.port + 1;
 const reader = new ReaderStream(readerViewerPort, Date.now,
@@ -138,7 +140,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "access-control-allow-methods": "GET, POST, OPTIONS",
-        "access-control-allow-headers": "Authorization, Content-Type, X-CMR-Filename, X-CMR-Request-Id, ngrok-skip-browser-warning",
+        "access-control-allow-headers": "Authorization, Content-Type, X-CMR-Filename, X-CMR-Request-Id, X-CMR-Delete-After-Turn, ngrok-skip-browser-warning",
         "access-control-max-age": "600",
         "cache-control": "no-store",
       });
@@ -165,6 +167,7 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
           fileName,
           mimeType: request.headers["content-type"],
           contentLength: Number.isFinite(contentLength) ? contentLength : null,
+          deleteAfterTurn: request.headers["x-cmr-delete-after-turn"] === "1",
         });
         json(response, 201, upload);
         return;
@@ -305,6 +308,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[server] received ${signal}; shutting down`);
   clearInterval(heartbeat);
   clearInterval(fileCleanup);
+  clearInterval(attachmentCleanup);
   clearInterval(localListenerTimer);
   closeDiscovery?.();
   device.stopHold();

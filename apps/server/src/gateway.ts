@@ -139,6 +139,7 @@ export class MobileGateway {
   private membershipLoad?: Promise<void>;
   private membershipStamp?: string;
   private observingNativeDesktop = false;
+  private cleaningAttachments = false;
   private readonly nativeDesktopModelOverrides = new Map<string, { model: string; effort: string | null }>();
   private readonly mobileThreads = new Set<string>();
   private readonly subscribedMobileThreads = new Set<string>();
@@ -537,6 +538,7 @@ export class MobileGateway {
       projectCreation: this.config.desktopOnly,
       mobileManagedThreads: this.config.desktopOnly,
       archiveManagement: true,
+      attachmentCleanup: Boolean(this.files),
       version: HOST_VERSION,
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
@@ -1041,7 +1043,8 @@ export class MobileGateway {
             break;
           }
           const result = await this.submitPreparedTurn(threadId, turnParams, deliveryMode);
-          await Promise.all(queuedUploadIds.map((uploadId) => this.files?.commitUpload(uploadId)));
+          const turnId = attachmentTurnId(result, turnParams.expectedTurnId);
+          await Promise.all(queuedUploadIds.map((uploadId) => this.files?.commitUpload(uploadId, threadId, turnId)));
           const turnResult = asRecord(result);
           this.send(socket, {
             type: "turn.started",
@@ -1379,6 +1382,7 @@ export class MobileGateway {
       if (!queued) this.nativeDesktopTurns.set(threadId, null);
       const pinned: string[] = [];
       let retainUploads = false;
+      let submittedTurnId: string | undefined;
       try {
         const paths: string[] = [];
         for (const id of uploadIds) {
@@ -1404,6 +1408,7 @@ export class MobileGateway {
         const result = await this.runDesktopAction({ action: "native-send", threadId, prompt,
           ...(selected ? { model: selected.model } : {}), ...(selected?.effort ? { thinking: selected.effort } : {}) });
         retainUploads = true;
+        submittedTurnId = result.turn_id;
         this.pollNativeDesktopTurn(threadId, result.previous_turn_id ?? null, result.turn_id, Date.now() + 180_000);
         return { turn: { ...(result.turn_id ? { id: result.turn_id } : {}), ...(paths.length ? { submittedText: prompt } : {}) } };
       } catch (error) {
@@ -1421,7 +1426,7 @@ export class MobileGateway {
         throw error;
       } finally {
         if (retainUploads) {
-          const retained = await Promise.allSettled(pinned.map(id => this.files!.commitUpload(id)));
+          const retained = await Promise.allSettled(pinned.map(id => this.files!.commitUpload(id, threadId, submittedTurnId)));
           if (retained.some(item => item.status === "rejected" || !item.value)) console.warn("[files] could not retain a desktop upload");
         }
         for (const id of pinned) this.files?.releaseUpload(id);
@@ -1735,7 +1740,7 @@ export class MobileGateway {
           ? await this.submitPreparedTurn(item.threadId, item.turnParams, "steer")
           : await this.startQueuedTurn(item.threadId, item.turnParams);
       await this.promptQueue.complete(item.id);
-      await Promise.all(item.uploadIds.map((uploadId) => this.files?.commitUpload(uploadId)));
+      await Promise.all(item.uploadIds.map((uploadId) => this.files?.commitUpload(uploadId, item.threadId, attachmentTurnId(result))));
       this.broadcastQueue(item.threadId);
       return result;
     } catch (error) {
@@ -2150,6 +2155,24 @@ export class MobileGateway {
     });
   }
 
+  async cleanupCompletedAttachments(): Promise<void> {
+    if (!this.files || !this.bridge.ready || this.cleaningAttachments) return;
+    this.cleaningAttachments = true;
+    try {
+      const pending = await this.files.pendingAttachmentCleanup();
+      for (const threadId of new Set(pending.map(file => file.threadId))) {
+        const history = await this.readTurnsPage(threadId, null, 50).catch(() => null);
+        if (!history) continue;
+        for (const file of pending.filter(file => file.threadId === threadId)) {
+          if (!history.turns.some(turn => completedAttachmentTurn(turn, file))) continue;
+          await this.files.deleteCompletedAttachment(file, this.promptQueue?.protectedFilePaths() ?? new Set());
+        }
+      }
+    } finally {
+      this.cleaningAttachments = false;
+    }
+  }
+
   private async readTurnsPage(
     threadId: string,
     cursor: string | null,
@@ -2443,6 +2466,33 @@ export class MobileGateway {
       entry.count += 1;
     }
   }
+}
+
+function attachmentTurnId(result: unknown, expectedTurnId?: unknown): string | undefined {
+  const record = asRecord(result);
+  const id = asRecord(record?.turn)?.id ?? record?.turnId ?? expectedTurnId;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+export function completedAttachmentTurn(turn: Record<string, unknown>, file: { turnId?: string; path: string }): boolean {
+  if (!/^(completed|failed|interrupted|cancelled|canceled)$/i.test(String(turn.status))) return false;
+  if (file.turnId) return turn.id === file.turnId;
+  if (desktopAttachmentPaths({ turns: [turn] }).includes(file.path)) return true;
+  const heading = "\n\n手机上传到电脑的文件（请查看这些本地文件）：\n";
+  const line = `- ${JSON.stringify(file.path)}`;
+  return Array.isArray(turn.items) && turn.items.some(value => {
+    const item = asRecord(value);
+    if (!item || !String(item.type).toLowerCase().includes("user")) return false;
+    const parts: unknown[] = [item.text, item.message, asRecord(item.restoreMessage)?.text];
+    for (const content of [item.input, item.content]) {
+      if (Array.isArray(content)) parts.push(...content.map(part => asRecord(part)?.text));
+    }
+    return parts.some(part => {
+      if (typeof part !== "string") return false;
+      const marker = part.indexOf(heading);
+      return marker >= 0 && part.slice(marker + heading.length).trimEnd().split("\n").includes(line);
+    });
+  });
 }
 
 function canonicalContentImagePaths(item: Record<string, unknown>): string[] {

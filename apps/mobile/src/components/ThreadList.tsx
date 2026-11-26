@@ -3,7 +3,7 @@ import { threadStateLabel } from '../hooks/useRemote';
 import type { ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, GaugeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
@@ -133,6 +133,8 @@ export interface ThreadListPosition {
 interface ThreadListProps {
   position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
+  quota?: React.ReactNode;
+  onOpenQuota?: () => void;
   onArchive?: (thread: RemoteThread) => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   hiddenThreads: ReturnType<typeof useHiddenProjects>;
@@ -306,10 +308,11 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
   { value: 'all', label: '全部', hint: '显示所有对话，包括审阅记录。' },
 ];
 
-export function ThreadList({ position, onArchives, onArchive, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
+  const quotaRef = useRef<HTMLDialogElement>(null);
   const removeRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState(position.current.query);
   const [swipe, setSwipe] = useState<string | null>(null);
@@ -415,10 +418,23 @@ export function ThreadList({ position, onArchives, onArchive, threads, attention
         )}</nav>
         <div className="project-list-toolbar">
           <span>{flatList ? `${filtered.length} 个对话` : `${groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目 · ${filtered.length} 个对话`}</span>
-          <button type="button" className="manage-button" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}>管理</button>
+          <div className="project-list-actions">
+            {quota && <button type="button" className="nav-icon-button quota-button" aria-label="查看 Codex 额度" aria-haspopup="dialog"
+              onClick={() => { quotaRef.current?.showModal(); onOpenQuota?.(); }}><GaugeIcon /></button>}
+            <button type="button" className="manage-button" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}>管理</button>
+          </div>
         </div>
       </div>
 
+      {quota && <dialog className="session-dialog" ref={quotaRef} aria-labelledby="project-quota-title"
+        onClick={event => { if (event.target === event.currentTarget) quotaRef.current?.close(); }}>
+        <div className="session-sheet">
+          <header className="sheet-title-row"><h2 id="project-quota-title">Codex 额度</h2>
+            <button type="button" className="nav-icon-button" aria-label="关闭额度" onClick={() => quotaRef.current?.close()}><CloseIcon /></button>
+          </header>
+          {quota}
+        </div>
+      </dialog>}
       <dialog className="session-dialog management-dialog" ref={manageRef} aria-labelledby="project-management-title"
         onClick={event => { if (event.target === event.currentTarget) manageRef.current?.close(); }}>
         <div className="session-sheet list-management">

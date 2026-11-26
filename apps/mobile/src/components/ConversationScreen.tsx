@@ -47,7 +47,6 @@ interface ConversationScreenProps {
   running: boolean;
   canInterrupt: boolean;
   canSteer: boolean;
-  desktopOnly: boolean;
   currentTurnId?: string;
   historyHasMore: boolean;
   historyLoading: boolean;
@@ -68,7 +67,7 @@ interface ConversationScreenProps {
   onResolveApproval: (approvalId: string, decision: ApprovalDecision) => void;
   onDismissCompaction: () => void;
   onOpenThread: (threadId: string) => void;
-  onLoadAttachment: (path: string) => Promise<{ url: string; fileName: string; mimeType: string; size: number }>;
+  onLoadAttachment: (path: string, signal?: AbortSignal) => Promise<{ url: string; fileName: string; mimeType: string; size: number }>;
   onDownloadAttachment: (path: string) => void;
   onDiscardLocalMessage: (threadId: string, messageId: string) => void;
 }
@@ -358,7 +357,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
   const screenRef = useRef<HTMLElement>(null);
   const focusedAttention = useRef<AttentionTarget | undefined>(undefined);
   const streamRef = useRef<HTMLElement>(null);
@@ -868,7 +867,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           ))}
         </section>
       )}
-      <Composer draftKey={draftKey} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer draftKey={draftKey} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

@@ -53,31 +53,39 @@ interface LoadedAttachment {
   size: number;
 }
 
+type AttachmentLoader = (path: string, signal?: AbortSignal) => Promise<LoadedAttachment>;
+
 function AttachmentView({ attachment, onLoad, onDownload }: {
   attachment: RemoteAttachment;
-  onLoad?: (path: string) => Promise<LoadedAttachment>;
+  onLoad?: AttachmentLoader;
   onDownload?: (path: string) => void;
 }) {
   const [loaded, setLoaded] = useState<LoadedAttachment | null>(null);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (attachment.type !== 'image' || !onLoad) return;
-    let disposed = false;
+    const controller = new AbortController();
     let objectUrl = '';
-    onLoad(attachment.path).then((result) => {
-      if (disposed) { URL.revokeObjectURL(result.url); return; }
+    setLoaded(null);
+    setError('');
+    onLoad(attachment.path, controller.signal).then((result) => {
+      if (controller.signal.aborted) { URL.revokeObjectURL(result.url); return; }
       objectUrl = result.url;
       setLoaded(result);
     }).catch((reason) => {
-      if (!disposed) setError(reason instanceof Error ? reason.message : '图片加载失败');
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '图片加载失败');
     });
-    return () => { disposed = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [attachment.path, attachment.type, onLoad]);
+    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [attachment.path, attachment.type, onLoad, attempt]);
 
   if (attachment.type === 'image') {
     return (
       <figure className="message-attachment message-image-attachment">
-        {loaded ? <img src={loaded.url} alt={attachment.name} /> : <div className="attachment-loading">{error || '正在加载图片…'}</div>}
+        {error ? <div className="attachment-loading" role="status"><span>{error}</span>
+          <button type="button" className="secondary-button" onClick={() => setAttempt(value => value + 1)}>重试</button>
+        </div> : loaded ? <img src={loaded.url} alt={attachment.name} onError={() => setError('无法显示这张图片。')} />
+          : <div className="attachment-loading" role="status">{onLoad ? '正在加载图片…' : '图片预览不可用。'}</div>}
         <figcaption><span>{attachment.name}</span><button type="button" onClick={() => onDownload?.(attachment.path)}>下载</button></figcaption>
       </figure>
     );
@@ -91,7 +99,7 @@ function AttachmentView({ attachment, onLoad, onDownload }: {
 
 function AttachmentGallery({ message, onLoad, onDownload }: {
   message: RemoteMessage;
-  onLoad?: (path: string) => Promise<LoadedAttachment>;
+  onLoad?: AttachmentLoader;
   onDownload?: (path: string) => void;
 }) {
   if (!message.attachments?.length) return null;
@@ -105,7 +113,7 @@ interface MessageBubbleProps {
   message: RemoteMessage;
   agentTargets?: Array<{ id: string; label: string; state: string }>;
   onOpenAgent?: (agentId: string) => void;
-  onLoadAttachment?: (path: string) => Promise<LoadedAttachment>;
+  onLoadAttachment?: AttachmentLoader;
   onDownloadAttachment?: (path: string) => void;
 }
 

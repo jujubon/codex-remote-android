@@ -85,7 +85,9 @@ function fileLabel(file: InboxFile): string {
   return `${time} · ${size} · ${file.source === 'share' ? '手机分享' : '对话附件'}`;
 }
 
-export function InboxPanel({ config, onUse }: { config: RemoteConfig; onUse: (file: InboxFile) => void }) {
+export function InboxPanel({ config, onUse, onAttachmentSettings }: {
+  config: RemoteConfig; onUse: (file: InboxFile) => void; onAttachmentSettings: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [files, setFiles] = useState<InboxFile[]>();
   const [loading, setLoading] = useState(false);
@@ -114,7 +116,10 @@ export function InboxPanel({ config, onUse }: { config: RemoteConfig; onUse: (fi
     {open && <>
       <div className="computer-utility-header">
         <span className="utility-muted">{loading ? '正在读取…' : files ? `最近 ${files.length} 项` : ''}</span>
-        <button className="secondary-button" type="button" disabled={loading} onClick={() => void refresh()}>刷新</button>
+        <div className="inbox-toolbar-actions">
+          <button className="secondary-button" type="button" onClick={onAttachmentSettings}>附件保存设置</button>
+          <button className="secondary-button" type="button" disabled={loading} onClick={() => void refresh()}>刷新</button>
+        </div>
       </div>
       {error && <p role="status">{error}</p>}
       {!loading && !error && files?.length === 0 && <p>暂无收件。</p>}

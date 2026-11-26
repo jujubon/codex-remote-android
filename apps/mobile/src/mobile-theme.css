@@ -465,6 +465,9 @@
 
 .thread-browser { padding-bottom: 4px; }
 .project-list-toolbar { min-height: 44px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .8125rem; }
+.project-list-actions { display: flex; align-items: center; gap: 6px; }
+.project-list-actions .quota-button { color: var(--accent); }
+.session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
 .manage-button { min-height: 44px; padding: 0 8px; border: 0; border-radius: 9px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; }
 .manage-button:active { background: var(--accent-soft); }
 .thread-screen .thread-list { padding-bottom: 12px; }

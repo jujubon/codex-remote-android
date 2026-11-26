@@ -15,12 +15,14 @@ export const DEFAULT_SERVER_URL = '';
 
 const SERVER_URL_KEY = 'codex.remote.server-url';
 const LOCAL_URL_KEY = 'codex.remote.local-url';
+const ATTACHMENT_CLEANUP_KEY = 'codex.remote.delete-attachments-after-turn';
 const PAIRING_TOKEN_KEY = 'codex.remote.pairing-token';
 
 export interface RemoteConfig {
   serverUrl: string;
   localUrl?: string;
   pairingToken: string;
+  deleteAttachmentsAfterTurn?: boolean;
 }
 
 export function normalizeLocalUrl(input: string): string | undefined {
@@ -80,13 +82,14 @@ async function getSecureToken(): Promise<string> {
 }
 
 export async function loadRemoteConfig(): Promise<RemoteConfig | null> {
-  const [{ value: serverUrl }, { value: localUrl }, pairingToken] = await Promise.all([
+  const [{ value: serverUrl }, { value: localUrl }, pairingToken, { value: deleteAttachmentsAfterTurn }] = await Promise.all([
     Preferences.get({ key: SERVER_URL_KEY }),
     Preferences.get({ key: LOCAL_URL_KEY }),
     getSecureToken(),
+    Preferences.get({ key: ATTACHMENT_CLEANUP_KEY }),
   ]);
   if (!serverUrl || !pairingToken) return null;
-  return { serverUrl, localUrl: localUrl ?? undefined, pairingToken };
+  return { serverUrl, localUrl: localUrl ?? undefined, pairingToken, ...(deleteAttachmentsAfterTurn === 'true' && { deleteAttachmentsAfterTurn: true }) };
 }
 
 export async function saveRemoteConfig(config: RemoteConfig): Promise<RemoteConfig> {
@@ -102,17 +105,20 @@ export async function saveRemoteConfig(config: RemoteConfig): Promise<RemoteConf
   await Preferences.set({ key: SERVER_URL_KEY, value: serverUrl });
   if (localUrl) await Preferences.set({ key: LOCAL_URL_KEY, value: localUrl });
   else await Preferences.remove({ key: LOCAL_URL_KEY });
+  if (config.deleteAttachmentsAfterTurn) await Preferences.set({ key: ATTACHMENT_CLEANUP_KEY, value: 'true' });
+  else await Preferences.remove({ key: ATTACHMENT_CLEANUP_KEY });
   if (Capacitor.isNativePlatform()) {
     await SecureTokenPlugin.set({ key: PAIRING_TOKEN_KEY, value: pairingToken });
   } else {
     window.localStorage.setItem(PAIRING_TOKEN_KEY, pairingToken);
   }
-  return { serverUrl, localUrl, pairingToken };
+  return { serverUrl, localUrl, pairingToken, ...(config.deleteAttachmentsAfterTurn && { deleteAttachmentsAfterTurn: true }) };
 }
 
 export async function clearRemoteConfig(): Promise<void> {
   await Preferences.remove({ key: SERVER_URL_KEY });
   await Preferences.remove({ key: LOCAL_URL_KEY });
+  await Preferences.remove({ key: ATTACHMENT_CLEANUP_KEY });
   if (Capacitor.isNativePlatform()) {
     try {
       await SecureTokenPlugin.remove({ key: PAIRING_TOKEN_KEY });

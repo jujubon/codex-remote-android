@@ -25,15 +25,22 @@ export interface UploadRemoteFileOptions extends RemoteFileTransferConfig {
   file: Blob;
   fileName: string;
   signal?: AbortSignal;
+  deleteAfterTurn?: boolean;
   onProgress?: (sent: number, total: number) => void;
 }
 
-function apiUrl(serverUrl: string, path: string): string {
+export function fileServerUrl(serverUrl: string): string {
   const base = new URL(serverUrl.trim().replace(/\/+$/, "") + "/");
+  if (base.protocol === "ws:") base.protocol = "http:";
+  if (base.protocol === "wss:") base.protocol = "https:";
   if (base.protocol !== "http:" && base.protocol !== "https:") {
     throw new Error("文件传输服务器地址必须使用 http 或 https");
   }
-  return new URL(path.replace(/^\/+/, ""), base).toString();
+  return base.origin;
+}
+
+function apiUrl(serverUrl: string, path: string): string {
+  return new URL(path, fileServerUrl(serverUrl)).toString();
 }
 
 function safeResponseFileName(contentDisposition: string | null, fallback: string): string {
@@ -77,6 +84,7 @@ export function uploadRemoteFile(options: UploadRemoteFileOptions): Promise<Remo
     xhr.setRequestHeader("Authorization", `Bearer ${options.token}`);
     xhr.setRequestHeader("X-CMR-Filename", encodeURIComponent(options.fileName));
     xhr.setRequestHeader("Content-Type", options.file.type || "application/octet-stream");
+    if (options.deleteAfterTurn) xhr.setRequestHeader("X-CMR-Delete-After-Turn", "1");
     xhr.responseType = "text";
 
     const abort = () => xhr.abort();
@@ -167,9 +175,9 @@ export async function createRemoteDownloadTicket(
   return value;
 }
 
-export async function downloadHostFile(config: RemoteFileTransferConfig, path: string): Promise<RemoteDownloadResult> {
-  const ticket = await createRemoteDownloadTicket(config, path);
-  return downloadRemoteFile(config, ticket.id);
+export async function downloadHostFile(config: RemoteFileTransferConfig, path: string, signal?: AbortSignal): Promise<RemoteDownloadResult> {
+  const ticket = await createRemoteDownloadTicket(config, path, signal);
+  return downloadRemoteFile(config, ticket.id, signal);
 }
 
 
@@ -181,7 +189,7 @@ const CodexFileTransfer = registerPlugin<CodexFileTransferPluginApi>('CodexFileT
 export async function saveHostFile(config: RemoteFileTransferConfig, path: string): Promise<{ fileName: string; mimeType: string; size: number; uri?: string }> {
   const ticket = await createRemoteDownloadTicket(config, path);
   if (Capacitor.isNativePlatform()) {
-    return CodexFileTransfer.download({ serverUrl: config.serverUrl, token: config.token, ticketId: ticket.id });
+    return CodexFileTransfer.download({ serverUrl: fileServerUrl(config.serverUrl), token: config.token, ticketId: ticket.id });
   }
   const result = await downloadRemoteFile(config, ticket.id);
   triggerBrowserDownload(result);

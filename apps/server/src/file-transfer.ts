@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -11,6 +11,8 @@ const DEFAULT_DOWNLOAD_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_UPLOAD_TTL_MS = 60 * 60 * 1000;
 const MAX_FILENAME_BYTES = 180;
 const COMMITTED_UPLOAD_MARKER = ".codex-remote-committed";
+const CLEANUP_UPLOAD_MARKER = ".codex-remote-cleanup";
+const UPLOAD_ID = /^[A-Za-z0-9_-]{22,128}$/;
 
 export type FileTransferErrorCode =
   | "INVALID_ARGUMENT"
@@ -54,6 +56,17 @@ export interface UploadInput {
   fileName: string;
   mimeType?: string | null;
   contentLength?: number | null;
+  deleteAfterTurn?: boolean;
+}
+
+export interface AttachmentCleanup {
+  uploadId: string;
+  threadId: string;
+  turnId?: string;
+  path: string;
+  size: number;
+  modified: number;
+  inode: number;
 }
 
 export interface StoredUpload {
@@ -303,6 +316,7 @@ export class FileTransferManager {
       if (input.contentLength != null && size !== input.contentLength) {
         throw new FileTransferError("INVALID_ARGUMENT", "received byte count does not match contentLength", 400);
       }
+      if (input.deleteAfterTurn) await writeFile(resolve(storageDirectory, CLEANUP_UPLOAD_MARKER), "", { flag: "wx", mode: 0o600 });
       const createdAt = this.now();
       const record: UploadRecord = {
         uploadId,
@@ -341,14 +355,71 @@ export class FileTransferManager {
   }
 
   /** Marks an upload as durable because a persisted Codex message now references it. */
-  async commitUpload(uploadId: string): Promise<boolean> {
+  async commitUpload(uploadId: string, threadId?: string, turnId?: string): Promise<boolean> {
     const record = this.uploads.get(uploadId);
-    if (!record) return false;
-    if (!record.storageDirectory) return true;
-    const marker = await open(resolve(record.storageDirectory, COMMITTED_UPLOAD_MARKER), "a", 0o600);
+    if (record && !record.storageDirectory) return true;
+    const stored = await this.uploadFileOnDisk(uploadId);
+    if (!stored) return false;
+    const marker = await open(resolve(stored.directory, COMMITTED_UPLOAD_MARKER), "a", 0o600);
     await marker.close();
-    record.committed = true;
-    record.expiresAt = Number.MAX_SAFE_INTEGER;
+    if (record) {
+      record.committed = true;
+      record.expiresAt = Number.MAX_SAFE_INTEGER;
+    }
+    const cleanupPath = resolve(stored.directory, CLEANUP_UPLOAD_MARKER);
+    if (threadId && (await lstat(cleanupPath).catch(() => null))?.isFile()) {
+      const file = await lstat(stored.path);
+      const binding: AttachmentCleanup = {
+        uploadId, threadId, turnId, path: stored.path, size: file.size, modified: file.mtimeMs, inode: file.ino,
+      };
+      if (file.isFile()) await writeFile(cleanupPath, JSON.stringify(binding));
+    }
+    return true;
+  }
+
+  private async uploadFileOnDisk(uploadId: string) {
+    if (!UPLOAD_ID.test(uploadId)) return null;
+    const directory = resolve(this.uploadDirectory, uploadId);
+    if (await realpath(directory).catch(() => null) !== directory) return null;
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files = entries.filter(entry => entry.isFile() && ![COMMITTED_UPLOAD_MARKER, CLEANUP_UPLOAD_MARKER].includes(entry.name));
+    return files.length === 1 ? { directory, path: resolve(directory, files[0]!.name) } : null;
+  }
+
+  async pendingAttachmentCleanup(): Promise<AttachmentCleanup[]> {
+    const directories = await readdir(this.uploadDirectory, { withFileTypes: true });
+    const pending: AttachmentCleanup[] = [];
+    for (const { name } of directories.filter(entry => entry.isDirectory() && UPLOAD_ID.test(entry.name))) {
+      try {
+        const directory = resolve(this.uploadDirectory, name);
+        const marker = resolve(directory, CLEANUP_UPLOAD_MARKER);
+        const metadata = await lstat(marker);
+        if (!metadata.isFile() || !metadata.size || metadata.size > 8192 ||
+            await realpath(directory) !== directory) continue;
+        const row = JSON.parse(await readFile(marker, "utf8")) as AttachmentCleanup;
+        if (row.uploadId === name && typeof row.threadId === "string" && row.threadId &&
+            typeof row.path === "string" && dirname(row.path) === directory &&
+            ![COMMITTED_UPLOAD_MARKER, CLEANUP_UPLOAD_MARKER].includes(basename(row.path))) pending.push(row);
+      } catch { /* An unbound or invalid marker must not cause deletion. */ }
+    }
+    return pending;
+  }
+
+  async deleteCompletedAttachment(candidate: AttachmentCleanup, protectedPaths: ReadonlySet<string>): Promise<boolean> {
+    const stored = await this.uploadFileOnDisk(candidate.uploadId);
+    if (!stored || stored.path !== candidate.path || protectedPaths.has(stored.path) ||
+        [...this.uploads.values()].some(record => record.path === stored.path && record.pins > 0)) return false;
+    const marker = resolve(stored.directory, CLEANUP_UPLOAD_MARKER);
+    const actual = await lstat(stored.path).catch(() => null);
+    if (!actual?.isFile() || actual.size !== candidate.size || actual.mtimeMs !== candidate.modified ||
+        actual.ino !== candidate.inode || await realpath(stored.path).catch(() => null) !== stored.path ||
+        !(await lstat(marker).catch(() => null))?.isFile() ||
+        await readFile(marker, "utf8").catch(() => null) !== JSON.stringify(candidate)) return false;
+    await unlink(stored.path);
+    this.uploads.delete(candidate.uploadId);
+    this.trustedFiles.delete(stored.path);
+    await Promise.allSettled([unlink(marker), unlink(resolve(stored.directory, COMMITTED_UPLOAD_MARKER))]);
+    await rmdir(stored.directory).catch(() => undefined);
     return true;
   }
 
@@ -362,6 +433,10 @@ export class FileTransferManager {
     if (!size) throw new FileTransferError("INVALID_ARGUMENT", "文件为空。", 400);
     if (size > Math.min(this.maxUploadBytes, this.maxDownloadBytes))
       throw new FileTransferError("FILE_TOO_LARGE", "文件超出附件大小限制。", 413);
+    if (dirname(dirname(canonicalPath)) === this.uploadDirectory &&
+        (await lstat(resolve(dirname(canonicalPath), CLEANUP_UPLOAD_MARKER)).catch(() => null))?.isFile()) {
+      return this.receiveUpload({ stream: createReadStream(canonicalPath), fileName: basename(canonicalPath), contentLength: size });
+    }
     this.trustedFiles.set(canonicalPath, { canonicalPath, expiresAt: Number.MAX_SAFE_INTEGER });
     const fileName = basename(canonicalPath);
     const createdAt = this.now();
@@ -383,7 +458,7 @@ export class FileTransferManager {
         if (await realpath(root) !== root) continue;
         const children = await readdir(root, { withFileTypes: true });
         if (!children.some(child => child.name === COMMITTED_UPLOAD_MARKER && child.isFile())) continue;
-        const file = children.find(child => child.name !== COMMITTED_UPLOAD_MARKER && child.isFile());
+        const file = children.find(child => ![COMMITTED_UPLOAD_MARKER, CLEANUP_UPLOAD_MARKER].includes(child.name) && child.isFile());
         if (file) paths.push(resolve(root, file.name));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -509,11 +584,12 @@ export class FileTransferManager {
   /** Removes stale upload directories left on disk by a previous process. */
   async cleanupOrphanedUploads(protectedPaths: ReadonlySet<string> = new Set()): Promise<number> {
     const entries = await readdir(this.uploadDirectory, { withFileTypes: true });
+    const protectedDirectories = new Set([...protectedPaths].map(path => dirname(path)));
     let removed = 0;
     for (const entry of entries) {
       if (!entry.isDirectory() || !/^[A-Za-z0-9_-]{22,128}$/.test(entry.name) || this.uploads.has(entry.name)) continue;
       const directory = resolve(this.uploadDirectory, entry.name);
-      if (!isWithinRoot(this.uploadDirectory, directory) || protectedPaths.has(directory)) continue;
+      if (!isWithinRoot(this.uploadDirectory, directory) || protectedPaths.has(directory) || protectedDirectories.has(directory)) continue;
       const metadata = await lstat(directory);
       if (metadata.isSymbolicLink() || metadata.mtimeMs + this.uploadTtlMs > this.now()) continue;
       try {

@@ -15,6 +15,7 @@ import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
 import { useHiddenProjects, useHiddenThreads, useRemovedProjects } from './lib/hiddenProjects';
 import { composerDraftKey, forgetComposerDrafts } from './lib/composerDraft';
+import { forgetAttachmentDrafts } from './lib/attachmentDrafts';
 import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
@@ -174,7 +175,11 @@ export function App() {
     await stopCrossNetworkReader();
     if (Capacitor.isNativePlatform()) await CodexBackground.stop().catch(() => undefined);
     await clearRemoteConfig();
-    if (config) forgetComposerDrafts(cacheScope(config.serverUrl, config.pairingToken));
+    if (config) {
+      const scope = cacheScope(config.serverUrl, config.pairingToken);
+      forgetComposerDrafts(scope);
+      await forgetAttachmentDrafts(composerDraftKey(scope, '')).catch(() => undefined);
+    }
     threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
     setShowSettings(false);
     setConfig(null);
@@ -274,7 +279,6 @@ export function App() {
           running={remote.running}
           canInterrupt={remote.canInterrupt}
           canSteer={remote.canSteer}
-          desktopOnly={remote.desktopOnly}
           currentTurnId={remote.selectedTurnId}
           historyHasMore={Boolean(remote.selectedHistory?.hasMore)}
           historyLoading={remote.historyLoading}
@@ -319,6 +323,8 @@ export function App() {
           attention={remote.threadAttention}
           position={threadListPosition}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
+          quota={<AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} expanded />}
+          onOpenQuota={remote.refreshUsage}
           onArchive={remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}
           hiddenThreads={hiddenThreads}

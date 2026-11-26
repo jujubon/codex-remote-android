@@ -4,6 +4,7 @@ import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveCom
 import { CloseIcon, PlusIcon, SendIcon, StopIcon } from './Icons';
 import type { InboxFile } from '../lib/deviceTools';
 import { AttachmentDraftPreview, isImageFile, type AttachmentDraft } from './AttachmentDraftPreview';
+import { emptyAttachmentDraft, onAttachmentDraftChange, readAttachmentDraft, saveAttachmentDraft } from '../lib/attachmentDrafts';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
 
@@ -29,7 +30,6 @@ interface ComposerProps {
   running: boolean;
   canInterrupt: boolean;
   canSteer?: boolean;
-  desktopOnly?: boolean;
   models: ModelOption[];
   skills: SkillOption[];
   inboxFile?: InboxFile;
@@ -39,9 +39,12 @@ interface ComposerProps {
   onInterrupt: () => void;
 }
 
-export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills, inboxFile, loadInboxPreview, onClearInboxFile }: ComposerProps) {
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, models, skills, inboxFile: selectedInboxFile, loadInboxPreview, onClearInboxFile }: ComposerProps) {
   const [content, setContent] = useState(() => readComposerDraft(draftKey));
-  const [files, setFiles] = useState<File[]>([]);
+  const [attachmentDraft, setAttachmentDraft] = useState(emptyAttachmentDraft);
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftError, setDraftError] = useState('');
+  const { files, inbox: inboxFile } = attachmentDraft;
   const [preview, setPreview] = useState<AttachmentDraft | null>(null);
   const hasAttachments = files.length > 0 || Boolean(inboxFile);
   const [sending, setSending] = useState(false);
@@ -53,6 +56,24 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
   const sendingRef = useRef(false);
 
   useEffect(() => onComposerDraftSent(draftKey, () => setContent('')), [draftKey]);
+  useEffect(() => {
+    let active = true;
+    const stop = onAttachmentDraftChange(draftKey, setAttachmentDraft);
+    void readAttachmentDraft(draftKey).then(draft => { if (active) setAttachmentDraft(draft); })
+      .catch(() => { if (active) setDraftError('暂时无法读取附件草稿。'); })
+      .finally(() => { if (active) setDraftReady(true); });
+    return () => { active = false; stop(); };
+  }, [draftKey]);
+  useEffect(() => {
+    if (!draftReady || !selectedInboxFile) return;
+    if (selectedInboxFile.id !== inboxFile?.id) updateAttachments({ files, inbox: selectedInboxFile });
+    onClearInboxFile(selectedInboxFile.id);
+  }, [draftReady, files, inboxFile?.id, selectedInboxFile]);
+
+  function updateAttachments(draft: typeof attachmentDraft) {
+    setDraftError('');
+    void saveAttachmentDraft(draftKey, draft).catch(() => setDraftError('附件暂时只能保留在本次打开的 App 里。'));
+  }
 
   useEffect(() => {
     setSelectedDeliveryMode(running ? 'steer' : 'auto');
@@ -116,15 +137,18 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!connected || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
+    if (!connected || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
     sendingRef.current = true;
     setSending(true);
     try {
       if (await onSend(content, files, deliveryMode, true, inboxFile?.id)) {
         clearSentComposerDraft(draftKey, content);
         setContent('');
-        setFiles([]);
-        if (inboxFile) onClearInboxFile(inboxFile.id);
+        const latest = await readAttachmentDraft(draftKey).catch(() => attachmentDraft);
+        updateAttachments({
+          files: latest.files.filter(file => !files.includes(file)),
+          inbox: latest.inbox?.id === inboxFile?.id ? undefined : latest.inbox,
+        });
         if (deliveryMode === 'queue') setSelectedDeliveryMode('steer');
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
@@ -177,9 +201,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           </button>
         </div>
       )}
-      {files.length > 0 && desktopOnly && (!canSteer || deliveryMode === 'queue') && (
-        <p className="composer-file-hint">所选文件将上传到电脑，并以本地文件路径随消息发送。</p>
-      )}
+      {draftError && <p className="attachment-draft-status" role="status">{draftError}</p>}
       {suggestions.length > 0 && (
         <div className="command-palette" role="listbox" aria-label="斜杠命令">
           {suggestions.map((option) => (
@@ -198,7 +220,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
                 loadImage: isImageFile(inboxFile.fileName) ? signal => loadInboxPreview(inboxFile.id, signal) : undefined })}>
               <span>收件箱</span><strong>{inboxFile.fileName}</strong>
             </button>
-            <button className="attachment-chip-remove" type="button" disabled={sending} onClick={() => onClearInboxFile(inboxFile.id)}
+            <button className="attachment-chip-remove" type="button" disabled={sending} onClick={() => updateAttachments({ files })}
               aria-label={`移除 ${inboxFile.fileName}`}><CloseIcon /></button>
           </div>}
           {files.map((file, index) => (
@@ -208,7 +230,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
                 <span>{isImageFile(file.name, file.type) ? '图片' : '文件'}</span><strong>{file.name}</strong>
               </button>
               <button className="attachment-chip-remove" type="button" disabled={sending} aria-label={`移除 ${file.name}`}
-                onClick={() => setFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}><CloseIcon /></button>
+                onClick={() => updateAttachments({ files: files.filter((_, itemIndex) => itemIndex !== index), inbox: inboxFile })}><CloseIcon /></button>
             </div>
           ))}
         </div>
@@ -224,11 +246,11 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           onChange={(event) => {
             const selected = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = '';
-            if (selected.length) setFiles(current => [...current, ...selected]);
+            if (selected.length) updateAttachments({ files: [...files, ...selected], inbox: inboxFile });
           }}
-          disabled={!connected || sending}
+          disabled={!connected || sending || !draftReady}
         />
-        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>
+        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending || !draftReady} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>
         <textarea
           ref={textareaRef}
           value={content}
@@ -252,7 +274,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
-          disabled={!connected || sending || (!content.trim() && !hasAttachments)}
+          disabled={!connected || sending || !draftReady || (!content.trim() && !hasAttachments)}
           aria-label={sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >

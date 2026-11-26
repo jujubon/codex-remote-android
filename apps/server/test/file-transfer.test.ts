@@ -41,6 +41,30 @@ afterEach(async () => {
 });
 
 describe("file transfer primitives", () => {
+  it("recovers opted-in attachments after restart and keeps queued, reused and permanent files safe", async () => {
+    const { manager, root, uploads } = await fixture();
+    const upload = (fileName: string, deleteAfterTurn: boolean) =>
+      manager.receiveUpload({ fileName, deleteAfterTurn, stream: Readable.from([Buffer.from(fileName)]) });
+    const temporary = await upload("temporary.png", true);
+    const permanent = await upload("permanent.png", false);
+    await upload("unsubmitted.png", true);
+    await manager.commitUpload(temporary.uploadId, "chat-a", "turn-a");
+    await manager.commitUpload(permanent.uploadId, "chat-a", "turn-a");
+
+    const restarted = await FileTransferManager.create({ allowedRoots: [root], uploadDirectory: uploads });
+    const [candidate, ...others] = await restarted.pendingAttachmentCleanup();
+    expect(candidate).toMatchObject({ path: temporary.path, threadId: "chat-a", turnId: "turn-a" });
+    expect(others).toEqual([]);
+    expect(await restarted.deleteCompletedAttachment(candidate!, new Set([temporary.path]))).toBe(false);
+    const reused = await restarted.registerInboxFile(temporary.path);
+    expect(reused.path).not.toBe(temporary.path);
+    expect(await restarted.deleteCompletedAttachment(candidate!, new Set())).toBe(true);
+    await expect(stat(temporary.path)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(permanent.path, "utf8")).toBe("permanent.png");
+    expect(await readFile(reused.path, "utf8")).toBe("temporary.png");
+    expect(await restarted.committedUploadPaths()).toEqual([permanent.path]);
+  });
+
   it("streams small inbox images by receipt id and rejects changed or non-image entries", async () => {
     const { manager, root } = await fixture();
     const inbox = new FileInbox(join(root, "index.json"), manager);

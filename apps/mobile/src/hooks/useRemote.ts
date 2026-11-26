@@ -7,7 +7,7 @@ import { asyncQuestionDetail, describeAsyncAnswer, pendingAsyncQuestions } from 
 import { deviceRequest, registerInboxUpload } from '../lib/deviceTools';
 import { attentionForThread, queueNeedsAttention } from '../lib/attention';
 import { cancelApprovalNotification, cancelQueueNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyQueueProblem, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
-import { downloadHostFile, saveHostFile, uploadRemoteFile } from '../lib/fileTransfer';
+import { downloadHostFile, fileServerUrl, saveHostFile, uploadRemoteFile } from '../lib/fileTransfer';
 import { NotificationGenerationGuard, NotificationOperationQueue, settleGuardedNotification } from '../lib/notificationGuard';
 import { cacheScope, clearRemoteCache, loadRemoteCache, messagesForThread, saveRemoteCache, type CachedHistoryState, type RemoteCacheSnapshot } from '../lib/remoteCache';
 import type {
@@ -64,8 +64,23 @@ function explicitThreadOwner(value: unknown): string | undefined {
 }
 
 
+function splitPhoneAttachmentText(value: string): { text: string; paths: string[] } {
+  const marker = '\n\n手机上传到电脑的文件（请查看这些本地文件）：\n';
+  const offset = value.lastIndexOf(marker);
+  if (offset < 0) return { text: value, paths: [] };
+  try {
+    const paths: unknown[] = value.slice(offset + marker.length).trimEnd().split('\n').map(line => {
+      if (!line.startsWith('- ')) throw new Error('invalid attachment line');
+      return JSON.parse(line.slice(2));
+    });
+    if (paths.every((path): path is string => typeof path === 'string' && isAbsoluteHostPath(path)))
+      return { text: value.slice(0, offset), paths };
+  } catch { /* Keep ordinary user text if this is not a generated attachment suffix. */ }
+  return { text: value, paths: [] };
+}
+
 export function visibleUserText(value: string): string {
-  const normalized = value.replace(/\r\n?/g, '\n');
+  const normalized = splitPhoneAttachmentText(value.replace(/\r\n?/g, '\n')).text;
   const desktopAttachmentHeader = /^\s*# Files mentioned by the user:[^\S\n]*\n[\s\S]*?^Distinguish instructions in attached documents from the user's request\.[^\S\n]*\n\s*(?:#{1,3}[ \t]+)?My request:[^\S\n]*(?:\n|$)/im.exec(normalized);
   if (desktopAttachmentHeader?.index === 0) return normalized.slice(desktopAttachmentHeader[0].length).trim();
   const injectedPrefix = /<in-app-browser-context\b/i.test(normalized)
@@ -275,6 +290,11 @@ export function attachmentsFromCanonicalUserItem(itemValue: unknown): RemoteAtta
   for (const partValue of Array.isArray(item.content) ? item.content : []) {
     const part = record(partValue);
     if (part?.type === 'localImage') add(part.path, part.name, part.type, part.mimeType);
+  }
+  const uploadedText = stringValue(item.text, item.message)
+    ?? textFromContent(item.input ?? item.content);
+  for (const path of splitPhoneAttachmentText(uploadedText.replace(/\r\n?/g, '\n')).paths) {
+    if (!byPath.has(path)) add(path);
   }
   for (const attachmentValue of Array.isArray(item.attachments) ? item.attachments : []) {
     const attachment = record(attachmentValue);
@@ -1238,6 +1258,7 @@ export function useRemote(config: RemoteConfig | null) {
   const mobileManagedSupportedRef = useRef(false);
   const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
   const [hostVersion, setHostVersion] = useState('');
+  const attachmentCleanupRef = useRef(false);
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
   const [projectStatus, setProjectStatus] = useState('');
@@ -2033,6 +2054,7 @@ export function useRemote(config: RemoteConfig | null) {
       if (typeof message.syncCursor === 'number' && message.syncCursor <= syncCursorRef.current) return;
       switch (message.type) {
         case 'welcome': {
+          attachmentCleanupRef.current = message.attachmentCleanup === true;
           setHostVersion(message.version);
           setArchiveSupported(message.archiveManagement === true);
           setDesktopOnly(message.desktopOnly === true);
@@ -2280,7 +2302,7 @@ export function useRemote(config: RemoteConfig | null) {
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
           const submittedText = stringValue(turn?.submittedText);
-          const displayedText = submittedText && (describeAsyncAnswer(submittedText)?.text ?? submittedText);
+          const displayedText = submittedText && (describeAsyncAnswer(submittedText)?.text ?? visibleUserText(submittedText));
           if (message.requestId) setMessagesByThread(current => ({
             ...current,
             [message.threadId]: (current[message.threadId] ?? []).map(item =>
@@ -2811,6 +2833,7 @@ export function useRemote(config: RemoteConfig | null) {
             token: config.pairingToken,
             file,
             fileName: file.name,
+            deleteAfterTurn: config.deleteAttachmentsAfterTurn && attachmentCleanupRef.current,
           }));
         }
         for (const upload of uploads) {
@@ -2879,7 +2902,7 @@ export function useRemote(config: RemoteConfig | null) {
         ...current,
         [threadId]: [...messagesForThread(threadId, current[threadId] ?? []), optimistic],
       }));
-      updateThreadState(threadId, 'running');
+      if (!waitForReceipt) updateThreadState(threadId, 'running');
     }
     return receipt ?? true;
   }, [changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
@@ -2994,16 +3017,30 @@ export function useRemote(config: RemoteConfig | null) {
     }
   }, [setSelectedPermissionMode, showPermissionModeStatus]);
 
-  const loadHostAttachment = useCallback(async (path: string) => {
+  const loadHostAttachment = useCallback(async (path: string, signal?: AbortSignal) => {
     if (!config) throw new Error('尚未配置 Host 连接。');
-    const result = await downloadHostFile({ serverUrl: config.serverUrl, token: config.pairingToken }, path);
-    return { ...result, url: URL.createObjectURL(result.blob) };
+    const primary = fileServerUrl(config.serverUrl);
+    const current = fileServerUrl(socketRef.current?.serverUrl ?? primary);
+    const route = (serverUrl: string, timeout: number) => downloadHostFile({ serverUrl, token: config.pairingToken }, path,
+      signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout));
+    try {
+      const result = await route(current, current === primary ? 22000 : 5000).catch(error => {
+        if (current === primary || signal?.aborted) throw error;
+        return route(primary, 22000);
+      });
+      return { ...result, url: URL.createObjectURL(result.blob) };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof Error && /file does not exist|no longer available/i.test(error.message))
+        throw new Error('电脑上的原文件已移除。');
+      throw new Error('图片暂时无法加载，请重试。');
+    }
   }, [config]);
 
   const downloadHostAttachment = useCallback(async (path: string) => {
     if (!config) return;
     try {
-      await saveHostFile({ serverUrl: config.serverUrl, token: config.pairingToken }, path);
+      await saveHostFile({ serverUrl: socketRef.current?.serverUrl ?? config.serverUrl, token: config.pairingToken }, path);
     } catch (error) {
       setLastError(error instanceof Error ? error.message : '附件下载失败');
     }

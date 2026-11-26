@@ -7,7 +7,19 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import { MobileGateway, accountUsage, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
+import { MobileGateway, accountUsage, completedAttachmentTurn, desktopAttachmentPaths, isAbsoluteHostPath, projectDesktopLiveThread } from "../src/gateway.js";
+
+it("cleans only completed turns tied to the opted-in attachment", () => {
+  const path = "D:\\PhoneDrop\\attachment.png";
+  const text = `查看图片\n\n手机上传到电脑的文件（请查看这些本地文件）：\n- ${JSON.stringify(path)}`;
+  const item = { type: "userMessage", content: [{ type: "text", text }] };
+  const turn = { id: "turn-a", status: "completed", items: [item] };
+  expect(completedAttachmentTurn(turn, { path })).toBe(true);
+  expect(completedAttachmentTurn(turn, { path, turnId: "turn-a" })).toBe(true);
+  expect(completedAttachmentTurn(turn, { path, turnId: "turn-b" })).toBe(false);
+  expect(completedAttachmentTurn({ ...turn, status: "inProgress" }, { path })).toBe(false);
+  expect(completedAttachmentTurn({ ...turn, items: [{ ...item, type: "agentMessage" }] }, { path })).toBe(false);
+});
 import type { ServerConfig } from "../src/config.js";
 import { PromptQueueStore } from "../src/prompt-queue.js";
 import { DesktopActionError, type desktopAction } from "../src/windows-desktop.js";

@@ -160,7 +160,7 @@ export type ClientMessage =
 
 export type ServerMessagePayload =
   | ArchiveResult
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; mobileManagedThreads?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; mobileManagedThreads?: boolean; archiveManagement?: boolean; attachmentCleanup?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }
