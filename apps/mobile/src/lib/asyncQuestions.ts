@@ -34,6 +34,23 @@ export function asyncQuestionDetail(message: RemoteMessage | undefined) {
   }
 }
 
+export function isAsyncQuestionTranscript(message: RemoteMessage): boolean {
+  if (message.status !== 'complete' || message.attachments?.length) return false;
+  const item = asyncQuestionDetail(message);
+  if (!item) return false;
+  // The question item carries a text rendering for clients that have no question UI.
+  // Only suppress that exact rendering, keeping prose that accompanies a question.
+  const blocks = item.questions.map(question => {
+    if (!question || typeof question.title !== 'string' || !question.title.trim()) return null;
+    const options: string[] = Array.isArray(question.options)
+      ? question.options.filter((option: unknown): option is string => typeof option === 'string')
+      : [];
+    return [question.title, ...options.map(option => `- ${option}`)].join('\n');
+  });
+  const normalize = (text: string) => text.replace(/\r\n/g, '\n').split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+  return blocks.every(block => block !== null) && normalize(message.content) === normalize(blocks.join('\n'));
+}
+
 export function pendingAsyncQuestions(messages: RemoteMessage[]): AsyncQuestion[] {
   const answered = new Set(messages.flatMap(message => message.status === 'complete'
     && (!message.id.startsWith('local_') || message.deliveryAcknowledged === true) ? message.asyncAnswerIds ?? [] : []));

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption } from '../types/protocol';
 import { ApprovalCard, AsyncQuestionCard } from './ApprovalCard';
-import { encodeAsyncAnswer, pendingAsyncQuestions } from '../lib/asyncQuestions';
+import { encodeAsyncAnswer, isAsyncQuestionTranscript, pendingAsyncQuestions } from '../lib/asyncQuestions';
 import { CompactionStatusBar } from './CompactionStatusBar';
 import { isContextCompactionItem, orderConversationTurns } from '../hooks/useRemote';
 import { Composer } from './Composer';
@@ -19,6 +19,7 @@ import { approvalAttention, type AttentionTarget } from '../lib/attention';
 interface ConversationScreenProps {
   draftKey: string;
   inboxFile?: InboxFile;
+  loadInboxPreview: (id: string, signal: AbortSignal) => Promise<Blob>;
   onClearInboxFile: (id: string) => void;
   attention?: AttentionTarget;
   attentionStatus?: AttentionTarget;
@@ -360,7 +361,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
   const screenRef = useRef<HTMLElement>(null);
   const focusedAttention = useRef<AttentionTarget | undefined>(undefined);
   const streamRef = useRef<HTMLElement>(null);
@@ -382,7 +383,8 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
   const [expandedToolGroupIds, setExpandedToolGroupIds] = useState<Set<string>>(() => new Set());
 
   const visibleMessages = useMemo(() => {
-    const visible = messages.filter(message => message.status === 'failed' || !isContextMessage(message));
+    const visible = messages.filter(message => (message.status === 'failed' || !isContextMessage(message))
+      && (!thread.mobileManaged || selectedAgentId || !isAsyncQuestionTranscript(message)));
     if (compaction?.phase !== 'succeeded') return visible;
     const existing = visible.map(message => message.turnId === compaction.turnId && isContextCompactionItem({ type: message.itemType })).lastIndexOf(true);
     if (existing >= 0) {
@@ -395,7 +397,7 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
       });
     }
     return visible;
-  }, [messages, compaction, thread.id]);
+  }, [messages, compaction, thread.id, thread.mobileManaged, selectedAgentId]);
   const reasoning = useMemo(() => latestReasoning(messages, currentTurnId), [currentTurnId, messages]);
   const conversationEntries = useMemo(
     () => resolveConversationEntryAgentNames(groupConversationMessages(orderConversationTurns(visibleMessages)), threadSubagents),
@@ -672,7 +674,7 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
                 {historyLoading ? '正在载入更早记录…' : '载入更早记录'}
               </button>
             )}
-            {visibleMessages.length === 0 && approvals.length === 0 && (
+            {visibleMessages.length === 0 && approvals.length === 0 && questions.length === 0 && (
               <div className="conversation-empty">
                 <img src="/logo.svg?v=4" alt="" />
                 <h2>开始对话</h2>
@@ -822,7 +824,7 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
           ))}
         </section>
       )}
-      <Composer draftKey={draftKey} inboxFile={inboxFile} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer draftKey={draftKey} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

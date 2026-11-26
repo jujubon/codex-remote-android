@@ -2,11 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { applyPendingMessageDeltas, canonicalProjectedItems, compactionStatusFromThreadPayload, consumeThreadActivationIntent, contextCompactionItemIdsFromThreadPayload, createSelectedMessagesSelector, dedupeMessages, eventThreadId, isActiveTurnStatus, normalizeThreadPayload, optimisticAttachmentsFromUploads, permissionModeLabel, reconcileMessages, reconcileThreadSnapshot, shouldApplyPermissionModeSnapshot, shouldNotifyThreadCompletion, staleApprovalWireIds, stateFromStatus, turnIdsAfterSnapshot, visibleUserText } from '../src/hooks/useRemote';
 import type { RemoteMessage } from '../src/types/protocol';
 import { canDiscardLocalMessage, orderConversationTurns } from '../src/hooks/useRemote';
-import { encodeAsyncAnswer, pendingAsyncQuestions } from '../src/lib/asyncQuestions';
+import { encodeAsyncAnswer, isAsyncQuestionTranscript, pendingAsyncQuestions } from '../src/lib/asyncQuestions';
 
 function user(id: string, content: string, createdAt: number): RemoteMessage {
   return { id, threadId: 'thread', role: 'user', content, createdAt, status: 'complete' };
 }
+
+it('distinguishes the async question text mirror from actual conversation replies', () => {
+  const questions = [{ title: 'Choose one', options: ['First', 'Second'] }];
+  const [mirror, commentary, reply] = normalizeThreadPayload({ id: 'thread', turns: [{
+    id: 'turn', status: 'completed', items: [
+      { id: 'question', type: 'agentMessage', text: 'Choose one\n- First\n- Second', questions },
+      { id: 'commentary', type: 'agentMessage', text: 'I have checked the results. Please choose.', questions },
+      { id: 'final', type: 'agentMessage', text: 'The task succeeded.' },
+    ],
+  }] }).messages;
+  expect(isAsyncQuestionTranscript(mirror!)).toBe(true);
+  expect(isAsyncQuestionTranscript(commentary!)).toBe(false);
+  expect(isAsyncQuestionTranscript(reply!)).toBe(false);
+  expect(pendingAsyncQuestions([mirror!])).toHaveLength(1);
+});
 
 it('keeps an unanswered question through partial history, retries, and local delivery', () => {
   const questionItem = { id: 'question', type: 'agentMessage', text: 'Choose one', questions: [{ title: 'Choose one', options: ['First', 'Second'] }] };

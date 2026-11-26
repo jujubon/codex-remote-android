@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
 import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
-import { PlusIcon, SendIcon, StopIcon } from './Icons';
+import { CloseIcon, PlusIcon, SendIcon, StopIcon } from './Icons';
 import type { InboxFile } from '../lib/deviceTools';
+import { AttachmentDraftPreview, isImageFile, type AttachmentDraft } from './AttachmentDraftPreview';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
 
@@ -32,14 +33,16 @@ interface ComposerProps {
   models: ModelOption[];
   skills: SkillOption[];
   inboxFile?: InboxFile;
+  loadInboxPreview: (id: string, signal: AbortSignal) => Promise<Blob>;
   onClearInboxFile: (id: string) => void;
   onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode, waitForReceipt?: boolean, inboxId?: string) => Promise<boolean> | boolean;
   onInterrupt: () => void;
 }
 
-export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills, inboxFile, onClearInboxFile }: ComposerProps) {
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills, inboxFile, loadInboxPreview, onClearInboxFile }: ComposerProps) {
   const [content, setContent] = useState(() => readComposerDraft(draftKey));
   const [files, setFiles] = useState<File[]>([]);
+  const [preview, setPreview] = useState<AttachmentDraft | null>(null);
   const hasAttachments = files.length > 0 || Boolean(inboxFile);
   const [sending, setSending] = useState(false);
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
@@ -189,19 +192,28 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
       )}
       {hasAttachments && (
         <div className="attachment-strip">
-          {inboxFile && <button type="button" disabled={sending} onClick={() => onClearInboxFile(inboxFile.id)} aria-label={`移除 ${inboxFile.fileName}`}>
-            <span>收件箱</span><strong>{inboxFile.fileName}</strong><small>×</small>
-          </button>}
-          {files.map((file, index) => (
-            <button key={`${file.name}:${file.size}:${index}`} type="button" disabled={sending} aria-label={`移除 ${file.name}`}
-              onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
-              <span>{file.type.startsWith('image/') ? '图片' : '文件'}</span>
-              <strong>{file.name}</strong>
-              <small>×</small>
+          {inboxFile && <div className="attachment-chip">
+            <button className="attachment-chip-body" type="button" aria-label={`预览 ${inboxFile.fileName}`}
+              onClick={() => setPreview({ name: inboxFile.fileName, size: inboxFile.size,
+                loadImage: isImageFile(inboxFile.fileName) ? signal => loadInboxPreview(inboxFile.id, signal) : undefined })}>
+              <span>收件箱</span><strong>{inboxFile.fileName}</strong>
             </button>
+            <button className="attachment-chip-remove" type="button" disabled={sending} onClick={() => onClearInboxFile(inboxFile.id)}
+              aria-label={`移除 ${inboxFile.fileName}`}><CloseIcon /></button>
+          </div>}
+          {files.map((file, index) => (
+            <div className="attachment-chip" key={`${file.name}:${file.size}:${index}`}>
+              <button className="attachment-chip-body" type="button" aria-label={`预览 ${file.name}`}
+                onClick={() => setPreview({ name: file.name, size: file.size, file })}>
+                <span>{isImageFile(file.name, file.type) ? '图片' : '文件'}</span><strong>{file.name}</strong>
+              </button>
+              <button className="attachment-chip-remove" type="button" disabled={sending} aria-label={`移除 ${file.name}`}
+                onClick={() => setFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}><CloseIcon /></button>
+            </div>
           ))}
         </div>
       )}
+      {preview && <AttachmentDraftPreview draft={preview} onClose={() => setPreview(null)} />}
       <form className={`composer${multiline ? ' composer-multiline' : ''}`} onSubmit={(event) => void submit(event)}>
         <div ref={measureRef} className="composer-measure" aria-hidden="true">{content}{'\u200b'}</div>
         <input

@@ -19,7 +19,7 @@ import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
-import type { InboxFile } from './lib/deviceTools';
+import { loadInboxImage, type InboxFile } from './lib/deviceTools';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 
@@ -246,6 +246,7 @@ export function App() {
           key={draftKey}
           draftKey={draftKey}
           inboxFile={inboxSelection?.threadId === remote.selectedThread.id ? inboxSelection.file : undefined}
+          loadInboxPreview={(id, signal) => loadInboxImage(config, id, false, signal)}
           onClearInboxFile={id => setInboxSelection(current => current?.file.id === id ? undefined : current)}
           attention={attention?.threadId === remote.selectedThread.id ? attention.target : undefined}
           attentionStatus={remote.threadAttention[remote.selectedThread.id]}
