@@ -54,11 +54,12 @@ Android 0.9.2 搭配 Windows 配套服务 0.9.1 使用。从首页底部点「�
 - **锁屏与熄屏挂机**。「锁定电脑」请求 Windows 锁屏。「熄屏挂机」可选择 30 分钟、1 小时或 2 小时，也可从运行中的聊天保持到当前任务结束（最多 2 小时）。期间保持主机唤醒，鼠标键盘能再次点亮屏幕。到期、任务结束、停止挂机或退出 Windows 服务后，Windows 恢复原先的休眠策略。
 - **分享**。从 Android 分享菜单选择「发送到电脑」来发送图片、PDF 或网页链接。接收后保存在 Windows 当前用户桌面下的 `PhoneDrop` 目录，单个文件上限 64 MB。可在「设备工具」开启选中分享入口后直接发送。设备工具与聊天附件使用各自的存储。
 
-如需修改收件位置，在电脑的 `%LOCALAPPDATA%\CodexMobileRemote\device-tools.json` 写入以下设置。目录应使用支持硬链接的本地文件系统（例如 NTFS）。`autoOpen` 默认关闭，开启后会尝试打开收到的常见图片、PDF 或网页链接。链接也会作为文本保存在收件目录。配置在下一次请求时读取。
+如需修改收件位置，在电脑的 `%LOCALAPPDATA%\CodexMobileRemote\device-tools.json` 写入以下设置。手机分享使用 `receiveFolder`，聊天上传使用 `chatAttachmentFolder`。目录应使用支持硬链接的本地文件系统（例如 NTFS）。`autoOpen` 默认关闭，开启后会尝试打开收到的常见图片、PDF 或网页链接。链接也会作为文本保存在收件目录。更改聊天附件目录后重新启动 Windows 配套服务，分享设置会在下一次请求时读取。手动配置的 `CMR_UPLOAD_DIRECTORY` 优先于 `chatAttachmentFolder`。
 
 ```json
 {
-  "receiveFolder": "D:\\PhoneDrop",
+  "receiveFolder": "D:\\PhoneDrop\\手机分享",
+  "chatAttachmentFolder": "D:\\PhoneDrop\\Codex 对话附件",
   "autoOpen": false
 }
 ```

@@ -12,13 +12,33 @@ type Settings = { folder: string; autoOpen: boolean };
 type Receipt = { fileName: string; opened: boolean };
 type NativeReply = { ok: boolean; text?: string };
 type PowerHold = { child: ChildProcessWithoutNullStreams; until: number; tick: NodeJS.Timeout };
-type SettingsDocument = { receiveFolder?: unknown; autoOpen?: unknown };
+type SettingsDocument = { receiveFolder?: unknown; autoOpen?: unknown; chatAttachmentFolder?: unknown };
 const CLIPBOARD_BYTES = 64 * 1024;
 const RECEIPT_TTL = 30 * 60_000;
 const windowsDeviceScript = fileURLToPath(new URL("../windows/device_tools.py", import.meta.url));
 
 function invalid(message: string): never {
   throw new FileTransferError("INVALID_ARGUMENT", message, 400);
+}
+
+async function readSettingsDocument(settingsFile: string): Promise<SettingsDocument> {
+  let settings: unknown;
+  try { settings = JSON.parse((await readFile(settingsFile, "utf8")).replace(/^\uFEFF/, "")); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error("电脑上的 device-tools.json 无法读取，请检查配置。", { cause: error });
+  }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return invalid("电脑上的收件设置应为 JSON 对象。");
+  return settings as SettingsDocument;
+}
+
+export async function readChatAttachmentFolder(settingsFile: string): Promise<string | undefined> {
+  const { chatAttachmentFolder } = await readSettingsDocument(settingsFile);
+  if (chatAttachmentFolder === undefined) return undefined;
+  if (typeof chatAttachmentFolder !== "string" || !isAbsolute(chatAttachmentFolder)) {
+    return invalid("Codex 对话附件目录需要使用绝对路径。");
+  }
+  return resolve(chatAttachmentFolder);
 }
 
 function sharedName(value: string): string {
@@ -97,13 +117,7 @@ export class DeviceTools {
   ) {}
 
   async settings(): Promise<Settings> {
-    let settings: SettingsDocument;
-    try { settings = JSON.parse((await readFile(this.settingsFile, "utf8")).replace(/^\uFEFF/, "")) as SettingsDocument; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { folder: this.defaultFolder, autoOpen: false };
-      throw new Error("电脑上的 device-tools.json 无法读取，请检查配置。");
-    }
-    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return invalid("电脑上的收件设置应为 JSON 对象。");
+    const settings = await readSettingsDocument(this.settingsFile);
     const folder = settings.receiveFolder ?? this.defaultFolder;
     if (typeof folder !== "string" || !isAbsolute(folder)) return invalid("电脑上的收件目录需要使用绝对路径。");
     return { folder: resolve(folder), autoOpen: settings.autoOpen === true };

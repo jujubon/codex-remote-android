@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceTools, storeDrop } from "../src/device-tools.js";
+import { DeviceTools, readChatAttachmentFolder, storeDrop } from "../src/device-tools.js";
 
 const temporary: string[] = [];
 
@@ -53,6 +53,19 @@ describe("PhoneDrop persistence", () => {
     await expect(tools.settings()).resolves.toEqual({ folder: path, autoOpen: true });
     await writeFile(config, JSON.stringify({ receiveFolder: "../other" }));
     await expect(tools.settings()).rejects.toThrow("绝对路径");
+  });
+
+  it("supports distinct folders for phone shares and Codex attachments", async () => {
+    const { config, path, tools } = await fixture();
+    const receiveFolder = join(path, "手机分享");
+    const chatAttachmentFolder = join(path, "Codex 对话附件");
+    await expect(readChatAttachmentFolder(config)).resolves.toBeUndefined();
+    await writeFile(config, "\uFEFF" + JSON.stringify({ receiveFolder, chatAttachmentFolder }));
+    await expect(tools.settings()).resolves.toEqual({ folder: receiveFolder, autoOpen: false });
+    await expect(readChatAttachmentFolder(config)).resolves.toBe(chatAttachmentFolder);
+    await writeFile(config, JSON.stringify({ receiveFolder, chatAttachmentFolder: "relative" }));
+    await expect(readChatAttachmentFolder(config)).rejects.toThrow("绝对路径");
+    await expect(tools.settings()).resolves.toMatchObject({ folder: receiveFolder });
   });
 
   it("rejects a task-bound wake request before invoking Windows if the turn is unknown", async () => {

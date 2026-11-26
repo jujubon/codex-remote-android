@@ -5,8 +5,8 @@ import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { ReaderStream } from "./reader-stream.js";
 import { LocalReaderError, localReaderLauncher } from "./local-reader.js";
-import { DeviceTools } from "./device-tools.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { DeviceTools, readChatAttachmentFolder } from "./device-tools.js";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { AppServerBridge } from "./app-server-bridge.js";
 import { authenticateBearer } from "./auth.js";
 import { buildCodexEnvironment, HOST_VERSION, loadConfig } from "./config.js";
@@ -28,13 +28,27 @@ const desktopIpc = new DesktopIpcBridge(
   config.desktopIpcEndpoint,
 );
 const promptQueue = await PromptQueueStore.create(config.promptQueueFile);
-if (config.fileRoots.includes(config.uploadDirectory)) await mkdir(config.uploadDirectory, { recursive: true, mode: 0o700 });
-const files = await FileTransferManager.create({ allowedRoots: config.fileRoots, uploadDirectory: config.uploadDirectory });
+const deviceSettingsPath = join(dirname(config.promptQueueFile), "device-tools.json");
+const attachmentFolder = process.env.CMR_UPLOAD_DIRECTORY ? undefined : await readChatAttachmentFolder(deviceSettingsPath);
+const uploadDirectory = attachmentFolder ?? config.uploadDirectory;
+const allowedRoots = config.fileRoots.filter(root => root !== config.uploadDirectory || uploadDirectory === config.uploadDirectory);
+if (attachmentFolder) {
+  if (uploadDirectory !== config.uploadDirectory && config.fileRoots.includes(config.uploadDirectory)) {
+    const previous = await stat(config.uploadDirectory).catch(error => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (previous?.isDirectory()) allowedRoots.push(config.uploadDirectory);
+  }
+  if (!allowedRoots.includes(uploadDirectory)) allowedRoots.push(uploadDirectory);
+}
+if (allowedRoots.includes(uploadDirectory)) await mkdir(uploadDirectory, { recursive: true, mode: 0o700 });
+const files = await FileTransferManager.create({ allowedRoots, uploadDirectory });
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue);
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
-  join(dirname(config.promptQueueFile), "device-tools.json"),
+  deviceSettingsPath,
   process.env.CMR_PHONE_DROP_DIR,
   threadId => gateway.currentTurnForPowerHold(threadId),
   (threadId, turnId) => gateway.turnFinishedForPowerHold(threadId, turnId),
