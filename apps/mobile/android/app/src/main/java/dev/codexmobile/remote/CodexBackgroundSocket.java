@@ -456,6 +456,8 @@ final class CodexBackgroundSocket {
             observeThreadState(threadId, stateFromStatus(params.opt("status")));
         } else if ("turn/completed".equals(method)) {
             handleTurnCompleted(threadId, params.optJSONObject("turn"));
+        } else if ("error".equals(method) && params.optBoolean("quotaLimited")) {
+            observeThreadState(threadId, "quota_limited");
         } else if (("thread/started".equals(method) || "desktop/threadSnapshot".equals(method)) && params.optJSONObject("thread") != null) {
             handleThread(params.optJSONObject("thread"));
         }
@@ -532,7 +534,8 @@ final class CodexBackgroundSocket {
         if (threadId == null || threadId.isEmpty()) return;
         cancelCompletionFallback(threadId);
         String status = turn == null ? "completed" : turn.optString("status", "completed").toLowerCase(Locale.ROOT);
-        threadStates.put(threadId, status.contains("fail") ? "error" : "idle");
+        boolean quota = turn != null && turn.optBoolean("quotaLimited");
+        threadStates.put(threadId, quota ? "quota_limited" : status.contains("fail") ? "error" : "idle");
         if (threadParentIds.containsKey(threadId)) {
             clearPendingAttention(threadId);
             return;
@@ -542,7 +545,7 @@ final class CodexBackgroundSocket {
         if (previousCompletion != null && now - previousCompletion < COMPLETION_DEDUPE_MS) return;
         lastCompletionAt.put(threadId, now);
         clearPendingAttention(threadId);
-        String title = status.contains("fail") ? "Codex 执行失败"
+        String title = quota ? "Codex 额度达到上限" : status.contains("fail") ? "Codex 执行失败"
                 : status.contains("interrupt") ? "Codex 已中断" : "Codex 已完成";
         String eventId = turn == null ? "latest" : firstString(turn, "id", "turnId", "completedAt", "startedAt");
         if (eventId.isEmpty()) eventId = "latest";
@@ -573,6 +576,7 @@ final class CodexBackgroundSocket {
                 try {
                     syntheticTurn.put("id", "status-" + System.currentTimeMillis());
                     syntheticTurn.put("status", "error".equals(state) ? "failed" : "completed");
+                    if ("quota_limited".equals(state)) syntheticTurn.put("quotaLimited", true);
                 } catch (JSONException ignored) { }
                 handleTurnCompleted(threadId, syntheticTurn);
             }
@@ -591,7 +595,7 @@ final class CodexBackgroundSocket {
     }
 
     private static boolean isTerminalState(String state) {
-        return "idle".equals(state) || "error".equals(state);
+        return "idle".equals(state) || "error".equals(state) || "quota_limited".equals(state);
     }
 
     private synchronized void updateAttention(String threadId, String state) {
@@ -760,6 +764,7 @@ final class CodexBackgroundSocket {
         String text = raw == null ? "" : String.valueOf(raw).toLowerCase(Locale.ROOT);
         if (text.contains("waitingonapproval") || text.contains("waiting_approval")) return "approval";
         if (text.contains("waitingonuserinput") || text.contains("waiting_input")) return "input";
+        if (text.equals("quotalimited")) return "quota_limited";
         if (text.contains("progress") || text.contains("running") || text.contains("active")) return "running";
         if (text.contains("error") || text.contains("fail")) return "error";
         if (text.contains("idle") || text.contains("complete")) return "idle";

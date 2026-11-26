@@ -30,7 +30,7 @@ interface DesktopActionResult {
 }
 
 export class DesktopActionError extends Error {
-  constructor(message: string, readonly outcomeUnknown: boolean) { super(message); }
+  constructor(message: string, readonly outcomeUnknown: boolean, readonly code?: string) { super(message); }
 }
 
 export async function desktopAction(request: DesktopAction): Promise<DesktopActionResult> {
@@ -56,7 +56,8 @@ export async function desktopAction(request: DesktopAction): Promise<DesktopActi
       if (error) return reject(new DesktopActionError("桌面操作回执不可用，请刷新对话核对结果。", true));
       try {
         const result = JSON.parse(stdout);
-        if (result.state !== "confirmed") throw new DesktopActionError(result.reply || "桌面未确认操作。", result.state !== "rejected");
+        if (result.state !== "confirmed") throw new DesktopActionError(result.reply || "桌面未确认操作。", result.state !== "rejected",
+          typeof result.code === "string" ? result.code : undefined);
         resolve(result);
       } catch (reason) {
         reject(reason instanceof DesktopActionError ? reason : new DesktopActionError("无法核对桌面操作结果。", true));

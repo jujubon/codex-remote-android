@@ -187,7 +187,7 @@ export type ServerMessagePayload =
   | { type: "approval.resolved"; requestId?: string; approvalRequestId: number | string }
   | { type: "event"; method: string; params: unknown }
   | { type: "status"; codexReady: boolean; detail?: string; desktopIpcReady?: boolean }
-  | { type: "error"; requestId?: string; code: string; message: string; detail?: unknown };
+  | { type: "error"; requestId?: string; threadId?: string; code: string; message: string; detail?: unknown };
 
 export type ServerMessage = ServerMessagePayload & SyncMetadata;
 
@@ -200,7 +200,7 @@ export type ConnectionPhase =
   | 'offline'
   | 'error';
 
-export type ThreadState = 'unknown' | 'not_loaded' | 'idle' | 'running' | 'waiting_approval' | 'waiting_input' | 'error';
+export type ThreadState = 'unknown' | 'not_loaded' | 'idle' | 'running' | 'waiting_approval' | 'waiting_input' | 'quota_limited' | 'error';
 export type CompactionPhase = 'requested' | 'running' | 'retrying' | 'succeeded' | 'failed';
 export interface CompactionStatus {
   threadId: string;

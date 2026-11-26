@@ -249,6 +249,7 @@ export function App() {
           onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
           onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
+          onRefreshUsage={remote.refreshUsage}
           notice={notice}
           thread={remote.selectedThread}
           messages={remote.selectedMessages}

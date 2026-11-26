@@ -25,6 +25,7 @@ interface ConversationScreenProps {
   onArchive?: () => void;
   onTaskPower: () => void;
   accountPanel: React.ReactNode;
+  onRefreshUsage: () => void;
   notice: React.ReactNode;
   thread: RemoteThread;
   messages: RemoteMessage[];
@@ -177,6 +178,7 @@ export function agentStatePresentation(state: string): { className: string; labe
   if (/waiting[_-]?approval/.test(normalized)) return { className: 'waiting', label: '待审批' };
   if (/waiting[_-]?(input|user)/.test(normalized)) return { className: 'waiting', label: '待输入' };
   if (/not[_-]?loaded/.test(normalized)) return { className: 'not-loaded', label: '未载入' };
+  if (normalized === 'quota_limited') return { className: 'stopped', label: '额度达上限' };
   if (/unknown/.test(normalized)) return { className: 'unknown', label: '待同步' };
   return { className: 'active', label: '进行中' };
 }
@@ -358,7 +360,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
   const screenRef = useRef<HTMLElement>(null);
   const focusedAttention = useRef<AttentionTarget | undefined>(undefined);
   const streamRef = useRef<HTMLElement>(null);
@@ -577,7 +579,7 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
             <span className="session-project">
               {thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}
             </span>
-            <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
+          <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
               setSettingsOpen(true);
               settingsRef.current?.showModal();
             }}>
@@ -805,7 +807,14 @@ export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, atte
           thread.state === 'waiting_input' ? (approvals.some(approval => approval.method === 'item/tool/requestUserInput') ? '等待输入' : '等待在电脑端回答') :
           thread.state === 'waiting_approval' ? '等待审批' :
           running ? <>执行中 {thread.currentTurnStartedAt && <ElapsedTime startedAt={thread.currentTurnStartedAt} />}</> :
-          thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
+          thread.state === 'quota_limited' ? <span className="quota-status">
+            <span>Codex 额度已达到上限</span>
+            <button type="button" className="secondary-button" onClick={() => {
+              setSettingsOpen(true);
+              settingsRef.current?.showModal();
+              onRefreshUsage();
+            }}>查看额度</button>
+          </span> : thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
       </div>}
       {!settingsOpen && notice}
       <Composer draftKey={draftKey} inboxFile={inboxFile} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />

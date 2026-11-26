@@ -32,6 +32,7 @@ import type { FileTransferManager } from "./file-transfer.js";
 import { GitDiffError, readGitDiff, type GitDiffSnapshot } from "./git-diff.js";
 import { PromptQueueStore, type StoredPromptQueueItem } from "./prompt-queue.js";
 import { SyncJournal, ThreadIndexStore } from "./sync-state.js";
+import { isUsageLimitError, USAGE_LIMIT_MESSAGE } from "./usage-limit.js";
 
 const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024;
 
@@ -114,6 +115,7 @@ export class MobileGateway {
   private readonly appServerThreadStatuses = new Map<string, unknown>();
   private readonly appServerCurrentTurnIds = new Map<string, string>();
   private readonly appServerCompletedTurnIds = new Map<string, string>();
+  private readonly quotaFailedTurns = new Map<string, string>();
   private readonly queueDrains = new Map<string, Promise<void>>();
   private readonly desktopQueuedFollowUps = new Map<string, number>();
   private readonly gitDiffs = new Map<string, GitDiffSnapshot>();
@@ -232,17 +234,32 @@ export class MobileGateway {
           typeof params?.threadId === "string"
         ) {
           const turn = asRecord(params.turn);
+          if (turn && typeof turn.id === "string" && isUsageLimitError(turn.error) && this.rememberQuotaFailure(params.threadId, turn.id)) {
+            turn.quotaLimited = true;
+          }
+          if (turn?.id && this.quotaFailedTurns.get(params.threadId) === turn.id) turn.quotaLimited = true;
           this.clearAppServerApprovals(params.threadId);
           if (typeof turn?.id === "string") this.turnDiffs.delete(turnKey(params.threadId, turn.id));
           this.rememberAppServerCompletedTurn(params.threadId, turn);
           const completedStatus = String(turn?.status ?? params.status ?? "").toLowerCase();
-          if (completedStatus.includes("interrupt")) {
+          if (this.quotaFailedTurns.has(params.threadId)) {
+            void this.pausePromptQueue(params.threadId, USAGE_LIMIT_MESSAGE);
+          } else if (completedStatus.includes("interrupt")) {
             void this.pausePromptQueue(params.threadId, "队列已暂停，可手动恢复。");
           } else {
             this.scheduleQueueDrain(params.threadId);
           }
           this.scheduleMobileThreadRelease(params.threadId);
           void this.refreshThreadDiff(params.threadId, true);
+        }
+        if (message.method === "error" && params?.willRetry === false && typeof params.threadId === "string" &&
+            typeof params.turnId === "string" && isUsageLimitError(params.error) && this.rememberQuotaFailure(params.threadId, params.turnId)) {
+          params.quotaLimited = true;
+          this.rememberAppServerCompletedTurn(params.threadId, { id: params.turnId });
+          this.upsertThreadStatus(params.threadId, { type: "quotaLimited" });
+          this.clearAppServerApprovals(params.threadId, { turnId: params.turnId });
+          void this.pausePromptQueue(params.threadId, USAGE_LIMIT_MESSAGE);
+          this.scheduleMobileThreadRelease(params.threadId);
         }
         if (
           (message.method === "item/completed" ||
@@ -1065,12 +1082,14 @@ export class MobileGateway {
           });
       }
     } catch (error) {
+      const quotaLimited = isUsageLimitError(error);
+      const code = quotaLimited ? "usage_limit_reached" : error instanceof GatewayRequestError ? error.code : "request_failed";
       this.send(socket, {
         type: "error",
         requestId: "requestId" in message ? message.requestId : undefined,
-        code:
-          error instanceof GatewayRequestError ? error.code : "request_failed",
-        message: error instanceof Error ? error.message : "Request failed",
+        code,
+        ...(message.type === "turn.start" ? { threadId: message.threadId } : {}),
+        message: quotaLimited ? USAGE_LIMIT_MESSAGE : error instanceof Error ? error.message : "Request failed",
       });
     }
   }
@@ -1290,6 +1309,10 @@ export class MobileGateway {
             ? "桌面未确认排队结果，请先核对桌面队列。"
             : "桌面未确认发送结果，请核对对话后再试。");
         }
+        if (error instanceof DesktopActionError && (error.code === "desktop_turn_active" || error.code === "desktop_state_unconfirmed")) {
+          void this.refreshNativeSenderSnapshot(threadId);
+          throw new GatewayRequestError(error.code, error.message);
+        }
         throw error;
       } finally {
         if (retainUploads) {
@@ -1316,9 +1339,11 @@ export class MobileGateway {
         const id = typeof latest?.id === "string" ? latest.id : undefined;
         if (thread?.id === threadId && latest && id && (turnId ? id === turnId : id !== previous)) {
           const settings = this.nativeDesktopModelOverrides.get(threadId);
-          const projected = { ...thread, name: thread.title, turns, ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
+          const projected = { ...thread, status: nativeSnapshotStatus(thread, turns), name: thread.title, turns,
+            ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
           await this.trustDesktopAttachments(projected);
           if (!this.nativeDesktopTurns.has(threadId)) return;
+          this.upsertThreadSummary(toThreadSummary(projected));
           for (const socket of this.wss.clients) {
             if (this.socketThreads.get(socket)?.has(threadId))
               this.send(socket, { type: "thread", thread: { thread: projected } });
@@ -1357,7 +1382,8 @@ export class MobileGateway {
         const thread = asRecord(snapshot?.thread);
         if (thread?.id !== threadId || !Array.isArray(snapshot?.turns)) continue;
         const settings = this.nativeDesktopModelOverrides.get(threadId);
-        const projected = { ...thread, name: thread.title, turns: snapshot.turns, ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
+        const projected = { ...thread, status: nativeSnapshotStatus(thread, snapshot.turns), name: thread.title, turns: snapshot.turns,
+          ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
         const digest = createHash("sha256").update(JSON.stringify(projected)).digest("hex");
         if (this.nativeObservationDigests.get(threadId) === digest) continue;
         await this.trustDesktopAttachments(projected);
@@ -1367,6 +1393,7 @@ export class MobileGateway {
         if (this.subscribedMobileThreads.has(threadId)) continue;
         const metadata = threadMetadataFromPayload(stored, threadId);
         const projection = { ...metadata, ...projected, mobileRuntimeActive: false };
+        this.upsertThreadSummary(toThreadSummary(projection));
         for (const socket of this.wss.clients) {
           if (this.socketThreads.get(socket)?.has(threadId)) this.send(socket, { type: "thread", thread: { thread: projection } });
         }
@@ -1374,6 +1401,18 @@ export class MobileGateway {
     } finally {
       this.observingNativeDesktop = false;
     }
+  }
+
+  private async refreshNativeSenderSnapshot(threadId: string) {
+    try {
+      const snapshot = asRecord((await this.runDesktopAction({ action: "native-read", threadId })).snapshot);
+      const thread = asRecord(snapshot?.thread);
+      const turns = snapshot?.turns;
+      if (thread?.id !== threadId || !Array.isArray(turns) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) return;
+      const status = nativeSnapshotStatus(thread, turns);
+      this.upsertThreadStatus(threadId, status);
+      this.broadcastThread(threadId, { type: "event", method: "thread/status/changed", params: { threadId, status } });
+    } catch { /* The send rejection still preserves the draft. */ }
   }
 
   private async submitPreparedTurn(
@@ -1455,6 +1494,7 @@ export class MobileGateway {
     const turn = asRecord(outer?.turn) ?? outer;
     const turnId = typeof turn?.id === "string" ? turn.id : typeof turn?.turnId === "string" ? turn.turnId : null;
     if (turnId && this.appServerCompletedTurnIds.get(threadId) === turnId) return;
+    this.quotaFailedTurns.delete(threadId);
     if (turnId) this.appServerCurrentTurnIds.set(threadId, turnId);
     const previous = asRecord(this.appServerThreadStatuses.get(threadId));
     this.appServerThreadStatuses.set(threadId, {
@@ -1504,6 +1544,21 @@ export class MobileGateway {
     return statusType(this.appServerThreadStatuses.get(threadId)) === "active";
   }
 
+  private rememberQuotaFailure(threadId: string, turnId: string): boolean {
+    const current = this.appServerCurrentTurnIds.get(threadId);
+    if (current && current !== turnId) return false;
+    this.quotaFailedTurns.set(threadId, turnId);
+    if (this.quotaFailedTurns.size > 1000)
+      this.quotaFailedTurns.delete(this.quotaFailedTurns.keys().next().value!);
+    return true;
+  }
+
+  private upsertThreadStatus(threadId: string, status: unknown): void {
+    const change = this.threadIndex.patch(threadId, { status });
+    if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version,
+      upserts: this.withMembership(change.upserts), removedIds: [] });
+  }
+
   private isThreadActive(threadId: string): boolean {
     if (this.appServerThreadIsActive(threadId)) return true;
     return this.desktopIpc?.hasOwner(threadId) === true && conversationIsActive(this.desktopIpc.getConversation(threadId));
@@ -1515,6 +1570,7 @@ export class MobileGateway {
     const desktopStatus = desktopThread?.threadRuntimeStatus ?? desktopThread?.status;
     const appServerActive = this.appServerThreadIsActive(threadId);
     const desktopActive = conversationIsActive(desktopThread);
+    if (statusType(fallback) === "quotalimited" || (!appServerActive && this.quotaFailedTurns.has(threadId))) return { type: "quotaLimited" };
     if (appServerActive || desktopActive) {
       return {
         type: "active",
@@ -1530,7 +1586,7 @@ export class MobileGateway {
   }
 
   private projectThreadRuntimeStatus(thread: Record<string, unknown>): Record<string, unknown> {
-    const status = this.mergedThreadStatus(String(thread.id ?? ""), thread.threadRuntimeStatus ?? thread.status);
+    const status = this.mergedThreadStatus(String(thread.id ?? ""), nativeSnapshotStatus(thread, canonicalTurns(thread)));
     return { ...thread, status, threadRuntimeStatus: status };
   }
 
@@ -1937,7 +1993,8 @@ export class MobileGateway {
     const turns = mergeTurns(page.turns, liveTurns);
     if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
     const [membership] = this.withMembership([toThreadSummary(metadata)]);
-    const thread = { ...metadata, turns, projectless: membership?.projectless };
+    const status = nativeSnapshotStatus(metadata, turns);
+    const thread = { ...metadata, turns, status, threadRuntimeStatus: status, projectless: membership?.projectless };
     await this.trustDesktopAttachments({ turns: [...turns, ...page.cachedTurns] });
     this.replayCachedItems(socket, threadId, page.cachedTurns);
     const summary = toThreadSummary(thread);
@@ -2436,6 +2493,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function statusType(value: unknown): string {
   return String(asRecord(value)?.type ?? "").toLowerCase();
+}
+
+function nativeSnapshotStatus(thread: Record<string, unknown>, turns: unknown[]): unknown {
+  const status = thread.threadRuntimeStatus ?? thread.status;
+  const last = asRecord(turns.at(-1));
+  if (String(last?.status).toLowerCase() === "failed" && isUsageLimitError(last?.error) && activeFlags(status).length === 0) {
+    return { type: "quotaLimited" };
+  }
+  return status;
 }
 
 function activeFlags(value: unknown): string[] {

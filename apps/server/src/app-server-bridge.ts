@@ -17,6 +17,10 @@ interface JsonRpcMessage {
   error?: unknown;
 }
 
+export class AppServerRequestError extends Error {
+  constructor(message: string, code: number, readonly data: unknown) { super(`${message} (${code})`); }
+}
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -186,7 +190,7 @@ export class AppServerBridge extends EventEmitter {
       clearTimeout(pending.timer);
       this.pending.delete(response.id);
       if (response.error) {
-        pending.reject(new Error(`${response.error.message} (${response.error.code})`));
+        pending.reject(new AppServerRequestError(response.error.message, response.error.code, response.error.data));
       } else {
         pending.resolve(response.result);
       }

@@ -187,6 +187,6 @@ export type ServerMessagePayload =
   | { type: "approval.resolved"; requestId?: string; approvalRequestId: number | string }
   | { type: "event"; method: string; params: unknown }
   | { type: "status"; codexReady: boolean; detail?: string; desktopIpcReady?: boolean }
-  | { type: "error"; requestId?: string; code: string; message: string; detail?: unknown };
+  | { type: "error"; requestId?: string; threadId?: string; code: string; message: string; detail?: unknown };
 
 export type ServerMessage = ServerMessagePayload & SyncMetadata;

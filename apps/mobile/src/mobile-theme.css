@@ -208,6 +208,8 @@
 .composer .attach-button, .composer .send-button { display: grid; place-items: center; width: var(--composer-control); min-width: var(--composer-control); height: var(--composer-control); padding: 0; border-radius: 14px; }
 .composer .attach-button { grid-area: attach; background: var(--accent-soft); color: var(--accent); }
 .composer .send-button { grid-area: send; }
+.quota-status { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.quota-status .secondary-button { min-height: 34px; padding-inline: 10px; }
 .async-question .secondary-button { text-align: left; }
 .async-question .secondary-button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 

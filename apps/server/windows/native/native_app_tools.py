@@ -241,11 +241,16 @@ class NativeAppTools:
                   *, model: str | None = None, thinking: str | None = None) -> dict:
         before = self.thread_snapshot(thread_id, expected_identity)
         status = before['thread'].get('status')
-        if not isinstance(status, dict) or status.get('type') not in ('idle', 'notLoaded'):
-            return {'state': 'rejected', 'reply': '桌面对话仍在运行或状态未确认，请等待本轮结束后再发送。'}
         turns = before.get('turns')
         if not isinstance(turns, list) or (turns and (not isinstance(turns[-1], dict) or not isinstance(turns[-1].get('id'), str))):
-            return {'state': 'rejected', 'reply': '无法核对原对话的最新消息。'}
+            return {'state': 'rejected', 'code': 'desktop_state_unconfirmed', 'reply': '无法核对原对话的最新消息。'}
+        status_type = status.get('type') if isinstance(status, dict) else None
+        latest_status = turns[-1].get('status') if turns else None
+        if status_type == 'active' or latest_status in ('inProgress', 'running', 'active'):
+            return {'state': 'rejected', 'code': 'desktop_turn_active', 'reply': '桌面仍报告任务在运行。已保留草稿，可以选择排队下一轮。'}
+        failed_turn_ended = status_type == 'systemError' and latest_status in ('completed', 'failed', 'interrupted', 'cancelled', 'canceled')
+        if status_type not in ('idle', 'notLoaded') and not failed_turn_ended:
+            return {'state': 'rejected', 'code': 'desktop_state_unconfirmed', 'reply': '桌面尚未确认任务已结束。请刷新对话后再试。'}
         args = {'threadId': thread_id, 'hostId': 'local', 'prompt': prompt}
         if model is not None:
             args['model'] = model

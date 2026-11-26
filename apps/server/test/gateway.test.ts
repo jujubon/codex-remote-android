@@ -12,6 +12,7 @@ import type { ServerConfig } from "../src/config.js";
 import { PromptQueueStore } from "../src/prompt-queue.js";
 import { DesktopActionError, type desktopAction } from "../src/windows-desktop.js";
 import { FileTransferManager } from "../src/file-transfer.js";
+import { AppServerRequestError } from "../src/app-server-bridge.js";
 
 
 it("maps account limits without duplicate buckets or inventing missing windows", () => {
@@ -207,6 +208,50 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("keeps quota errors distinct from retries and accepts a new turn after recovery", async () => {
+    const { bridge, port } = await start();
+    const request = bridge.request.bind(bridge);
+    let available = false;
+    bridge.request = async (method, params) => {
+      if (method !== "turn/start") return request(method, params);
+      if (!available) throw new AppServerRequestError("Turn rejected", -32000, { codexErrorInfo: "usageLimitExceeded" });
+      return { turn: { id: "recovered-turn", status: "inProgress" } };
+    };
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(String(data))));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    const send = (message: object) => ws.send(JSON.stringify(message));
+    send({ type: "threads.sync", requestId: "initial-quota" });
+    await waitFor(() => messages.some(message => message.requestId === "initial-quota"));
+
+    const failedTurn = { id: "quota-turn", status: "failed", error: { codexErrorInfo: "usageLimitExceeded" } };
+    bridge.emit("notification", { method: "turn/started", params: { threadId: "thread-1", turn: { id: "quota-turn" } } });
+    bridge.emit("notification", { method: "error", params: { threadId: "thread-1", turnId: "quota-turn", error: failedTurn.error, willRetry: true } });
+    await waitFor(() => messages.some(message => message.method === "error"));
+    expect(messages.find(message => message.method === "error")).not.toMatchObject({ params: { quotaLimited: true } });
+    bridge.emit("notification", { method: "turn/completed", params: { threadId: "thread-1", turn: failedTurn } });
+    send({ type: "threads.sync", requestId: "after-quota" });
+    await waitFor(() => messages.some(message => message.requestId === "after-quota"));
+    expect(messages.find(message => message.requestId === "after-quota")).toMatchObject({
+      threads: expect.arrayContaining([expect.objectContaining({ id: "thread-1", status: { type: "quotaLimited" } })]),
+    });
+
+    send({ type: "turn.start", requestId: "quota-refusal", threadId: "thread-1", text: "continue", clientUserMessageId: "quota-refusal" });
+    await waitFor(() => messages.some(message => message.requestId === "quota-refusal"));
+    expect(messages.find(message => message.requestId === "quota-refusal")).toMatchObject({
+      type: "error", threadId: "thread-1", code: "usage_limit_reached",
+    });
+    available = true;
+    send({ type: "turn.start", requestId: "quota-recovered", threadId: "thread-1", text: "continue", clientUserMessageId: "quota-recovered" });
+    await waitFor(() => messages.some(message => message.requestId === "quota-recovered"));
+    expect(messages.find(message => message.requestId === "quota-recovered")).toMatchObject({
+      type: "turn.started", turn: { id: "recovered-turn" },
+    });
+    ws.close();
+  });
+
   it("publishes project membership on the first list and pushes changes without opening the thread", async () => {
     const directory = await mkdtemp(join(tmpdir(), "cmr-project-membership-"));
     closers.push(() => rm(directory, { recursive: true, force: true, maxRetries: 3 }));

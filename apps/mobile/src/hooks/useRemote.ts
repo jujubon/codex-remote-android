@@ -120,6 +120,7 @@ export function stateFromStatus(value: unknown): ThreadState {
   const activeFlags = Array.isArray(statusRecord?.activeFlags) ? statusRecord.activeFlags.map(String) : [];
   if (activeFlags.includes('waitingOnApproval')) return 'waiting_approval';
   if (activeFlags.includes('waitingOnUserInput')) return 'waiting_input';
+  if (text === 'quotalimited') return 'quota_limited';
   if (text.includes('progress') || text.includes('running') || text.includes('active')) return 'running';
   if (text.includes('error') || text.includes('fail')) return 'error';
   if (text.includes('notloaded') || text.includes('not_loaded') || text.includes('unloaded')) return 'not_loaded';
@@ -982,6 +983,10 @@ export function normalizeThreadPayload(payload: unknown): {
   const messages: RemoteMessage[] = [];
   let currentTurnId = stringValue(threadData.mobileActiveTurnId);
   const reportedState = stateFromStatus(threadData.threadRuntimeStatus ?? threadData.status);
+  const lastOwnedTurn = [...turns].reverse().find(value => {
+    const owner = explicitThreadOwner(value);
+    return !owner || owner === id;
+  });
 
   turns.forEach((turnValue, turnIndex) => {
     const turn = record(turnValue);
@@ -990,7 +995,7 @@ export function normalizeThreadPayload(payload: unknown): {
     if (turnOwner && turnOwner !== id) return;
     const turnId = stringValue(turn.id, turn.turnId) ?? `turn_${turnIndex}`;
     const turnStatus = String(turn.status ?? '').toLowerCase();
-    if (isActiveTurnStatus(turnStatus)) currentTurnId = turnId;
+    if (turnValue === lastOwnedTurn && isActiveTurnStatus(turnStatus)) currentTurnId = turnId;
     const ownedItems = (Array.isArray(turn.items) ? turn.items : []).filter((item) => {
       const itemOwner = explicitThreadOwner(item);
       return !itemOwner || itemOwner === id;
@@ -1014,7 +1019,8 @@ export function normalizeThreadPayload(payload: unknown): {
       cwd: stringValue(threadData.cwd) ?? '',
       modelProvider: stringValue(threadData.modelProvider) ?? '',
       updatedAt: timestamp(threadData.updatedAt ?? threadData.updated_at),
-      state: currentTurnId && reportedState !== 'waiting_input' && reportedState !== 'waiting_approval' ? 'running' : reportedState,
+      state: currentTurnId && reportedState !== 'waiting_input' && reportedState !== 'waiting_approval' && reportedState !== 'quota_limited'
+        ? 'running' : reportedState,
       unread: 0,
       parentThreadId: stringValue(threadData.parentThreadId) ?? subagentMetadataFromSource(threadData.source).parentThreadId ?? null,
       agentNickname: stringValue(threadData.agentNickname) ?? subagentMetadataFromSource(threadData.source).agentNickname ?? null,
@@ -1733,7 +1739,10 @@ export function useRemote(config: RemoteConfig | null) {
       if (method === 'turn/completed' && threadId) {
         if (turnId) terminalMessageTurnsRef.current.add(`${threadId}\u0000${turnId}`);
         const turn = record(params?.turn);
+        const activeTurn = turnIdsRef.current[threadId];
+        if (activeTurn && turnId && activeTurn !== turnId) return;
         const failed = String(turn?.status ?? '').toLowerCase() === 'failed';
+        const quotaLimited = turn?.quotaLimited === true;
         const error = record(turn?.error);
         const errorText = stringValue(error?.message, error?.additionalDetails, params?.message);
         const turnStatus = String(turn?.status ?? '').toLowerCase();
@@ -1754,7 +1763,7 @@ export function useRemote(config: RemoteConfig | null) {
           return next;
         });
         const durationMs = reportedTurnDuration(turn);
-        const completedThreadState: ThreadState = failed ? 'error' : 'idle';
+        const completedThreadState: ThreadState = quotaLimited ? 'quota_limited' : failed ? 'error' : 'idle';
         setThreads((current) => {
           const updated = current.map((thread) => thread.id === threadId ? {
             ...thread,
@@ -1789,7 +1798,7 @@ export function useRemote(config: RemoteConfig | null) {
           }
           return { ...current, [threadId]: completed };
         });
-        if (failed && errorText && !isCompactionTurn) setLastError(errorText);
+        if (failed && errorText && !isCompactionTurn && !quotaLimited) setLastError(errorText);
         const completedThread = threadsRef.current.find((thread) => thread.id === threadId);
         const threadTitle = completedThread?.title ?? 'Codex 任务';
         // Subagent turns are implementation detail activity of their parent task.
@@ -1802,13 +1811,13 @@ export function useRemote(config: RemoteConfig | null) {
             void notifyTurnFinished({
               threadId,
               threadTitle,
-              status: String(turn?.status ?? (failed ? 'failed' : 'completed')),
+              status: quotaLimited ? 'quota_limited' : String(turn?.status ?? (failed ? 'failed' : 'completed')),
               durationMs,
               eventId: turnId ?? String(turn?.completedAt ?? turn?.startedAt ?? 'latest'),
             }).then((shown) => {
               if (!shown) {
                 notifiedTurnIdsRef.current.delete(notificationKey);
-                setLastError('Android 通知未能发送，请检查通知权限及通知分类的声音设置');
+                if (!quotaLimited) setLastError('Android 通知未能发送，请检查通知权限及通知分类的声音设置');
               }
             });
           }
@@ -1818,6 +1827,12 @@ export function useRemote(config: RemoteConfig | null) {
       }
       if (method === 'error' && threadId) {
         const error = record(params?.error);
+        if (params?.quotaLimited === true && params.willRetry === false) {
+          updateThreadState(threadId, 'quota_limited');
+          setTurnIds(current => turnIdsAfterSnapshot(current, threadId));
+          clearThreadAttentionNotification(threadId);
+          return;
+        }
         const errorText = stringValue(error?.message, error?.additionalDetails) ?? 'Codex turn 发生错误';
         const activeCompaction = compactionsRef.current[threadId];
         const belongsToCompaction = Boolean(activeCompaction && ['requested', 'running', 'retrying'].includes(activeCompaction.phase)
@@ -2135,6 +2150,7 @@ export function useRemote(config: RemoteConfig | null) {
         case 'prompt.desktopQueued':
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           setQueueReceipt('已加入桌面队列 · ' + message.queueId.slice(-8));
+          if (message.threadId === selectedThreadRef.current) setLastError('');
           break;
         case 'prompt.queued':
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
@@ -2244,6 +2260,7 @@ export function useRemote(config: RemoteConfig | null) {
         }
         case 'turn.started': {
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
+          if (message.requestId?.startsWith('turn_') && message.threadId === selectedThreadRef.current) setLastError('');
           const turn = record(message.turn);
           const turnId = stringValue(turn?.id, turn?.turnId);
           const submittedText = stringValue(turn?.submittedText);
@@ -2346,6 +2363,22 @@ export function useRemote(config: RemoteConfig | null) {
             break;
           }
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(false);
+          const sendRefused = message.code === 'usage_limit_reached' || message.code === 'desktop_turn_active' || message.code === 'desktop_state_unconfirmed';
+          if (sendRefused && message.requestId?.startsWith('turn_')) {
+            const localId = `local_${message.requestId}`;
+            if (message.threadId) {
+              const threadId = message.threadId;
+              setMessagesByThread(current => ({ ...current,
+                [threadId]: (current[threadId] ?? []).filter(item => item.id !== localId || !canDiscardLocalMessage(item)),
+              }));
+              if (message.code === 'usage_limit_reached') {
+                updateThreadState(threadId, 'quota_limited');
+                setTurnIds(current => turnIdsAfterSnapshot(current, threadId));
+              }
+            }
+            if (!message.threadId || selectedThreadRef.current === message.threadId) setLastError(message.message);
+            break;
+          }
           if (message.requestId?.startsWith('turn_') && message.code !== 'submission_state_unknown') {
             const localId = `local_${message.requestId}`;
             setMessagesByThread(current => {
@@ -3135,6 +3168,8 @@ export function threadStateLabel(state: ThreadState): string {
       return '待输入';
     case 'error':
       return '异常';
+    case 'quota_limited':
+      return '额度达上限';
     case 'idle':
       return '可继续';
     case 'not_loaded':

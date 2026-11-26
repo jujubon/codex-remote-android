@@ -79,7 +79,8 @@ export async function notifyTurnFinished(options: {
 }): Promise<boolean> {
   if (!(await initializeNotifications())) return false;
   const status = options.status.toLowerCase();
-  const title = status === 'failed' ? 'Codex 执行失败' : status === 'interrupted' ? 'Codex 已中断' : 'Codex 已完成';
+  const title = status === 'quota_limited' ? 'Codex 额度达到上限'
+    : status === 'failed' ? 'Codex 执行失败' : status === 'interrupted' ? 'Codex 已中断' : 'Codex 已完成';
   const duration = options.durationMs != null ? ` · ${formatDuration(options.durationMs)}` : '';
   const id = notificationId(`turn:${options.threadId}:${options.eventId ?? 'latest'}`);
   if (Capacitor.isNativePlatform()) {
