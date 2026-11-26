@@ -445,6 +445,7 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
     turnId,
     role,
     content: asyncAnswer?.text ?? content,
+    ...(role === 'user' && id.startsWith('local_start_') && item.deliveryAcknowledged === true ? { deliveryAcknowledged: true } : {}),
     ...(asyncAnswer ? { asyncAnswerIds: asyncAnswer.ids } : {}),
     ...(assistantPhase ? { assistantPhase } : {}),
     ...(attachments.length ? { attachments } : {}),
@@ -868,7 +869,8 @@ export function reconcileThreadSnapshot(
   if (ownedIncoming.length === 0) return ownedCurrent;
   const currentById = new Map(ownedCurrent.map((message) => [message.id, message]));
   const canObserveNewItems = ownedCurrent.length > 0 && Boolean(observedTurnId);
-  const authoritative = dedupeMessages(ownedIncoming)
+  // A live user item can arrive before the corresponding new-chat receipt.
+  const authoritative = dedupeMessages(matchPendingUsers(ownedIncoming, ownedCurrent, false))
     .map((message) => {
       const currentMessage = currentById.get(message.id);
       const observedMessage = !currentMessage && canObserveNewItems && message.turnId === observedTurnId && message.timestampSource === 'turn'
@@ -2236,6 +2238,7 @@ export function useRemote(config: RemoteConfig | null) {
             message.requestId,
           );
           if (activatesThread) {
+            setLastError('');
             setSelectedModelState(normalized.thread.model ?? '');
             setSelectedEffortState(normalized.thread.effort ?? '');
             selectedThreadRef.current = normalized.thread.id;

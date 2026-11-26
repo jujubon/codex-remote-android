@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { desktopAction, DesktopActionError } from "./windows-desktop.js";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { watchFile, unwatchFile } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { dirname, join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
@@ -45,6 +46,12 @@ interface RpcEnvelope {
 interface ThreadListResult {
   data?: Array<Record<string, unknown>>;
   nextCursor?: string | null;
+}
+
+interface MobileThreadStart {
+  thread: Record<string, unknown>;
+  turn: Record<string, unknown>;
+  expiresAt: number;
 }
 
 interface ThreadTurnsListResult {
@@ -116,6 +123,7 @@ export class MobileGateway {
   private readonly appServerCurrentTurnIds = new Map<string, string>();
   private readonly appServerCompletedTurnIds = new Map<string, string>();
   private readonly quotaFailedTurns = new Map<string, string>();
+  private readonly recentMobileStarts = new Map<string, MobileThreadStart>();
   private readonly queueDrains = new Map<string, Promise<void>>();
   private readonly desktopQueuedFollowUps = new Map<string, number>();
   private readonly gitDiffs = new Map<string, GitDiffSnapshot>();
@@ -699,13 +707,11 @@ export class MobileGateway {
         case "thread.open": {
           const threadId = requiredString(message.threadId, "threadId");
           this.socketThreads.get(socket)?.add(threadId);
-          await this.openThreadPage(
-            socket,
-            threadId,
-            message.requestId,
-            message.historyLimit,
-            message.knownTurnIds,
-          );
+          try {
+            await this.openThreadPage(socket, threadId, message.requestId, message.historyLimit, message.knownTurnIds);
+          } catch (error) {
+            if (!isMobileHistoryPending(error) || !this.sendMobileThreadStart(socket, threadId, message.requestId)) throw error;
+          }
           break;
         }
         case "thread.close": {
@@ -1207,32 +1213,86 @@ export class MobileGateway {
     const prompt = requiredString(message.prompt, "首条任务");
     if (prompt.length > 4000) throw new Error("首条消息最多 4000 个字符。");
     const { cwd, projectId } = await this.mobileWorkspace(message);
+    const projectless = message.destination === "projectless";
     const first = asRecord(await this.bridge.request("thread/start", {
       cwd, ...(message.model ? { model: message.model } : {}),
       ...(projectId ? { projectId } : {}),
       ...(message.modelProvider ? { modelProvider: message.modelProvider } : {}),
       approvalPolicy: "on-request",
       sandbox: "workspace-write",
-      threadSource: message.destination === "projectless" ? MOBILE_PROJECTLESS_SOURCE : MOBILE_THREAD_SOURCE,
+      threadSource: projectless ? MOBILE_PROJECTLESS_SOURCE : MOBILE_THREAD_SOURCE,
       config: MOBILE_THREAD_CONFIG,
     }));
     const thread = asRecord(first?.thread);
     const id = requiredString(thread?.id, "新对话编号");
     this.mobileThreads.add(id);
+    if (projectless) this.mobileProjectlessIds.add(id);
     this.subscribedMobileThreads.add(id);
     this.threadCwds.set(id, cwd);
     this.socketThreads.get(socket)?.add(id);
     try {
-      const result = await this.withMobileThread(id, () => this.bridge.request("turn/start", {
+      const clientUserMessageId = randomUUID();
+      const result = asRecord(await this.withMobileThread(id, () => this.bridge.request("turn/start", {
         threadId: id,
+        clientUserMessageId,
         input: [{ type: "text", text: prompt, text_elements: [] }],
-      }));
+      })));
       this.rememberAppServerStartedTurn(id, result);
+      const turn = asRecord(result?.turn) ?? result ?? {};
+      const turnId = requiredString(turn.id ?? turn.turnId, "首轮任务编号");
+      const items = Array.isArray(turn.items) ? turn.items : [];
+      const userItem = {
+        id: `local_start_${turnId}`, type: "userMessage", deliveryAcknowledged: true, clientUserMessageId,
+        content: [{ type: "text", text: prompt }],
+      };
+      this.recentMobileStarts.set(id, {
+        thread: { ...threadMetadataFromPayload(first, id), cwd, preview: thread?.preview || prompt,
+          updatedAt: thread?.updatedAt ?? Math.floor(Date.now() / 1000), mobileManaged: true, projectless },
+        turn: { ...turn, id: turnId, startedAt: turn.startedAt ?? Math.floor(Date.now() / 1000),
+          items: items.some(item => String(asRecord(item)?.type).toLowerCase() === "usermessage") ? items : [userItem, ...items] },
+        expiresAt: Date.now() + 120_000,
+      });
+      if (this.recentMobileStarts.size > 128)
+        this.recentMobileStarts.delete(this.recentMobileStarts.keys().next().value!);
       this.threadIndexLoadedAt = 0;
-      await this.openThreadPage(socket, id, message.requestId);
+      this.sendMobileThreadStart(socket, id, message.requestId);
+      void this.syncNewMobileHistory(socket, id);
     } catch (error) {
       this.scheduleMobileThreadRelease(id);
       throw error;
+    }
+  }
+
+  private sendMobileThreadStart(socket: WebSocket, threadId: string, requestId?: string): boolean {
+    const start = this.recentMobileStarts.get(threadId);
+    if (!start) return false;
+    if (start.expiresAt <= Date.now() || this.archivedIds.has(threadId)) {
+      this.recentMobileStarts.delete(threadId);
+      return false;
+    }
+    const activeTurn = this.appServerCurrentTurnIds.get(threadId);
+    const status = this.mergedThreadStatus(threadId, { type: "idle" });
+    const initialStatus = String(start.turn.status);
+    const statusWhenInactive = ["completed", "failed", "interrupted"].includes(initialStatus) ? initialStatus : undefined;
+    const turn = { ...start.turn, status: activeTurn === start.turn.id ? "inProgress" : statusWhenInactive };
+    const thread = { ...start.thread, status, threadRuntimeStatus: status, turns: [turn],
+      mobileRuntimeActive: Boolean(activeTurn), mobileActiveTurnId: activeTurn };
+    this.upsertThreadSummary(toThreadSummary(thread));
+    this.send(socket, { type: "thread", requestId, thread: { thread } });
+    return true;
+  }
+
+  private async syncNewMobileHistory(socket: WebSocket, threadId: string): Promise<void> {
+    for (const wait of [250, 750, 1500, 3000]) {
+      await delay(wait, undefined, { ref: false });
+      if (socket.readyState !== WebSocket.OPEN || !this.socketThreads.get(socket)?.has(threadId) ||
+          !this.recentMobileStarts.has(threadId) || this.archivedIds.has(threadId)) return;
+      try {
+        await this.openThreadPage(socket, threadId);
+        return;
+      } catch (error) {
+        if (!isMobileHistoryPending(error)) return;
+      }
     }
   }
 
@@ -1993,6 +2053,11 @@ export class MobileGateway {
     }
     const turns = mergeTurns(page.turns, liveTurns);
     if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
+    const start = this.recentMobileStarts.get(threadId);
+    if (start) {
+      if (turns.some(turn => turn.id === start.turn.id) || start.expiresAt <= Date.now()) this.recentMobileStarts.delete(threadId);
+      else if (turns.length === 0) throw new GatewayRequestError("mobile_history_pending", "新对话历史正在写入。");
+    }
     const [membership] = this.withMembership([toThreadSummary(metadata)]);
     const status = nativeSnapshotStatus(metadata, turns);
     const thread = { ...metadata, turns, status, threadRuntimeStatus: status, projectless: membership?.projectless };
@@ -2472,6 +2537,11 @@ function boundedHistoryLimit(value: unknown): number {
 function isMethodUnavailable(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return /method not found|unknown method|unsupported method|-32601/i.test(text);
+}
+
+function isMobileHistoryPending(error: unknown): boolean {
+  return error instanceof GatewayRequestError && error.code === "mobile_history_pending"
+    || error instanceof Error && /failed to read session metadata|rollout.*(?:is empty|not found)/i.test(error.message);
 }
 
 function isThreadContentEvent(method: string): boolean {

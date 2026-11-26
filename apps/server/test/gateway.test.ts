@@ -314,11 +314,14 @@ describe("MobileGateway", () => {
     const { bridge, port } = await start(undefined, queue, { desktopOnly: true, promptQueueFile: join(directory, "queue.json") });
     const thread = { id: "managed", cwd: directory, model: "model-1", reasoningEffort: "medium", threadSource: "codex-remote-mobile" };
     let started = 0;
+    let persisted = false;
     const request = bridge.request.bind(bridge);
     bridge.request = async (method, params) => {
-      if (!["thread/start", "turn/start", "thread/read"].includes(method)) return request(method, params);
+      if (!["thread/start", "turn/start", "thread/read", "thread/turns/list"].includes(method)) return request(method, params);
       bridge.calls.push({ method, params });
       if (method === "turn/start") return { turn: { id: `mobile-turn-${++started}` } };
+      if (method === "thread/read" && !persisted) throw new Error("failed to read session metadata: rollout is empty (-32603)");
+      if (method === "thread/turns/list") return { data: [{ id: "mobile-turn-1", status: "inProgress", items: [] }], nextCursor: null };
       return { thread };
     };
     const encoded = Buffer.from(token).toString("base64url");
@@ -330,7 +333,25 @@ describe("MobileGateway", () => {
     send({ type: "thread.start", requestId: "new", mobileManaged: true, cwd: directory, prompt: "first" });
     await waitFor(() => messages.some(message => message.requestId === "new"));
     expect(messages.find(message => message.requestId === "new")).toMatchObject({ type: "thread",
-      thread: { thread: { mobileManaged: true, mobileRuntimeActive: true, mobileActiveTurnId: "mobile-turn-1" } } });
+      thread: { thread: { mobileManaged: true, mobileRuntimeActive: true, mobileActiveTurnId: "mobile-turn-1", turns: [
+        { id: "mobile-turn-1", items: [{ type: "userMessage", deliveryAcknowledged: true, content: [{ type: "text", text: "first" }] }] },
+      ] } } });
+    expect(bridge.calls.some(call => call.method === "thread/read")).toBe(false);
+    send({ type: "thread.open", requestId: "reopen-before-write", threadId: "managed" });
+    await waitFor(() => messages.some(message => message.requestId === "reopen-before-write"));
+    expect(messages.find(message => message.requestId === "reopen-before-write")).toMatchObject({ type: "thread" });
+    expect(started).toBe(1);
+    persisted = true;
+
+    const questions = [{ id: "happy", question: "Which option?", options: [{ label: "One" }] }];
+    bridge.emit("serverRequest", { id: 55, method: "item/tool/requestUserInput", params: { threadId: "managed", turnId: "mobile-turn-1", questions } });
+    await waitFor(() => messages.some(message => message.type === "approval"));
+    expect(messages.find(message => message.type === "approval")).toMatchObject({
+      approval: { requestId: 55, method: "item/tool/requestUserInput", threadId: "managed" },
+    });
+    send({ type: "approval.resolve", approvalRequestId: 55, decision: { kind: "answerQuestions", answers: { happy: "One" } } });
+    await waitFor(() => bridge.responses.some(response => response.id === 55));
+    expect(bridge.responses).toContainEqual({ id: 55, result: { answers: { happy: { answers: ["One"] } } } });
     send({ type: "turn.start", threadId: "managed", requestId: "stale", text: "old", deliveryMode: "steer", expectedTurnId: "old", clientUserMessageId: "old" });
     await waitFor(() => messages.some(message => message.requestId === "stale" && message.code === "no_active_turn"));
     send({ type: "turn.start", threadId: "managed", requestId: "steer", text: "now", deliveryMode: "steer", expectedTurnId: "mobile-turn-1", clientUserMessageId: "steer" });
@@ -344,6 +365,7 @@ describe("MobileGateway", () => {
     expect(bridge.calls.some(call => call.method === "thread/unsubscribe")).toBe(false);
     send({ type: "turn.interrupt", threadId: "managed", turnId: "mobile-turn-2" });
     await waitFor(() => bridge.calls.some(call => call.method === "turn/interrupt"));
+    expect(bridge.calls.find(call => call.method === "turn/interrupt")).toMatchObject({ params: { threadId: "managed", turnId: "mobile-turn-2" } });
     bridge.emit("notification", { method: "turn/completed", params: { threadId: "managed", turn: { id: "mobile-turn-2", status: "interrupted" } } });
     await waitFor(() => bridge.calls.some(call => call.method === "thread/unsubscribe"));
     ws.close();

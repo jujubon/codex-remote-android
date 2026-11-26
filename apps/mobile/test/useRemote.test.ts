@@ -7,6 +7,21 @@ function user(id: string, content: string, createdAt: number): RemoteMessage {
   return { id, threadId: 'thread', role: 'user', content, createdAt, status: 'complete' };
 }
 
+it('replaces the acknowledged first prompt when persisted or live history arrives in either order', () => {
+  const content = [{ type: 'text', text: 'first prompt' }];
+  const normalized = (id: string, acknowledged = false) => normalizeThreadPayload({
+    id: 'thread', turns: [{ id: 'only-turn', status: 'inProgress', items: [
+      { id, type: 'userMessage', deliveryAcknowledged: acknowledged, content },
+    ] }],
+  }).messages;
+  const receipt = normalized('local_start_only-turn', true);
+  const canonical = normalized('recorded-user');
+  expect(receipt[0]?.deliveryAcknowledged).toBe(true);
+  expect(canDiscardLocalMessage(receipt[0]!)).toBe(false);
+  expect(reconcileThreadSnapshot(receipt, canonical).map(item => item.id)).toEqual(['recorded-user']);
+  expect(reconcileThreadSnapshot(canonical, receipt).map(item => item.id)).toEqual(['recorded-user']);
+});
+
 it('keeps a desktop message containing only an image', () => {
   const imagePath = 'C:\\Users\\alice\\AppData\\Local\\Temp\\clip.png';
   const result = normalizeThreadPayload({
