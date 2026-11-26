@@ -111,7 +111,6 @@
   white-space: normal;
 }
 .thread-browser nav button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
-.hidden-projects { margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 
 .thread-screen .thread-list { padding-top: 3px; background: var(--bg); overscroll-behavior-y: contain; }
 .project-group {
@@ -241,6 +240,35 @@
 .session-summary b { color: var(--accent); font-weight: 650; }
 .conversation-body, .message-stream, .activity-status-slot { background: #fcfbfe; }
 .message-stream-content { padding-top: 12px; }
+.activity-status-slot.is-active { padding-block: 5px 6px; }
+.activity-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  max-width: 760px;
+  min-height: 32px;
+  margin-inline: auto;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+.activity-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 21px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+}
+.activity-wave i { width: 3px; height: 3px; border-radius: 50%; background: var(--accent); }
+.activity-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-status time { color: var(--muted-light); font-variant-numeric: tabular-nums; font-size: 10px; }
 .message-row { padding-block: 16px; border-bottom-color: transparent; }
 .message-row.role-user .message-column { max-width: 89%; margin-inline-start: auto; }
 .role-user .message-label { justify-content: flex-end; }
@@ -277,7 +305,7 @@
 .composer:focus-within { border-color: #9580d8; box-shadow: 0 0 0 2px var(--accent-soft); }
 .composer textarea, .composer-measure { min-width: 0; font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; }
 .composer textarea { grid-area: message; min-height: var(--composer-control); max-height: var(--composer-control); padding: 12px 2px; }
-.composer-multiline textarea { min-height: 36px; max-height: 96px; padding: 8px 10px; }
+.composer-multiline textarea { min-height: 36px; max-height: min(96px, 23dvh); padding: 8px 10px; }
 .composer-measure {
   position: absolute;
   visibility: hidden;
@@ -331,6 +359,14 @@
   from { opacity: .6; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
 }
+@keyframes conversation-enter {
+  from { opacity: .55; transform: translate3d(24px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes activity-dot {
+  0%, 64%, 100% { opacity: .55; transform: translateY(0); }
+  32% { opacity: 1; transform: translateY(-2px) scale(1.2); }
+}
 @keyframes reveal-content {
   from { opacity: .35; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -345,8 +381,13 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .thread-screen, .computer-screen, .conversation-body, .setup-screen { animation: screen-enter var(--motion-fade) var(--ease-out) both; }
-  .command-palette, .hidden-projects, .attachment-strip { animation: reveal-content var(--motion-fade) var(--ease-out); }
+  .thread-screen, .computer-screen, .setup-screen { animation: screen-enter var(--motion-fade) var(--ease-out) backwards; }
+  .conversation-screen { animation: conversation-enter var(--motion-panel) var(--ease-out) backwards; }
+  .command-palette, .attachment-strip, .activity-copy, .new-content-button { animation: reveal-content var(--motion-fade) var(--ease-out) backwards; }
+  .activity-wave i { animation: activity-dot 1.15s ease-in-out infinite paused; }
+  .activity-wave i:nth-child(2) { animation-delay: .12s; }
+  .activity-wave i:nth-child(3) { animation-delay: .24s; }
+  .activity-status-slot[data-playing="true"] .activity-wave i { animation-play-state: running; }
   .bottom-sheet, .session-dialog[open], .agent-sheet { animation: sheet-enter var(--motion-panel) var(--ease-out) both; }
   .sheet-backdrop, .session-dialog::backdrop { animation: shade-in var(--motion-fade) var(--ease-out); }
   @supports (interpolate-size: allow-keywords) and (transition-behavior: allow-discrete) {
@@ -427,10 +468,65 @@
 .manage-button { min-height: 44px; padding: 0 8px; border: 0; border-radius: 9px; background: transparent; color: var(--accent); font: inherit; font-weight: 700; }
 .manage-button:active { background: var(--accent-soft); }
 .thread-screen .thread-list { padding-bottom: 12px; }
-.list-management > .history-visibility { margin: 14px 0 6px; font-size: .875rem; }
-.list-management .hidden-projects { max-height: none; padding: 12px 0; margin: 0; border: 0; background: transparent; }
-.management-row { display: block; width: 100%; min-height: 48px; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 10px 0; text-align: start; font-size: .9375rem; }
-.management-row:active { background: var(--surface-pressed); }
+.management-dialog { overflow: hidden; }
+.list-management { display: flex; flex-direction: column; max-height: 85dvh; }
+.list-management > .sheet-title-row { flex: none; border: 0; padding-bottom: 8px; }
+.management-body { display: grid; min-height: 0; gap: 16px; padding: 2px 2px 4px; overflow-y: auto; overscroll-behavior: contain; }
+.management-card { margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); }
+.management-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--ink);
+  text-align: start;
+}
+.management-row > svg, .management-icon svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.management-row > svg { color: var(--muted); }
+.management-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.management-filter { min-width: 0; margin: 0; padding: 0; border: 0; }
+.management-filter legend, .management-group h3 { margin: 0 0 7px; padding: 0; color: var(--ink); font-size: 13px; font-weight: 650; }
+.management-filter p { margin: 5px 1px 0; color: var(--muted); font-size: 12px; }
+.management-segments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border-radius: 12px; background: var(--surface-subtle); }
+.management-segments label { position: relative; cursor: pointer; }
+.management-segments input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.management-segments span {
+  display: grid;
+  min-height: 38px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 13px;
+  transition: background-color var(--motion-press) var(--ease-out), color var(--motion-press) var(--ease-out);
+}
+.management-segments input:checked + span { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px rgb(31 19 65 / 10%); font-weight: 650; }
+.management-segments input:focus-visible + span { outline: 2px solid var(--accent); }
+.management-group h3 { display: flex; align-items: center; gap: 8px; }
+.management-group h3 span { padding: 1px 6px; border-radius: 12px; background: var(--surface-subtle); color: var(--muted); font-size: 11px; }
+.management-group ul { list-style: none; }
+.management-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+}
+.management-item + .management-item { border-top: 1px solid var(--line); }
+.management-item-copy { min-width: 0; display: grid; gap: 4px; }
+.management-item-copy > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.management-item-copy strong { font-size: 13px; }
+.management-item-copy small { color: var(--muted); font-size: 11px; }
+.management-restore { min-height: 40px; padding-inline: 10px; border: 0; border-radius: 9px; background: var(--surface-subtle); color: var(--accent); font-size: 12px; font-weight: 600; }
+.management-row:active, .management-restore:active { background: var(--surface-pressed); }
 
 .home-nav {
   display: grid;

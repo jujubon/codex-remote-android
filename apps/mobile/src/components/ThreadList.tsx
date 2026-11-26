@@ -3,7 +3,7 @@ import { threadStateLabel } from '../hooks/useRemote';
 import type { ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ArchiveIcon, ChatIcon, ChevronDownIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
@@ -278,6 +278,34 @@ function ProjectThreads({ collapsed, children }: { collapsed: boolean; children:
   </div>;
 }
 
+function RestoreGroup({ label, items, icon, isProject, onRestore }: {
+  label: string; items: { id: string; title: string; detail?: string }[]; icon: React.ReactNode;
+  isProject?: boolean; onRestore: (id: string) => void;
+}) {
+  if (!items.length) return null;
+  return <section className="management-group">
+    <h3>{label}<span>{items.length}</span></h3>
+    <ul className="management-card">
+      {items.map(item => <li key={item.id} className="management-item">
+        <span className="management-icon" aria-hidden="true">{icon}</span>
+        <div className="management-item-copy">
+          <strong title={item.title}>{item.title}</strong>
+          {item.detail && <small title={item.id}>{item.detail}</small>}
+        </div>
+        <button className="management-restore" type="button" aria-label={`恢复 ${item.title}`} onClick={() => onRestore(item.id)}>
+          {isProject ? '恢复项目' : '恢复'}
+        </button>
+      </li>)}
+    </ul>
+  </section>;
+}
+
+const historyFilters: { value: HistoryVisibility; label: string; hint: string }[] = [
+  { value: 'chats', label: '普通', hint: '隐藏闲置的审阅记录。' },
+  { value: 'loaded', label: '已载入', hint: '同时隐藏未载入的历史对话。' },
+  { value: 'all', label: '全部', hint: '显示所有对话，包括审阅记录。' },
+];
+
 export function ThreadList({ position, onArchives, onArchive, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
@@ -391,42 +419,39 @@ export function ThreadList({ position, onArchives, onArchive, threads, attention
         </div>
       </div>
 
-      <dialog className="session-dialog" ref={manageRef} aria-labelledby="project-management-title">
+      <dialog className="session-dialog management-dialog" ref={manageRef} aria-labelledby="project-management-title"
+        onClick={event => { if (event.target === event.currentTarget) manageRef.current?.close(); }}>
         <div className="session-sheet list-management">
           <header className="sheet-title-row">
             <h2 id="project-management-title">管理项目与对话</h2>
             <button className="icon-button nav-icon-button" type="button" aria-label="关闭管理" onClick={() => manageRef.current?.close()}><CloseIcon /></button>
           </header>
-          {onArchives && <button type="button" className="management-row" onClick={() => {
-            manageRef.current?.close();
-            onArchives();
-          }}>已归档对话</button>}
-          <label className="history-visibility">对话显示
-            <select value={visibility} onChange={event => {
-              const next = event.target.value as HistoryVisibility;
-              setVisibility(next);
-              try { browserStorage()?.setItem(historyVisibilityKey, next); } catch { /* Keep the in-memory choice. */ }
-            }}>
-              <option value="chats">普通聊天（隐藏闲置审阅记录）</option>
-              <option value="loaded">同时隐藏未载入的历史聊天</option>
-              <option value="all">显示全部（含审阅记录）</option>
-            </select>
-          </label>
-          <section className="hidden-projects">
-            <strong>已隐藏项目（{hidden.paths.length}）</strong>
-            {hidden.paths.map(path => <div key={path}><span>{path}</span>
-              <button type="button" className="secondary-button" onClick={() => hidden.setHidden(path, false)}>恢复显示</button></div>)}
-          </section>
-          {hiddenThreads.paths.length > 0 && <section className="hidden-projects">
-            <strong>已隐藏对话（{hiddenThreads.paths.length}）</strong>
-            {hiddenThreads.paths.map(id => <div key={id}><span>{titles.get(id) || '隐藏的对话'}</span>
-              <button type="button" className="secondary-button" onClick={() => hiddenThreads.setHidden(id, false)}>恢复显示</button></div>)}
-          </section>}
-          {removed.paths.length > 0 && <section className="hidden-projects">
-            <strong>已移除项目卡片（{removed.paths.length}）</strong>
-            {removed.paths.map(path => <div key={path}><span>{path}</span>
-              <button type="button" className="secondary-button" onClick={() => removed.setHidden(path, false)}>恢复项目卡片</button></div>)}
-          </section>}
+          <div className="management-body">
+            {onArchives && <button type="button" className="management-row management-card" onClick={() => {
+              manageRef.current?.close();
+              onArchives();
+            }}><span className="management-icon"><ArchiveIcon /></span><strong>已归档对话</strong><ChevronRightIcon /></button>}
+            <fieldset className="management-filter">
+              <legend>对话显示</legend>
+              <div className="management-segments">
+                {historyFilters.map(({ value, label }) => <label key={value}>
+                  <input type="radio" name="history-visibility" value={value} checked={visibility === value}
+                    onChange={() => {
+                      setVisibility(value);
+                      try { browserStorage()?.setItem(historyVisibilityKey, value); } catch { /* Keep the in-memory choice. */ }
+                    }} />
+                  <span>{label}</span>
+                </label>)}
+              </div>
+              <p>{historyFilters.find(filter => filter.value === visibility)?.hint}</p>
+            </fieldset>
+            <RestoreGroup label="已隐藏项目" items={hidden.paths.map(path => ({ id: path, title: projectName(path), detail: compactPath(path) }))}
+              icon={<FolderIcon />} onRestore={path => hidden.setHidden(path, false)} />
+            <RestoreGroup label="已隐藏对话" items={hiddenThreads.paths.map(id => ({ id, title: titles.get(id) || '隐藏的对话' }))}
+              icon={<ChatIcon />} onRestore={id => hiddenThreads.setHidden(id, false)} />
+            <RestoreGroup label="已移除项目卡片" items={removed.paths.map(path => ({ id: path, title: projectName(path), detail: compactPath(path) }))}
+              icon={<FolderIcon />} isProject onRestore={path => removed.setHidden(path, false)} />
+          </div>
         </div>
       </dialog>
       <dialog className="session-dialog" ref={removeRef} aria-labelledby="remove-project-title" onClose={() => setRemoveTarget(null)}>

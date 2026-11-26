@@ -1351,6 +1351,7 @@ export function useRemote(config: RemoteConfig | null) {
   const seenCompactionItemsRef = useRef<Record<string, Map<string, boolean | undefined>>>({});
   const [historyByThread, setHistoryByThread] = useState<Record<string, CachedHistoryState>>({});
   const [historyLoadingByThread, setHistoryLoadingByThread] = useState<Record<string, boolean>>({});
+  const olderHistoryRequests = useRef(new Map<string, string>());
   const historyByThreadRef = useRef<Record<string, CachedHistoryState>>({});
 
   const setSelectedPermissionMode = useCallback((mode: PermissionMode) => {
@@ -2241,7 +2242,8 @@ export function useRemote(config: RemoteConfig | null) {
             ...current,
             [normalized.thread!.id]: { ...message.history!, loaded: true },
           }));
-          setHistoryLoadingByThread((current) => ({ ...current, [normalized.thread!.id]: false }));
+          if (![...olderHistoryRequests.current.values()].includes(normalized.thread.id))
+            setHistoryLoadingByThread((current) => ({ ...current, [normalized.thread!.id]: false }));
           setTurnIds((current) => turnIdsAfterSnapshot(current, normalized.thread!.id, normalized.currentTurnId));
           const activatesThread = consumeThreadActivationIntent(
             pendingThreadStartRequestsRef.current,
@@ -2262,6 +2264,7 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'thread.history': {
+          if (message.requestId) olderHistoryRequests.current.delete(message.requestId);
           const normalized = normalizeThreadPayload({ thread: { id: message.threadId, turns: message.turns } });
           setMessagesByThread((current) => ({
             ...current,
@@ -2402,6 +2405,11 @@ export function useRemote(config: RemoteConfig | null) {
               return { ...current, [threadId]: items.map(item => item.id === localId ? { ...item, status: 'failed' } : item) };
             });
           }
+          const historyThreadId = message.requestId && olderHistoryRequests.current.get(message.requestId);
+          if (historyThreadId && message.requestId) {
+            olderHistoryRequests.current.delete(message.requestId);
+            setHistoryLoadingByThread(current => ({ ...current, [historyThreadId]: false }));
+          }
           const archive = message.requestId && archiveRequests.current.get(message.requestId);
           if (archive) { archive.reject(new Error(message.message)); break; }
           if (message.requestId && message.requestId === projectRequest.current) {
@@ -2521,6 +2529,7 @@ export function useRemote(config: RemoteConfig | null) {
         syncCursorRef.current = 0;
         threadIndexVersionRef.current = 0;
       }
+      olderHistoryRequests.current.clear();
       setHistoryLoadingByThread({});
       cacheHydratedRef.current = true;
 
@@ -2654,16 +2663,20 @@ export function useRemote(config: RemoteConfig | null) {
 
   const loadOlderHistory = useCallback(() => {
     const threadId = selectedThreadRef.current;
-    if (!threadId) return;
+    if (!threadId) return false;
     const history = historyByThreadRef.current[threadId];
-    if (!history?.hasMore || historyLoadingByThread[threadId]) return;
-    setHistoryLoadingByThread((current) => ({ ...current, [threadId]: true }));
+    if (!history?.hasMore || historyLoadingByThread[threadId]
+        || [...olderHistoryRequests.current.values()].includes(threadId)) return false;
+    const requestId = createRequestId('history');
     const sent = socketRef.current?.send({
-      type: 'thread.history', requestId: createRequestId('history'), threadId,
+      type: 'thread.history', requestId, threadId,
       cursor: history.nextCursor ?? undefined, limit: 20,
       knownTurnIds: knownTurnIds(messagesForThread(threadId, messagesByThreadRef.current[threadId] ?? [])),
     });
-    if (!sent) setHistoryLoadingByThread((current) => ({ ...current, [threadId]: false }));
+    if (!sent) return false;
+    olderHistoryRequests.current.set(requestId, threadId);
+    setHistoryLoadingByThread((current) => ({ ...current, [threadId]: true }));
+    return true;
   }, [historyLoadingByThread]);
 
   const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto', waitForReceipt = false, inboxId?: string): Promise<boolean> => {
@@ -3012,6 +3025,7 @@ export function useRemote(config: RemoteConfig | null) {
     messagesByThreadRef.current = {};
     setHistoryByThread({});
     historyByThreadRef.current = {};
+    olderHistoryRequests.current.clear();
     setHistoryLoadingByThread({});
     setTodoByThread({});
     setPromptQueueByThread({});

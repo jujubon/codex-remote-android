@@ -1,8 +1,10 @@
+import { useEffect, useRef, useState } from 'react';
 import { ElapsedTime } from './ElapsedTime';
 
 interface TransientActivityProps {
   running: boolean;
   content?: string;
+  summaryId?: string;
   startedAt?: number;
 }
 
@@ -15,14 +17,35 @@ function compact(content: string): string {
     .trim();
 }
 
-export function TransientActivity({ running, content = '', startedAt }: TransientActivityProps) {
+export function TransientActivity({ running, content = '', summaryId, startedAt }: TransientActivityProps) {
   const summary = compact(content);
+  const slot = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    if (!running || !slot.current) return;
+    let inView = typeof IntersectionObserver === 'undefined';
+    const update = () => setPlaying(inView && document.visibilityState === 'visible');
+    const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? false;
+      update();
+    });
+    observer?.observe(slot.current);
+    document.addEventListener('visibilitychange', update);
+    update();
+    return () => {
+      observer?.disconnect();
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, [running]);
+
   return (
-    <div className={`activity-status-slot ${running ? 'is-active' : ''}`} aria-live="polite" aria-atomic="true">
+    <div ref={slot} className={`activity-status-slot ${running ? 'is-active' : ''}`} data-playing={running && playing}>
       {running && (
         <div className="activity-status">
-          <span className="activity-wave" aria-hidden="true"><i /><i /><i /><i /></span>
-          <span className="activity-copy">{summary ? `思考梗概 · ${summary}` : 'Codex 正在思考'}</span>
+          <span className="activity-wave" aria-hidden="true"><i /><i /><i /></span>
+          <span key={summary ? summaryId ?? 'summary' : 'thinking'} className="activity-copy" aria-live="polite">
+            {summary || 'Codex 正在思考'}
+          </span>
           <ElapsedTime startedAt={startedAt} />
         </div>
       )}

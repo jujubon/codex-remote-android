@@ -54,7 +54,7 @@ interface ConversationScreenProps {
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string | null) => void;
   onBack: () => void;
-  onLoadOlderHistory: () => void;
+  onLoadOlderHistory: () => boolean;
   onReconnect: () => void;
   onSend: (content: string, files: File[] | undefined, deliveryMode: PromptDeliveryMode, waitForReceipt?: boolean, inboxId?: string) => Promise<boolean> | boolean;
   onCancelQueuedPrompt: (itemId: string) => void;
@@ -184,11 +184,8 @@ export function agentStatePresentation(state: string): { className: string; labe
   return { className: 'active', label: '进行中' };
 }
 
-const BOTTOM_FOLLOW_DISTANCE = 96;
-
-
 function nearBottom(element: HTMLElement): boolean {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_FOLLOW_DISTANCE;
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 3;
 }
 
 type ConversationGroup = {
@@ -372,6 +369,9 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   const historyAnchorRef = useRef<{ height: number; top: number } | null>(null);
   const suppressNextContentNotificationRef = useRef(false);
   const followScrollFrameRef = useRef<number | null>(null);
+  const scrollTopRef = useRef(0);
+  const touchOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const olderRequestedRef = useRef(false);
   const previousEntryCountRef = useRef(0);
   const settingsRef = useRef<HTMLDialogElement>(null);
   const actionsRef = useRef<HTMLDialogElement>(null);
@@ -463,6 +463,9 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
     initializedRef.current = false;
     previousContentKeyRef.current = '';
     followingRef.current = true;
+    scrollTopRef.current = 0;
+    touchOriginRef.current = null;
+    olderRequestedRef.current = false;
     setHasNewContent(false);
     setAgentsExpanded(false);
     setRenderedEntryLimit(DEFAULT_RENDERED_ENTRY_LIMIT);
@@ -485,9 +488,29 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
     if (renderedEntryLimit !== DEFAULT_RENDERED_ENTRY_LIMIT) setRenderedEntryLimit(DEFAULT_RENDERED_ENTRY_LIMIT);
     if (frozenEntryEnd != null) setFrozenEntryEnd(null);
     stream.scrollTop = stream.scrollHeight;
+    scrollTopRef.current = stream.scrollTop;
     followingRef.current = true;
     setHasNewContent(false);
   };
+
+  function pauseFollowing() {
+    if (!followingRef.current) return;
+    followingRef.current = false;
+    if (followScrollFrameRef.current != null) {
+      window.cancelAnimationFrame(followScrollFrameRef.current);
+      followScrollFrameRef.current = null;
+    }
+    setFrozenEntryEnd(conversationEntries.length);
+  }
+
+  function loadOlder() {
+    const stream = streamRef.current;
+    if (!stream || historyAnchorRef.current || historyLoading || (renderedWindow.hiddenCount === 0 && !historyHasMore)) return;
+    pauseFollowing();
+    historyAnchorRef.current = { height: stream.scrollHeight, top: stream.scrollTop };
+    if (renderedWindow.hiddenCount > 0) setRenderedEntryLimit(current => current + RENDERED_ENTRY_CHUNK);
+    else if (!onLoadOlderHistory()) historyAnchorRef.current = null;
+  }
 
   const scheduleFollowScroll = () => {
     if (followScrollFrameRef.current != null) return;
@@ -496,6 +519,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       const stream = streamRef.current;
       if (!stream || !followingRef.current) return;
       stream.scrollTop = stream.scrollHeight;
+      scrollTopRef.current = stream.scrollTop;
     });
   };
 
@@ -510,6 +534,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
     const historyAnchor = historyAnchorRef.current;
     if (historyAnchor && !historyLoading) {
       stream.scrollTop = historyAnchor.top + (stream.scrollHeight - historyAnchor.height);
+      scrollTopRef.current = stream.scrollTop;
       historyAnchorRef.current = null;
       return;
     }
@@ -631,14 +656,41 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           ref={streamRef}
           className="message-stream"
           aria-live="off"
+          onWheel={event => {
+            if (event.deltaY < 0 && Math.abs(event.deltaY) > Math.abs(event.deltaX)) pauseFollowing();
+          }}
+          onTouchStart={event => {
+            const touch = event.touches.length === 1 ? event.touches[0] : undefined;
+            touchOriginRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+            olderRequestedRef.current = false;
+          }}
+          onTouchMove={event => {
+            const start = touchOriginRef.current;
+            const touch = event.touches.length === 1 ? event.touches[0] : undefined;
+            if (!start || !touch || touch.clientY - start.y < 8 || touch.clientY - start.y < Math.abs(touch.clientX - start.x)) return;
+            pauseFollowing();
+            if (event.currentTarget.scrollTop <= 3 && !olderRequestedRef.current) {
+              olderRequestedRef.current = true;
+              loadOlder();
+            }
+          }}
           onScroll={(event) => {
-            const wasFollowing = followingRef.current;
+            const previousTop = scrollTopRef.current;
+            const top = event.currentTarget.scrollTop;
+            scrollTopRef.current = top;
             const follows = nearBottom(event.currentTarget);
-            followingRef.current = follows;
-            if (!follows && wasFollowing) setFrozenEntryEnd(conversationEntries.length);
-            if (follows) {
+            if (top < previousTop - 1 && !follows) {
+              pauseFollowing();
+              if (top <= 3 && !olderRequestedRef.current) {
+                olderRequestedRef.current = true;
+                loadOlder();
+              }
+            }
+            if (top > 24) olderRequestedRef.current = false;
+            if (follows && top > previousTop + 1 && !followingRef.current) {
+              followingRef.current = true;
               setHasNewContent(false);
-              if (!wasFollowing && (frozenEntryEnd != null || renderedEntryLimit > DEFAULT_RENDERED_ENTRY_LIMIT)) {
+              if (frozenEntryEnd != null || renderedEntryLimit > DEFAULT_RENDERED_ENTRY_LIMIT) {
                 setFrozenEntryEnd(null);
                 setRenderedEntryLimit(DEFAULT_RENDERED_ENTRY_LIMIT);
                 scheduleFollowScroll();
@@ -651,25 +703,17 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
               <button
                 className="history-load-button"
                 type="button"
-                onClick={() => {
-                  const stream = streamRef.current;
-                  if (stream) historyAnchorRef.current = { height: stream.scrollHeight, top: stream.scrollTop };
-                  setRenderedEntryLimit((current) => current + RENDERED_ENTRY_CHUNK);
-                }}
+                onClick={loadOlder}
               >
                 显示更早的已载入记录（{Math.min(RENDERED_ENTRY_CHUNK, renderedWindow.hiddenCount)} 条）
               </button>
             )}
-            {(historyHasMore || historyLoading) && (
+            {(historyHasMore || historyLoading) && renderedWindow.hiddenCount === 0 && (
               <button
                 className="history-load-button"
                 type="button"
-                disabled={historyLoading}
-                onClick={() => {
-                  const stream = streamRef.current;
-                  if (stream) historyAnchorRef.current = { height: stream.scrollHeight, top: stream.scrollTop };
-                  onLoadOlderHistory();
-                }}
+                disabled={historyLoading || phase !== 'connected'}
+                onClick={loadOlder}
               >
                 {historyLoading ? '正在载入更早记录…' : '载入更早记录'}
               </button>
@@ -729,7 +773,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
         )}
       </div>
 
-      <TransientActivity running={running} content={reasoning?.content} startedAt={thread.currentTurnStartedAt} />
+      <TransientActivity running={running} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
       <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
