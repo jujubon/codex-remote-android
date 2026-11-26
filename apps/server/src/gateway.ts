@@ -1131,12 +1131,17 @@ export class MobileGateway {
     return source;
   }
 
-  private rememberThreadSource(thread: Record<string, unknown>) {
+  private rememberThreadSource(thread: Record<string, unknown>, authoritative = false) {
     if (typeof thread.id !== "string") return false;
     if (thread.threadSource === MOBILE_PROJECTLESS_SOURCE) this.mobileProjectlessIds.add(thread.id);
-    const mobile = isMobileThreadSource(thread.threadSource);
-    if (mobile) this.mobileThreads.add(thread.id);
-    else this.desktopThreadIds.add(thread.id);
+    const mobile = this.mobileThreads.has(thread.id) || isMobileThreadSource(thread.threadSource);
+    if (mobile) {
+      this.mobileThreads.add(thread.id);
+      this.desktopThreadIds.delete(thread.id);
+    } else if (authoritative) {
+      // The lightweight list can omit threadSource even for a mobile-owned thread.
+      this.desktopThreadIds.add(thread.id);
+    }
     return mobile;
   }
 
@@ -1146,7 +1151,7 @@ export class MobileGateway {
     if (this.desktopThreadIds.has(threadId) || this.desktopIpc?.hasOwner(threadId)) return false;
     const result = await this.bridge.request("thread/read", { threadId, includeTurns: false }).catch(() => undefined);
     const thread = asRecord(asRecord(result)?.thread);
-    return thread?.id === threadId && this.rememberThreadSource(thread);
+    return thread?.id === threadId && this.rememberThreadSource(thread, true);
   }
 
   private withMobileThread<T>(threadId: string, operation: () => Promise<T>): Promise<T> {

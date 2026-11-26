@@ -208,6 +208,36 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("recovers phone ownership from thread details when a fresh list omits the mobile source", async () => {
+    const { bridge, port } = await start(undefined, undefined, { desktopOnly: true }, async () => ({}));
+    const request = bridge.request.bind(bridge);
+    bridge.request = async (method, params) => {
+      if (!["thread/read", "thread/resume", "turn/start"].includes(method)) return request(method, params);
+      bridge.calls.push({ method, params });
+      if (method === "turn/start") return { turn: { id: "resumed-mobile-turn" } };
+      return { thread: { id: "thread-1", cwd: "/tmp", threadSource: "codex-remote-mobile" } };
+    };
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(String(data))));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    const send = (message: object) => ws.send(JSON.stringify(message));
+    send({ type: "threads.sync", requestId: "list-without-source" });
+    await waitFor(() => messages.some(message => message.requestId === "list-without-source"));
+    send({ type: "thread.open", requestId: "open-mobile-after-restart", threadId: "thread-1" });
+    await waitFor(() => messages.some(message => message.requestId === "open-mobile-after-restart"));
+    expect(messages.find(message => message.requestId === "open-mobile-after-restart")).toMatchObject({
+      type: "thread", thread: { thread: { mobileManaged: true } },
+    });
+    send({ type: "turn.start", requestId: "resume-mobile-after-restart", threadId: "thread-1", text: "continue", clientUserMessageId: "resumed" });
+    await waitFor(() => messages.some(message => message.requestId === "resume-mobile-after-restart"));
+    expect(messages.find(message => message.requestId === "resume-mobile-after-restart")).toMatchObject({
+      type: "turn.started", turn: { id: "resumed-mobile-turn" },
+    });
+    ws.close();
+  });
+
   it("returns the verified Desktop project catalog when the legacy desktop IPC is offline", async () => {
     const desktop = new FakeDesktop();
     desktop.ready = desktop.owner = false;
