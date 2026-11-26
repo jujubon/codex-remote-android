@@ -154,7 +154,7 @@ function normalizeSummary(thread: ThreadSummary): RemoteThread {
     title: visibleUserText(thread.name || thread.preview || '未命名任务'),
     preview: visibleUserText(thread.preview),
     cwd: thread.cwd,
-    projectless: Boolean(thread.projectless),
+    ...(typeof thread.projectless === 'boolean' ? { projectless: thread.projectless } : {}),
     ...(thread.mobileManaged ? { mobileManaged: true } : {}),
     ...(thread.model ? { model: thread.model } : {}),
     ...(thread.effort ? { effort: thread.effort } : {}),
@@ -1021,7 +1021,8 @@ export function normalizeThreadPayload(payload: unknown): {
       agentRole: stringValue(threadData.agentRole) ?? subagentMetadataFromSource(threadData.source).agentRole ?? null,
       ...(threadData.mobileManaged === true || ['codex-remote-mobile', 'codex-remote-mobile-projectless'].includes(String(threadData.threadSource)) ? { mobileManaged: true } : {}),
       ...(typeof threadData.mobileRuntimeActive === 'boolean' ? { mobileRuntimeActive: threadData.mobileRuntimeActive } : {}),
-      ...(threadData.threadSource === 'codex-remote-mobile-projectless' ? { projectless: true } : {}),
+      ...(typeof threadData.projectless === 'boolean' ? { projectless: threadData.projectless }
+        : threadData.threadSource === 'codex-remote-mobile-projectless' ? { projectless: true } : {}),
       ...(record(threadData.latestThreadSettings)?.mobileSendOnly === true ? { mobileSendOnly: true } :
         typeof threadData.model === 'string' ? { mobileSendOnly: false } : {}),
       ...(() => {

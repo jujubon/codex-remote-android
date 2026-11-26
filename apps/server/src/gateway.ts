@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { desktopAction, DesktopActionError } from "./windows-desktop.js";
 import { mkdir, readFile, stat } from "node:fs/promises";
+import { watchFile, unwatchFile } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
@@ -122,6 +123,11 @@ export class MobileGateway {
   private readonly nativeDesktopTurns = new Map<string, NodeJS.Timeout | null>();
   private readonly nativeObservationDigests = new Map<string, string>();
   private nativeObservationTimer?: NodeJS.Timeout;
+  private readonly projectMembershipPath: string;
+  private readonly onProjectMembershipChange = () => { void this.refreshProjectMembership(); };
+  private readonly mobileProjectlessIds = new Set<string>();
+  private membershipLoad?: Promise<void>;
+  private membershipStamp?: string;
   private observingNativeDesktop = false;
   private readonly nativeDesktopModelOverrides = new Map<string, { model: string; effort: string | null }>();
   private readonly mobileThreads = new Set<string>();
@@ -140,6 +146,7 @@ export class MobileGateway {
     private readonly promptQueue?: PromptQueueStore,
     private readonly runDesktopAction = desktopAction,
   ) {
+    this.projectMembershipPath = join(config.codexHome, ".codex-global-state.json");
     this.wss = new WebSocketServer({
       noServer: true,
       handleProtocols: selectedProtocol,
@@ -151,6 +158,9 @@ export class MobileGateway {
       },
     });
     this.wss.on("connection", (socket) => this.onConnection(socket));
+    if (config.desktopOnly) {
+      watchFile(this.projectMembershipPath, { persistent: false, interval: 500 }, this.onProjectMembershipChange);
+    }
     bridge.on("ready", () => {
       this.threadIndexLoadedAt = 0;
       this.broadcast({ type: "status", codexReady: true });
@@ -260,6 +270,10 @@ export class MobileGateway {
               type: "approval.resolved",
               approvalRequestId: params.requestId,
             });
+        }
+        if (message.method === "thread/started" && params?.thread && this.config.desktopOnly) {
+          void this.publishStartedThread(params);
+          return;
         }
         this.updateThreadIndexFromNotification(message.method, params);
         const eventParams = message.method === "thread/status/changed" && typeof params?.threadId === "string"
@@ -460,6 +474,7 @@ export class MobileGateway {
   }
 
   close(): void {
+    if (this.config.desktopOnly) unwatchFile(this.projectMembershipPath, this.onProjectMembershipChange);
     for (const timer of this.nativeDesktopTurns.values()) if (timer) clearTimeout(timer);
     this.nativeDesktopTurns.clear();
     clearInterval(this.nativeObservationTimer);
@@ -714,7 +729,10 @@ export class MobileGateway {
             const created = await desktopAction({ action: "create", threadId: source.id, cwd, prompt, destination: message.destination, projectName: message.projectName });
             if (!created.thread_id) throw new Error("桌面未返回新对话编号，请刷新列表核对。");
             this.threadIndexLoadedAt = 0;
-            if (message.destination === "projectless") this.projectlessIds.add(created.thread_id);
+            if (message.destination === "projectless") {
+              await this.refreshProjectMembership();
+              this.projectlessIds.add(created.thread_id);
+            }
             await this.openThreadPage(socket, created.thread_id, message.requestId);
             break;
           }
@@ -1089,6 +1107,7 @@ export class MobileGateway {
 
   private rememberThreadSource(thread: Record<string, unknown>) {
     if (typeof thread.id !== "string") return false;
+    if (thread.threadSource === MOBILE_PROJECTLESS_SOURCE) this.mobileProjectlessIds.add(thread.id);
     const mobile = isMobileThreadSource(thread.threadSource);
     if (mobile) this.mobileThreads.add(thread.id);
     else this.desktopThreadIds.add(thread.id);
@@ -1664,23 +1683,47 @@ export class MobileGateway {
   }
 
   private projectlessIds = new Set<string>();
+  private membershipKnown = false;
 
   private withMembership(threads: ThreadSummary[]): ThreadSummary[] {
-    return threads.map(thread => this.projectlessIds.has(thread.id) ? { ...thread, projectless: true } : thread);
+    return threads.map(thread => {
+      if (this.mobileProjectlessIds.has(thread.id) || this.projectlessIds.has(thread.id)) return { ...thread, projectless: true };
+      return this.membershipKnown ? { ...thread, projectless: false } : thread;
+    });
   }
 
   private async refreshProjectMembership(): Promise<void> {
     if (!this.config.desktopOnly) return;
-    try {
-      const state = JSON.parse(await readFile(join(this.config.codexHome, ".codex-global-state.json"), "utf8"));
+    return this.membershipLoad ??= (async () => {
+      const metadata = await stat(this.projectMembershipPath);
+      const stamp = `${metadata.mtimeMs}:${metadata.ctimeMs}:${metadata.size}:${metadata.ino}`;
+      if (stamp === this.membershipStamp) return;
+      const state = asRecord(JSON.parse(await readFile(this.projectMembershipPath, "utf8")));
+      if (!state) return;
       const ids = state["projectless-thread-ids"];
-      if (Array.isArray(ids)) this.projectlessIds = new Set(ids.filter((id): id is string => typeof id === "string"));
-    } catch {
-      // Desktop may be replacing this file. Keep the last successful snapshot.
-    }
+      if (ids !== undefined && !Array.isArray(ids)) return;
+      this.membershipStamp = stamp;
+      const next = new Set((ids ?? []).filter((id): id is string => typeof id === "string"));
+      if (this.membershipKnown && next.size === this.projectlessIds.size
+          && [...next].every(id => this.projectlessIds.has(id))) return;
+      this.projectlessIds = next;
+      this.membershipKnown = true;
+      for (const thread of this.threadIndex.snapshot()) {
+        const projectless = next.has(thread.id) || this.mobileProjectlessIds.has(thread.id);
+        if (thread.projectless === projectless) continue;
+        const change = this.threadIndex.patch(thread.id, { projectless });
+        if (change) this.broadcast({
+          type: "threads.delta", baseVersion: change.version - 1, version: change.version,
+          upserts: change.upserts, removedIds: [],
+        });
+      }
+    })().catch(() => {
+      // Desktop can replace its state file while we read it.
+    }).finally(() => { this.membershipLoad = undefined; });
   }
 
   private async ensureThreadIndex(): Promise<void> {
+    await this.refreshProjectMembership();
     if (this.threadIndex.isInitialized) {
       const ttl = this.threadIndex.snapshot().length === 0
         ? EMPTY_THREAD_INDEX_TTL_MS
@@ -1715,7 +1758,7 @@ export class MobileGateway {
         if (summary.id) byId.set(summary.id, summary);
       }
       await this.refreshProjectMembership();
-      this.threadIndex.replace([...byId.values()].filter(thread => !this.archivedIds.has(thread.id)).map((thread) => ({
+      this.threadIndex.replace(this.withMembership([...byId.values()].filter(thread => !this.archivedIds.has(thread.id))).map((thread) => ({
         ...thread,
         status: this.mergedThreadStatus(thread.id, thread.status),
       })));
@@ -1771,7 +1814,8 @@ export class MobileGateway {
   private upsertThreadSummary(summary: ThreadSummary): void {
     if (!summary.id || this.archivedIds.has(summary.id)) return;
     if (isAbsoluteHostPath(summary.cwd)) this.threadCwds.set(summary.id, summary.cwd);
-    const change = this.threadIndex.upsert(summary);
+    if (summary.mobileManaged && summary.projectless === true) this.mobileProjectlessIds.add(summary.id);
+    const change = this.threadIndex.upsert(this.withMembership([summary])[0]!);
     if (!change) return;
     this.broadcast({
       type: "threads.delta",
@@ -1780,6 +1824,22 @@ export class MobileGateway {
       upserts: this.withMembership(change.upserts),
       removedIds: change.removedIds,
     });
+  }
+
+  private async publishStartedThread(params: Record<string, unknown>): Promise<void> {
+    const thread = asRecord(params.thread);
+    if (!thread || typeof thread.id !== "string") return;
+    if (!isMobileThreadSource(thread.threadSource) && !this.projectlessIds.has(thread.id)) {
+      // The Desktop event can arrive before it persists the new thread's project assignment.
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
+    await this.refreshProjectMembership();
+    if (this.archivedIds.has(thread.id)) return;
+    this.updateThreadIndexFromNotification("thread/started", params);
+    const [summary] = this.withMembership([toThreadSummary(thread)]);
+    this.broadcast({ type: "event", method: "thread/started", params: {
+      ...params, thread: { ...thread, projectless: summary?.projectless },
+    } });
   }
 
   private updateThreadIndexFromNotification(method: string, params: Record<string, unknown> | null): void {
@@ -1860,6 +1920,8 @@ export class MobileGateway {
     // Replay the newest turns so a reconnect can recover a missed final response.
     const page = await this.readTurnsPage(threadId, null, limit, knownTurnIds, RECENT_TURNS_TO_REPLAY);
     const metadata = threadMetadataFromPayload(metadataPayload, threadId);
+    await this.refreshProjectMembership();
+    if (metadata.threadSource === MOBILE_PROJECTLESS_SOURCE) this.mobileProjectlessIds.add(threadId);
     const nativeSettings = this.config.desktopOnly && !mobile && !this.desktopIpc?.ready ? this.nativeDesktopModelOverrides.get(threadId) : undefined;
     const managedSettings = mobile ? this.mobileModelOverrides.get(threadId) : undefined;
     if (nativeSettings || managedSettings) {
@@ -1874,7 +1936,8 @@ export class MobileGateway {
     }
     const turns = mergeTurns(page.turns, liveTurns);
     if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
-    const thread = { ...metadata, turns };
+    const [membership] = this.withMembership([toThreadSummary(metadata)]);
+    const thread = { ...metadata, turns, projectless: membership?.projectless };
     await this.trustDesktopAttachments({ turns: [...turns, ...page.cachedTurns] });
     this.replayCachedItems(socket, threadId, page.cachedTurns);
     const summary = toThreadSummary(thread);

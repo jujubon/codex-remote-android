@@ -207,6 +207,35 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("publishes project membership on the first list and pushes changes without opening the thread", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "cmr-project-membership-"));
+    closers.push(() => rm(directory, { recursive: true, force: true, maxRetries: 3 }));
+    const stateFile = join(directory, ".codex-global-state.json");
+    await writeFile(stateFile, JSON.stringify({ "projectless-thread-ids": ["thread-1"] }));
+    const { bridge, port } = await start(undefined, undefined, { codexHome: directory, desktopOnly: true });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<{ type: string; requestId?: string; upserts?: Array<{ id: string; projectless?: boolean }> }> = [];
+    ws.on("message", data => messages.push(JSON.parse(String(data))));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    ws.send(JSON.stringify({ type: "threads.sync", requestId: "initial" }));
+    await waitFor(() => messages.some(message => message.requestId === "initial"));
+    expect(messages.find(message => message.requestId === "initial")).toMatchObject({
+      threads: expect.arrayContaining([expect.objectContaining({ id: "thread-1", projectless: true })]),
+    });
+
+    bridge.emit("notification", { method: "thread/started", params: { thread: {
+      id: "new-thread", cwd: directory, name: "Untitled", updatedAt: 3,
+    } } });
+    await writeFile(stateFile, JSON.stringify({ "projectless-thread-ids": ["new-thread"] }));
+    const changesFor = (id: string) => messages.flatMap(message => message.upserts ?? []).filter(item => item.id === id);
+    await waitFor(() => changesFor("new-thread").length > 0 && changesFor("thread-1").length > 0, 2200);
+    expect(changesFor("new-thread")[0]?.projectless).toBe(true);
+    expect(changesFor("thread-1").at(-1)?.projectless).toBe(false);
+    expect(bridge.calls.every(call => call.method !== "thread/read")).toBe(true);
+    ws.close();
+  });
+
   it("manages a mobile-created thread inside the desktop host and releases it after the queue finishes", async () => {
     const directory = await mkdtemp(join(tmpdir(), "cmr-managed-thread-"));
     closers.push(async () => rm(directory, { recursive: true, force: true, maxRetries: 3 }));

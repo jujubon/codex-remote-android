@@ -31,6 +31,26 @@ export function registerInboxUpload(config: RemoteConfig, id: string) {
   return deviceRequest<RemoteUploadResult>(config, 'inbox/use', { id });
 }
 
+export async function loadInboxImage(config: RemoteConfig, id: string, thumbnail: boolean, signal: AbortSignal): Promise<Blob> {
+  const url = new URL(toWebSocketUrl(config.serverUrl));
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname = `/api/device/inbox/${thumbnail ? 'thumbnail' : 'preview'}/${encodeURIComponent(id)}`;
+  const response = await fetch(url, {
+    headers: { Authorization: 'Bearer ' + config.pairingToken, 'ngrok-skip-browser-warning': '1' },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(thumbnail ? 8000 : 30_000)]),
+    credentials: 'omit',
+    cache: 'no-store',
+    redirect: 'error',
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
+    if (response.status === 404) throw new Error('图片预览需要更新电脑配套服务。');
+    throw new Error(typeof body?.error === 'string' ? body.error : '暂时无法打开这张图片。');
+  }
+  if (!response.headers.get('Content-Type')?.startsWith('image/')) throw new Error('电脑未返回图片。');
+  return response.blob();
+}
+
 export const QUICK_SHARE_KEY = 'codex.remote.quick-share';
 export type HoldDuration = 30 | 60 | 120 | 'task';
 

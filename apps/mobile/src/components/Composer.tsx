@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
 import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
 import { PlusIcon, SendIcon, StopIcon } from './Icons';
@@ -44,6 +44,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
   const [sending, setSending] = useState(false);
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [multiline, setMultiline] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sendingRef = useRef(false);
 
@@ -53,12 +55,25 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
     setSelectedDeliveryMode(running ? 'steer' : 'auto');
   }, [running]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 132)}px`;
-  }, [content]);
+    const measure = measureRef.current;
+    if (!textarea || !measure) return;
+    const fit = () => {
+      const multiple = measure.scrollHeight > parseFloat(getComputedStyle(measure).lineHeight);
+      if (multiple !== multiline) {
+        setMultiline(multiple);
+        return;
+      }
+      textarea.style.height = '0px';
+      const maximum = parseFloat(getComputedStyle(textarea).maxHeight);
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maximum)}px`;
+    };
+    fit();
+    const resize = new ResizeObserver(fit);
+    resize.observe(measure);
+    return () => resize.disconnect();
+  }, [content, multiline]);
 
   const commandOptions = useMemo<CommandOption[]>(() => [
     { value: '/status', title: '/status', description: '查看状态、目录、模型与计时', group: '命令' },
@@ -186,7 +201,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           ))}
         </div>
       )}
-      <form className="composer" onSubmit={(event) => void submit(event)}>
+      <form className={`composer${multiline ? ' composer-multiline' : ''}`} onSubmit={(event) => void submit(event)}>
+        <div ref={measureRef} className="composer-measure" aria-hidden="true">{content}{'\u200b'}</div>
         <input
           ref={fileInputRef}
           className="file-picker-input"

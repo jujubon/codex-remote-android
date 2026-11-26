@@ -7,7 +7,8 @@ import { PhoneReader } from './CrossNetworkReader';
 import { DeviceTools } from './DeviceTools';
 import { MonitorIcon, SettingsIcon } from './Icons';
 import type { InboxFile } from '../lib/deviceTools';
-import { ConnectionDiagnostics, InboxPanel, UpdatePanel } from './ComputerUtilities';
+import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
+import { InboxPanel } from './InboxPanel';
 
 export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, onReconnect, onSettings, footer, notice }: {
   config: RemoteConfig;

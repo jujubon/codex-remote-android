@@ -2,13 +2,11 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { useEffect, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
-import { deviceRequest, type DeviceStatus, type InboxFile } from '../lib/deviceTools';
+import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
 import { checkLatestRelease, compareReleaseVersions, releasePage, type RemoteRelease } from '../lib/updates';
 
 type CheckResult = { ms: number; error?: string };
 const checks = ['电脑回执', 'Codex 额度请求', '对话列表同步'] as const;
-const fileSize = (size: number) => size < 1024 ? `${size} B`
-  : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
 
 export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; sync: () => Promise<void> }) {
   const [results, setResults] = useState<Partial<Record<(typeof checks)[number], CheckResult>>>();
@@ -44,48 +42,6 @@ export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; 
       </div>;
     })}</dl>}
   </div>;
-}
-
-export function InboxPanel({ config, onUse }: { config: RemoteConfig; onUse: (file: InboxFile) => void }) {
-  const [open, setOpen] = useState(false);
-  const [files, setFiles] = useState<InboxFile[]>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  async function refresh() {
-    setLoading(true);
-    setError('');
-    try {
-      const result = await deviceRequest<{ files: InboxFile[] }>(config, 'inbox');
-      setFiles(result.files);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '读取收件箱失败。');
-    } finally {
-      setLoading(false);
-    }
-  }
-  return <section className="computer-utility">
-    <div className="computer-utility-header">
-      <h2>手机收件箱</h2>
-      <button className="secondary-button" type="button" aria-expanded={open} onClick={() => {
-        setOpen(!open);
-        if (!open) void refresh();
-      }}>{open ? '收起' : '打开'}</button>
-    </div>
-    {open && <>
-      <div className="computer-utility-header">
-        <span className="utility-muted">{loading ? '正在读取…' : files ? `最近 ${files.length} 项` : ''}</span>
-        <button className="secondary-button" type="button" disabled={loading} onClick={() => void refresh()}>刷新</button>
-      </div>
-      {error && <p role="status">{error}</p>}
-      {!loading && !error && files?.length === 0 && <p>暂无收件。</p>}
-      {files && files.length > 0 && <ul className="computer-inbox-list">{files.map(file => <li key={file.id}>
-        <div><strong>{file.fileName}</strong>
-          <small>{file.source === 'share' ? '手机分享' : '对话附件'} · {fileSize(file.size)} · {new Date(file.receivedAt).toLocaleString('zh-CN')}</small>
-          <small>{file.path}</small></div>
-        <button className="secondary-button" type="button" onClick={() => onUse(file)}>用于对话</button>
-      </li>)}</ul>}
-    </>}
-  </section>;
 }
 
 export function UpdatePanel({ hostVersion }: { hostVersion: string }) {

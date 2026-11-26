@@ -41,6 +41,26 @@ afterEach(async () => {
 });
 
 describe("file transfer primitives", () => {
+  it("streams small inbox images by receipt id and rejects changed or non-image entries", async () => {
+    const { manager, root } = await fixture();
+    const inbox = new FileInbox(join(root, "index.json"), manager);
+    const image = join(root, "picture.png");
+    const text = join(root, "private.txt");
+    await writeFile(image, "picture bytes");
+    await writeFile(text, "private contents");
+    await inbox.recordShare(image);
+    await inbox.recordShare(text);
+    const files = await inbox.list(root);
+    const photo = files.find(file => file.fileName === "picture.png")!;
+    const other = files.find(file => file.fileName === "private.txt")!;
+    const preview = await inbox.preview(root, photo.id, true);
+    expect(preview.mime).toBe("image/png");
+    expect(await streamText(preview.stream)).toBe("picture bytes");
+    await expect(inbox.preview(root, other.id, false)).rejects.toMatchObject({ httpStatus: 415 });
+    await writeFile(image, "different picture bytes");
+    await expect(inbox.preview(root, photo.id, false)).rejects.toMatchObject({ httpStatus: 410 });
+  });
+
   it("lists confirmed phone receipts and reuses the same bytes without taking ownership", async () => {
     let now = 0;
     const { manager, root, uploads } = await fixture({ now: () => now });

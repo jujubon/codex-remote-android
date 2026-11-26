@@ -214,6 +214,20 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, { files: await inbox.list((await device.settings()).folder) });
     return;
   }
+  const preview = request.method === "GET" ? /^\/api\/device\/inbox\/(preview|thumbnail)\/([a-f0-9]{64})$/.exec(request.url ?? "") : null;
+  if (preview) {
+    const image = await inbox.preview((await device.settings()).folder, preview[2]!, preview[1] === "thumbnail");
+    response.writeHead(200, {
+      "content-type": image.mime,
+      "content-length": String(image.size),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    response.on("close", () => image.stream.destroy());
+    image.stream.on("error", () => response.destroy());
+    image.stream.pipe(response);
+    return;
+  }
   if (!device.supported || request.method !== "POST") {
     json(response, 404, { error: "此电脑未提供设备工具。" });
     return;
