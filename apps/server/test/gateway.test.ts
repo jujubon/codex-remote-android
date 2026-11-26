@@ -207,6 +207,47 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("manages a mobile-created thread inside the desktop host and releases it after the queue finishes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "cmr-managed-thread-"));
+    closers.push(async () => rm(directory, { recursive: true, force: true }));
+    const queue = await PromptQueueStore.create(join(directory, "queue.json"));
+    const { bridge, port } = await start(undefined, queue, { desktopOnly: true, promptQueueFile: join(directory, "queue.json") });
+    const thread = { id: "managed", cwd: directory, model: "model-1", reasoningEffort: "medium", threadSource: "codex-remote-mobile" };
+    let started = 0;
+    const request = bridge.request.bind(bridge);
+    bridge.request = async (method, params) => {
+      if (!["thread/start", "turn/start", "thread/read"].includes(method)) return request(method, params);
+      bridge.calls.push({ method, params });
+      if (method === "turn/start") return { turn: { id: `mobile-turn-${++started}` } };
+      return { thread };
+    };
+    const encoded = Buffer.from(token).toString("base64url");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${encoded}`], { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(String(data))));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    const send = (value: Record<string, unknown>) => ws.send(JSON.stringify(value));
+    send({ type: "thread.start", requestId: "new", mobileManaged: true, cwd: directory, prompt: "first" });
+    await waitFor(() => messages.some(message => message.requestId === "new"));
+    expect(messages.find(message => message.requestId === "new")).toMatchObject({ type: "thread",
+      thread: { thread: { mobileManaged: true, mobileRuntimeActive: true, mobileActiveTurnId: "mobile-turn-1" } } });
+    send({ type: "turn.start", threadId: "managed", requestId: "stale", text: "old", deliveryMode: "steer", expectedTurnId: "old", clientUserMessageId: "old" });
+    await waitFor(() => messages.some(message => message.requestId === "stale" && message.code === "no_active_turn"));
+    send({ type: "turn.start", threadId: "managed", requestId: "steer", text: "now", deliveryMode: "steer", expectedTurnId: "mobile-turn-1", clientUserMessageId: "steer" });
+    await waitFor(() => bridge.calls.some(call => call.method === "turn/steer"));
+    expect(bridge.calls.filter(call => call.method === "turn/steer")).toMatchObject([{ params: { expectedTurnId: "mobile-turn-1" } }]);
+    send({ type: "turn.start", threadId: "managed", requestId: "queue", text: "next", deliveryMode: "queue", clientUserMessageId: "queue" });
+    await waitFor(() => messages.some(message => message.type === "prompt.queued"));
+    expect(started).toBe(1);
+    bridge.emit("notification", { method: "turn/completed", params: { threadId: "managed", turn: { id: "mobile-turn-1", status: "completed" } } });
+    await waitFor(() => started === 2 && queue.list("managed").length === 0);
+    expect(bridge.calls.some(call => call.method === "thread/unsubscribe")).toBe(false);
+    send({ type: "turn.interrupt", threadId: "managed", turnId: "mobile-turn-2" });
+    await waitFor(() => bridge.calls.some(call => call.method === "turn/interrupt"));
+    bridge.emit("notification", { method: "turn/completed", params: { threadId: "managed", turn: { id: "mobile-turn-2", status: "interrupted" } } });
+    await waitFor(() => bridge.calls.some(call => call.method === "thread/unsubscribe"));
+    ws.close();
+  });
   it("authenticates and sends thread data", async () => {
     const { bridge, port } = await start();
     const encoded = Buffer.from(token).toString("base64url");

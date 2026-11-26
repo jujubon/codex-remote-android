@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption } from '../types/protocol';
-import { ApprovalCard } from './ApprovalCard';
+import { ApprovalCard, AsyncQuestionCard } from './ApprovalCard';
+import { encodeAsyncAnswer, pendingAsyncQuestions } from '../lib/asyncQuestions';
 import { CompactionStatusBar } from './CompactionStatusBar';
 import { isContextCompactionItem, orderConversationTurns } from '../hooks/useRemote';
 import { Composer } from './Composer';
@@ -554,7 +555,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
               setSettingsOpen(true);
               settingsRef.current?.showModal();
             }}>
-              <b>{activeModel?.displayName || selectedModel || '模型'}</b>
+              <b>{activeModel?.displayName || selectedModel || '模型未读取'}</b>
               <ChevronDownIcon className="session-chevron" />
               {selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
             </button>
@@ -687,6 +688,10 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
               </details>
             ))}
             {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />)}
+            {thread.mobileManaged && !selectedAgentId && pendingAsyncQuestions(messages).map(question => (
+              <AsyncQuestionCard key={question.id} question={question} disabled={phase !== 'connected' || (running && !canSteer)}
+                onAnswer={answer => onSend(encodeAsyncAnswer(question, answer), undefined, running ? 'steer' : 'auto')} />
+            ))}
           </div>
         </section>
         {(hasNewContent || frozenEntryEnd != null) && (
@@ -713,10 +718,11 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
         <label>
           <span>模型</span>
           <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={phase !== 'connected' || modelPending}>
-            <option value="" disabled>等待桌面设置</option>
+            <option value="" disabled>模型未读取</option>
             {selectedModel && !activeModel && <option value={selectedModel}>{selectedModel}</option>}
             {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
           </select>
+          {thread.mobileSendOnly && <small>仅用于手机普通发送</small>}
         </label>
         <label>
           <span>思考强度</span>
@@ -766,7 +772,7 @@ export function ConversationScreen({ onArchive, onTaskPower, accountPanel, notic
           thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
       </div>}
       {!settingsOpen && notice}
-      <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

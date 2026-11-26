@@ -1,8 +1,8 @@
 import type { IncomingMessage } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { desktopAction, DesktopActionError } from "./windows-desktop.js";
-import { readFile } from "node:fs/promises";
-import { join, isAbsolute } from "node:path";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { dirname, join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import {
@@ -81,6 +81,9 @@ const EMPTY_THREAD_INDEX_TTL_MS = 5_000;
 const THREAD_INDEX_TTL_MS = 60_000;
 const RECENT_TURNS_TO_REPLAY = 3;
 const NATIVE_OBSERVATION_INTERVAL_MS = 5_000;
+const MOBILE_THREAD_SOURCE = "codex-remote-mobile";
+const MOBILE_PROJECTLESS_SOURCE = "codex-remote-mobile-projectless";
+const MOBILE_THREAD_CONFIG = { thread_unload_delay_secs: 1 };
 const THREAD_SOURCE_KINDS = [
   "cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview",
   "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown",
@@ -121,6 +124,11 @@ export class MobileGateway {
   private nativeObservationTimer?: NodeJS.Timeout;
   private observingNativeDesktop = false;
   private readonly nativeDesktopModelOverrides = new Map<string, { model: string; effort: string | null }>();
+  private readonly mobileThreads = new Set<string>();
+  private readonly subscribedMobileThreads = new Set<string>();
+  private readonly desktopThreadIds = new Set<string>();
+  private readonly mobileOperations = new Map<string, Promise<unknown>>();
+  private readonly mobileModelOverrides = new Map<string, { model: string; effort: string | null }>();
   private threadIndexLoad: Promise<void> | null = null;
   private threadIndexLoadedAt = 0;
 
@@ -160,6 +168,7 @@ export class MobileGateway {
       this.appServerThreadStatuses.clear();
       this.appServerCurrentTurnIds.clear();
       this.appServerCompletedTurnIds.clear();
+      this.subscribedMobileThreads.clear();
       this.broadcast({
         type: "status",
         codexReady: false,
@@ -170,6 +179,9 @@ export class MobileGateway {
       "notification",
       (message: { method: string; params?: unknown }) => {
         const params = asRecord(message.params);
+        if (message.method === "thread/closed" && typeof params?.threadId === "string") {
+          this.subscribedMobileThreads.delete(params.threadId);
+        }
         if (
           message.method === "thread/status/changed" &&
           typeof params?.threadId === "string"
@@ -215,10 +227,11 @@ export class MobileGateway {
           this.rememberAppServerCompletedTurn(params.threadId, turn);
           const completedStatus = String(turn?.status ?? params.status ?? "").toLowerCase();
           if (completedStatus.includes("interrupt")) {
-            void this.pausePromptQueue(params.threadId, "队列因当前 turn 被中断而暂停；确认后可恢复。");
+            void this.pausePromptQueue(params.threadId, "队列已暂停，可手动恢复。");
           } else {
             this.scheduleQueueDrain(params.threadId);
           }
+          this.scheduleMobileThreadRelease(params.threadId);
           void this.refreshThreadDiff(params.threadId, true);
         }
         if (
@@ -251,7 +264,9 @@ export class MobileGateway {
         this.updateThreadIndexFromNotification(message.method, params);
         const eventParams = message.method === "thread/status/changed" && typeof params?.threadId === "string"
           ? { ...params, status: this.mergedThreadStatus(params.threadId, params.status) }
-          : message.params ?? null;
+          : message.method === "turn/started" && typeof params?.threadId === "string" && this.mobileThreads.has(params.threadId)
+            ? { ...params, mobileRuntimeActive: true }
+            : message.params ?? null;
         const eventMessage: ServerMessage = {
           type: "event",
           method: message.method,
@@ -480,6 +495,7 @@ export class MobileGateway {
       desktopOnly: this.config.desktopOnly,
       desktopIpcReady: this.config.desktopOnly ? this.desktopIpc?.ready === true : undefined,
       projectCreation: this.config.desktopOnly,
+      mobileManagedThreads: this.config.desktopOnly,
       archiveManagement: true,
       version: HOST_VERSION,
       serverId: this.config.serverId,
@@ -686,6 +702,10 @@ export class MobileGateway {
           break;
         }
         case "thread.start": {
+          if (this.config.desktopOnly && message.mobileManaged === true) {
+            await this.startMobileThread(socket, message);
+            break;
+          }
           if (this.config.desktopOnly) {
             const prompt = requiredString(message.prompt, "首条任务");
             if (message.destination !== undefined && !["projectless", "newProject"].includes(message.destination)) throw new Error("未知的对话位置。");
@@ -722,6 +742,14 @@ export class MobileGateway {
         }
         case "thread.compact": {
           const threadId = requiredString(message.threadId, "threadId");
+          if (await this.isMobileThread(threadId)) {
+            await this.withMobileThread(threadId, async () => {
+              await this.loadMobileThread(threadId);
+              await this.bridge.request("thread/compact/start", { threadId });
+            });
+            this.send(socket, { type: "thread.compaction.accepted", requestId: message.requestId, threadId });
+            break;
+          }
           await this.ensureDesktopOwner(threadId);
           if (this.desktopIpc?.hasOwner(threadId))
             await this.desktopIpc.compactThread(threadId);
@@ -735,13 +763,13 @@ export class MobileGateway {
         }
         case "thread.settings": {
           const threadId = requiredString(message.threadId, "threadId");
-          if (this.config.desktopOnly && !this.desktopIpc?.ready && (message.model || message.effort)
+          const mobile = await this.isMobileThread(threadId);
+          if (this.config.desktopOnly && !mobile && !this.desktopIpc?.ready && (message.model || message.effort)
               && !message.permissionMode && !message.collaborationMode && !message.summary) {
             const settings = await this.setNativeModelOverride(threadId, message.model, message.effort);
-            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings });
+            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings: { ...settings, mobileSendOnly: true } });
             break;
           }
-          await this.ensureDesktopOwner(threadId);
           const threadSettings = {
             ...(message.model ? { model: message.model } : {}),
             ...(message.effort ? { effort: message.effort } : {}),
@@ -756,6 +784,25 @@ export class MobileGateway {
               ? { collaborationMode: message.collaborationMode }
               : {}),
           };
+          if (mobile) {
+            const settings = await this.withMobileThread(threadId, async () => {
+              await this.loadMobileThread(threadId);
+              await this.bridge.request("thread/settings/update", { threadId, ...threadSettings });
+              if (!message.model && !message.effort) return undefined;
+              const latest = threadMetadataFromPayload(await this.bridge.request("thread/read", { threadId, includeTurns: false }), threadId);
+              const current = asRecord(latest.latestThreadSettings);
+              if (typeof current?.model !== "string" || (message.model && current.model !== message.model)
+                  || (message.effort && current.effort !== message.effort)) {
+                throw new GatewayRequestError("settings_unconfirmed", "电脑未确认模型设置，请刷新后再试。");
+              }
+              const confirmed = { model: current.model, effort: typeof current.effort === "string" ? current.effort : null };
+              this.mobileModelOverrides.set(threadId, confirmed);
+              return confirmed;
+            }).finally(() => this.scheduleMobileThreadRelease(threadId));
+            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings });
+            break;
+          }
+          await this.ensureDesktopOwner(threadId);
           if (this.config.desktopOnly && !message.permissionMode && !message.collaborationMode && (message.model || message.effort)) {
             if (!this.desktopIpc?.hasOwner(threadId)) throw new Error("桌面对话已断开。");
             const settings = await this.desktopIpc.updateModelSettings(threadId, message.model, message.effort);
@@ -837,8 +884,9 @@ export class MobileGateway {
           const text = requiredString(message.text, "text");
           if (message.deliveryMode != null && !["auto", "steer", "queue"].includes(message.deliveryMode))
             throw new Error("无效的消息发送方式。");
+          const mobile = await this.isMobileThread(threadId);
           const desktopFallback = this.config.desktopOnly && !this.desktopIpc?.ready;
-          if (this.config.desktopOnly && (desktopFallback || message.deliveryMode === "queue")) {
+          if (this.config.desktopOnly && !mobile && (desktopFallback || message.deliveryMode === "queue")) {
             if (message.deliveryMode === "steer") {
               throw new GatewayRequestError("desktop_steer_unavailable", "当前桌面连接无法确认并引导指定轮次。可选择排队下一轮。");
             }
@@ -856,7 +904,7 @@ export class MobileGateway {
             }
             break;
           }
-          await this.ensureDesktopOwner(threadId);
+          if (!mobile) await this.ensureDesktopOwner(threadId);
           const input: Array<Record<string, unknown>> = [];
           const queuedUploadIds: string[] = [];
           const queuedFileNames: string[] = [];
@@ -892,6 +940,8 @@ export class MobileGateway {
           const turnParams = {
             threadId,
             input,
+            ...(message.deliveryMode === "steer" && message.expectedTurnId !== undefined
+              ? { expectedTurnId: requiredString(message.expectedTurnId, "expectedTurnId") } : {}),
             ...(message.clientUserMessageId
               ? {
                   clientUserMessageId: requiredString(
@@ -938,7 +988,7 @@ export class MobileGateway {
               }
               throw error;
             }
-            if (this.desktopIpc?.hasOwner(threadId)) {
+            if (!mobile && this.desktopIpc?.hasOwner(threadId)) {
               await this.promptQueue.requeue(item.id, "电脑端 GUI 正在作为会话 owner。当前 Desktop IPC 没有可供外部 follower 参与的原生队列锁；为避免双 start，手机队列不会自动启动。执行中可点“立即引导”。");
             }
             this.send(socket, { type: "prompt.queued", requestId: message.requestId, threadId, item: this.promptQueue.list(threadId).find((candidate) => candidate.id === item.id)! });
@@ -959,8 +1009,14 @@ export class MobileGateway {
         }
         case "turn.interrupt": {
           const threadId = requiredString(message.threadId, "threadId");
-          await this.ensureDesktopOwner(threadId);
           const turnId = requiredString(message.turnId, "turnId");
+          if (await this.isMobileThread(threadId)) {
+            if (this.appServerCurrentTurnIds.get(threadId) !== turnId)
+              throw new GatewayRequestError("no_active_turn", "手机服务当前没有运行这一轮。");
+            await this.bridge.request("turn/interrupt", { threadId, turnId });
+            break;
+          }
+          await this.ensureDesktopOwner(threadId);
           if (this.desktopIpc?.hasOwner(threadId)) {
             const activeTurnId = activeConversationTurnId(
               this.desktopIpc.getConversation(threadId),
@@ -1031,6 +1087,116 @@ export class MobileGateway {
     return source;
   }
 
+  private rememberThreadSource(thread: Record<string, unknown>) {
+    if (typeof thread.id !== "string") return false;
+    const mobile = isMobileThreadSource(thread.threadSource);
+    if (mobile) this.mobileThreads.add(thread.id);
+    else this.desktopThreadIds.add(thread.id);
+    return mobile;
+  }
+
+  private async isMobileThread(threadId: string): Promise<boolean> {
+    if (!this.config.desktopOnly) return false;
+    if (this.mobileThreads.has(threadId)) return true;
+    if (this.desktopThreadIds.has(threadId) || this.desktopIpc?.hasOwner(threadId)) return false;
+    const result = await this.bridge.request("thread/read", { threadId, includeTurns: false }).catch(() => undefined);
+    const thread = asRecord(asRecord(result)?.thread);
+    return thread?.id === threadId && this.rememberThreadSource(thread);
+  }
+
+  private withMobileThread<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mobileOperations.get(threadId);
+    const next = (previous ? previous.catch(() => {}) : Promise.resolve()).then(operation);
+    this.mobileOperations.set(threadId, next);
+    return next.finally(() => {
+      if (this.mobileOperations.get(threadId) === next) this.mobileOperations.delete(threadId);
+    });
+  }
+
+  private async loadMobileThread(threadId: string): Promise<void> {
+    if (this.subscribedMobileThreads.has(threadId)) return;
+    if (this.desktopIpc?.hasOwner(threadId)) {
+      throw new GatewayRequestError("desktop_owns_thread", "这段对话已在桌面打开，请先在桌面结束或退出这段对话。");
+    }
+    const snapshot = await this.runDesktopAction({ action: "native-read", threadId }).catch(() => undefined);
+    if (conversationIsActive(asRecord(asRecord(snapshot?.snapshot)?.thread) ?? undefined)) {
+      throw new GatewayRequestError("desktop_owns_thread", "桌面正在运行这段对话，请等当前任务结束。");
+    }
+    try {
+      const result = asRecord(await this.bridge.request("thread/resume", { threadId, excludeTurns: true, config: MOBILE_THREAD_CONFIG }));
+      if (asRecord(result?.thread)?.id !== threadId) throw new Error("thread id mismatch");
+    } catch (error) {
+      if (/writ(?:er|ing)|locked|in use/i.test(String(error))) {
+        throw new GatewayRequestError("desktop_owns_thread", "这段对话正在由桌面使用，请退出桌面上的这段对话后再试。");
+      }
+      throw error;
+    }
+    this.subscribedMobileThreads.add(threadId);
+  }
+
+  private scheduleMobileThreadRelease(threadId: string): void {
+    if (!this.mobileThreads.has(threadId) || !this.subscribedMobileThreads.has(threadId)) return;
+    void Promise.resolve().then(async () => {
+      await this.queueDrains.get(threadId);
+      await this.withMobileThread(threadId, async () => {
+        if (this.appServerThreadIsActive(threadId) || !this.subscribedMobileThreads.has(threadId)) return;
+        await this.bridge.request("thread/unsubscribe", { threadId });
+        this.subscribedMobileThreads.delete(threadId);
+      });
+    }).catch(() => console.warn("[mobile-thread] unable to release idle subscription"));
+  }
+
+  private async mobileWorkspace(message: Extract<ClientMessage, { type: "thread.start" }>): Promise<{ cwd: string; projectId?: string }> {
+    if (message.destination === "projectless") {
+      const cwd = join(dirname(this.config.promptQueueFile), "mobile-workspaces", randomUUID());
+      await mkdir(cwd, { recursive: true });
+      return { cwd };
+    }
+    if (message.destination === "newProject") {
+      const name = requiredString(message.projectName, "项目名称");
+      const source = await this.desktopProjectSource();
+      const result = await this.runDesktopAction({ action: "native-project-create", threadId: source.id, projectName: name });
+      return { cwd: requiredAbsolutePath(result.project?.path, "项目目录"), ...(result.project?.id ? { projectId: result.project.id } : {}) };
+    }
+    if (message.destination !== undefined) throw new Error("未知的对话位置。");
+    const cwd = requiredAbsolutePath(message.cwd, "cwd");
+    if (!(await stat(cwd)).isDirectory()) throw new Error("电脑工作目录不存在。");
+    return { cwd };
+  }
+
+  private async startMobileThread(socket: WebSocket, message: Extract<ClientMessage, { type: "thread.start" }>): Promise<void> {
+    const prompt = requiredString(message.prompt, "首条任务");
+    if (prompt.length > 4000) throw new Error("首条消息最多 4000 个字符。");
+    const { cwd, projectId } = await this.mobileWorkspace(message);
+    const first = asRecord(await this.bridge.request("thread/start", {
+      cwd, ...(message.model ? { model: message.model } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(message.modelProvider ? { modelProvider: message.modelProvider } : {}),
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      threadSource: message.destination === "projectless" ? MOBILE_PROJECTLESS_SOURCE : MOBILE_THREAD_SOURCE,
+      config: MOBILE_THREAD_CONFIG,
+    }));
+    const thread = asRecord(first?.thread);
+    const id = requiredString(thread?.id, "新对话编号");
+    this.mobileThreads.add(id);
+    this.subscribedMobileThreads.add(id);
+    this.threadCwds.set(id, cwd);
+    this.socketThreads.get(socket)?.add(id);
+    try {
+      const result = await this.withMobileThread(id, () => this.bridge.request("turn/start", {
+        threadId: id,
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+      }));
+      this.rememberAppServerStartedTurn(id, result);
+      this.threadIndexLoadedAt = 0;
+      await this.openThreadPage(socket, id, message.requestId);
+    } catch (error) {
+      this.scheduleMobileThreadRelease(id);
+      throw error;
+    }
+  }
+
   private async ensureDesktopOwner(threadId: string): Promise<void> {
     if (!this.config.desktopOnly || this.desktopIpc?.hasOwner(threadId)) return;
     if (!this.desktopIpc?.ready) throw new Error("电脑 Codex Desktop 当前离线。");
@@ -1045,7 +1211,9 @@ export class MobileGateway {
   }
 
   private async setNativeModelOverride(threadId: string, model?: string, effort?: string) {
-    const selected = model ?? this.nativeDesktopModelOverrides.get(threadId)?.model;
+    const stored = model || this.nativeDesktopModelOverrides.has(threadId) ? undefined
+      : asRecord(asRecord(await this.bridge.request("thread/read", { threadId, includeTurns: false }))?.thread)?.model;
+    const selected = model ?? this.nativeDesktopModelOverrides.get(threadId)?.model ?? (typeof stored === "string" ? stored : undefined);
     if (!selected) throw new Error("请先选择本对话的模型，再调整思考强度。");
     const option = (await this.listModels()).find(entry => entry.model === selected && !entry.hidden);
     if (!option) throw new Error("电脑当前的模型列表中没有这个模型，请重新选择。");
@@ -1129,7 +1297,7 @@ export class MobileGateway {
         const id = typeof latest?.id === "string" ? latest.id : undefined;
         if (thread?.id === threadId && latest && id && (turnId ? id === turnId : id !== previous)) {
           const settings = this.nativeDesktopModelOverrides.get(threadId);
-          const projected = { ...thread, name: thread.title, turns, ...(settings ? { latestThreadSettings: settings } : {}) };
+          const projected = { ...thread, name: thread.title, turns, ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
           await this.trustDesktopAttachments(projected);
           if (!this.nativeDesktopTurns.has(threadId)) return;
           for (const socket of this.wss.clients) {
@@ -1163,21 +1331,25 @@ export class MobileGateway {
     try {
       for (const threadId of watched) {
         if (!this.nativeObservationTimer) break;
-        if (this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        if (this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId) || this.subscribedMobileThreads.has(threadId)) continue;
         const result = await this.runDesktopAction({ action: "native-read", threadId }).catch(() => null);
-        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId) || this.subscribedMobileThreads.has(threadId)) continue;
         const snapshot = asRecord(result?.snapshot);
         const thread = asRecord(snapshot?.thread);
         if (thread?.id !== threadId || !Array.isArray(snapshot?.turns)) continue;
         const settings = this.nativeDesktopModelOverrides.get(threadId);
-        const projected = { ...thread, name: thread.title, turns: snapshot.turns, ...(settings ? { latestThreadSettings: settings } : {}) };
+        const projected = { ...thread, name: thread.title, turns: snapshot.turns, ...(settings ? { latestThreadSettings: { ...settings, mobileSendOnly: true } } : {}) };
         const digest = createHash("sha256").update(JSON.stringify(projected)).digest("hex");
         if (this.nativeObservationDigests.get(threadId) === digest) continue;
         await this.trustDesktopAttachments(projected);
-        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId)) continue;
+        if (!this.nativeObservationTimer || this.desktopIpc?.hasOwner(threadId) || this.nativeDesktopTurns.has(threadId) || this.archivedIds.has(threadId) || this.subscribedMobileThreads.has(threadId)) continue;
         this.nativeObservationDigests.set(threadId, digest);
+        const stored = await this.bridge.request("thread/read", { threadId, includeTurns: false }).catch(() => undefined);
+        if (this.subscribedMobileThreads.has(threadId)) continue;
+        const metadata = threadMetadataFromPayload(stored, threadId);
+        const projection = { ...metadata, ...projected, mobileRuntimeActive: false };
         for (const socket of this.wss.clients) {
-          if (this.socketThreads.get(socket)?.has(threadId)) this.send(socket, { type: "thread", thread: { thread: projected } });
+          if (this.socketThreads.get(socket)?.has(threadId)) this.send(socket, { type: "thread", thread: { thread: projection } });
         }
       }
     } finally {
@@ -1191,6 +1363,26 @@ export class MobileGateway {
     deliveryMode: "auto" | "steer",
   ): Promise<unknown> {
     const clientUserMessageId = typeof turnParams.clientUserMessageId === "string" ? turnParams.clientUserMessageId : undefined;
+    if (this.mobileThreads.has(threadId)) {
+      return this.submitTurnIdempotently(threadId, clientUserMessageId, JSON.stringify([deliveryMode, turnParams]), () =>
+        this.withMobileThread(threadId, async () => {
+          if (deliveryMode === "steer") return this.steerCurrentTurn(threadId, turnParams);
+          if (this.appServerThreadIsActive(threadId)) throw new GatewayRequestError("turn_active", "当前任务正在执行，请选择引导或排队。");
+          await this.loadMobileThread(threadId);
+          const selected = this.mobileModelOverrides.get(threadId);
+          try {
+            const result = await this.bridge.request("turn/start", {
+              ...turnParams, ...(selected ? { model: selected.model, ...(selected.effort ? { effort: selected.effort } : {}) } : {}),
+            });
+            this.mobileModelOverrides.delete(threadId);
+            this.rememberAppServerStartedTurn(threadId, result);
+            return result;
+          } catch (error) {
+            this.scheduleMobileThreadRelease(threadId);
+            throw error;
+          }
+        }));
+    }
     const desktopOwned = this.desktopIpc?.hasOwner(threadId) === true;
     const result = await this.submitTurnIdempotently(threadId, clientUserMessageId, JSON.stringify(turnParams), async () => {
       if (this.config.desktopOnly && !this.desktopIpc?.hasOwner(threadId)) throw new Error("桌面对话已断开，请重新打开。");
@@ -1214,7 +1406,9 @@ export class MobileGateway {
   }
 
   private async steerCurrentTurn(threadId: string, turnParams: Record<string, unknown>): Promise<unknown> {
-    if (this.desktopIpc?.hasOwner(threadId)) {
+    if (!this.mobileThreads.has(threadId) && this.desktopIpc?.hasOwner(threadId)) {
+      if (turnParams.expectedTurnId && turnParams.expectedTurnId !== activeConversationTurnId(this.desktopIpc.getConversation(threadId)))
+        throw new GatewayRequestError("no_active_turn", "当前轮已切换，请核对后再引导。");
       try {
         return await this.desktopIpc.steerTurn(threadId, turnParams);
       } catch (error) {
@@ -1227,6 +1421,8 @@ export class MobileGateway {
     }
     const expectedTurnId = this.appServerCurrentTurnIds.get(threadId);
     if (!expectedTurnId) throw new GatewayRequestError("no_active_turn", "尚未确认当前 turnId，无法安全引导。");
+    if (turnParams.expectedTurnId && turnParams.expectedTurnId !== expectedTurnId)
+      throw new GatewayRequestError("no_active_turn", "当前轮已切换，请核对后再引导。");
     return this.bridge.request("turn/steer", {
       threadId,
       clientUserMessageId: turnParams.clientUserMessageId,
@@ -1239,6 +1435,7 @@ export class MobileGateway {
     const outer = asRecord(value);
     const turn = asRecord(outer?.turn) ?? outer;
     const turnId = typeof turn?.id === "string" ? turn.id : typeof turn?.turnId === "string" ? turn.turnId : null;
+    if (turnId && this.appServerCompletedTurnIds.get(threadId) === turnId) return;
     if (turnId) this.appServerCurrentTurnIds.set(threadId, turnId);
     const previous = asRecord(this.appServerThreadStatuses.get(threadId));
     this.appServerThreadStatuses.set(threadId, {
@@ -1329,7 +1526,7 @@ export class MobileGateway {
   }
 
   private async drainPromptQueue(threadId: string): Promise<void> {
-    if (this.config.desktopOnly) return;
+    if (this.config.desktopOnly && !await this.isMobileThread(threadId)) return;
     if (!this.promptQueue || this.isThreadActive(threadId)) return;
     // Strict single-owner rule: Desktop native queue and Host queue cannot share
     // an atomic lock. Never auto-start while Desktop owns the conversation.
@@ -1358,7 +1555,7 @@ export class MobileGateway {
       this.broadcastQueue(item.threadId);
       return result;
     } catch (error) {
-      if (mode === "queue" && error instanceof GatewayRequestError && error.code === "queue_turn_active") {
+      if (mode === "queue" && error instanceof GatewayRequestError && ["queue_turn_active", "desktop_owns_thread"].includes(error.code)) {
         await this.promptQueue.requeue(item.id, error.message);
         this.broadcastQueue(item.threadId);
         return {};
@@ -1371,6 +1568,7 @@ export class MobileGateway {
   }
 
   private async startQueuedTurn(threadId: string, turnParams: Record<string, unknown>): Promise<unknown> {
+    if (await this.isMobileThread(threadId)) return this.submitPreparedTurn(threadId, turnParams, "auto");
     await this.ensureDesktopOwner(threadId);
     if (this.isThreadActive(threadId)) throw new GatewayRequestError("queue_turn_active", "检测到新的活动 turn，队列继续等待，未创建竞争 turn。");
     const clientUserMessageId = typeof turnParams.clientUserMessageId === "string" ? turnParams.clientUserMessageId : undefined;
@@ -1508,6 +1706,7 @@ export class MobileGateway {
         if (cursor) seenCursors.add(cursor);
       } while (cursor);
       const byId = new Map(data.map((thread) => {
+        this.rememberThreadSource(thread);
         const summary = toThreadSummary(thread);
         return [summary.id, summary] as const;
       }));
@@ -1587,6 +1786,7 @@ export class MobileGateway {
     if (!params) return;
     const nestedThread = asRecord(params.thread);
     if (method === "thread/started" && nestedThread) {
+      this.rememberThreadSource(nestedThread);
       const summary = toThreadSummary(nestedThread);
       this.upsertThreadSummary({ ...summary, status: this.mergedThreadStatus(summary.id, summary.status) });
       return;
@@ -1625,7 +1825,8 @@ export class MobileGateway {
     knownTurnIds?: string[],
   ): Promise<void> {
     const limit = boundedHistoryLimit(requestedLimit);
-    const desktopThread = this.desktopIpc?.ready
+    const mobile = await this.isMobileThread(threadId);
+    const desktopThread = !this.subscribedMobileThreads.has(threadId) && this.desktopIpc?.ready
       ? await this.desktopIpc.openConversation(threadId, "local", 2_500, false)
       : null;
     let metadataPayload: unknown;
@@ -1643,7 +1844,7 @@ export class MobileGateway {
       metadataPayload = this.config.desktopOnly
         ? await this.bridge.request("thread/read", { threadId, includeTurns: false })
         : await this.bridge.request("thread/resume", { threadId, excludeTurns: true });
-      if (this.config.desktopOnly && !this.desktopIpc?.ready) {
+      if (this.config.desktopOnly && !this.subscribedMobileThreads.has(threadId) && (!this.desktopIpc?.ready || mobile)) {
         const native = await this.runDesktopAction({ action: "native-read", threadId }).catch(() => null);
         const snapshot = asRecord(native?.snapshot);
         const live = asRecord(snapshot?.thread);
@@ -1659,8 +1860,18 @@ export class MobileGateway {
     // Replay the newest turns so a reconnect can recover a missed final response.
     const page = await this.readTurnsPage(threadId, null, limit, knownTurnIds, RECENT_TURNS_TO_REPLAY);
     const metadata = threadMetadataFromPayload(metadataPayload, threadId);
-    const nativeSettings = this.config.desktopOnly && !this.desktopIpc?.ready ? this.nativeDesktopModelOverrides.get(threadId) : undefined;
-    if (nativeSettings) metadata.latestThreadSettings = { ...asRecord(metadata.latestThreadSettings), ...nativeSettings };
+    const nativeSettings = this.config.desktopOnly && !mobile && !this.desktopIpc?.ready ? this.nativeDesktopModelOverrides.get(threadId) : undefined;
+    const managedSettings = mobile ? this.mobileModelOverrides.get(threadId) : undefined;
+    if (nativeSettings || managedSettings) {
+      metadata.latestThreadSettings = { ...asRecord(metadata.latestThreadSettings), ...nativeSettings, ...managedSettings,
+        ...(nativeSettings ? { mobileSendOnly: true } : {}) };
+    }
+    if (mobile) {
+      const activeTurn = this.appServerCurrentTurnIds.get(threadId);
+      metadata.mobileManaged = true;
+      metadata.mobileRuntimeActive = Boolean(activeTurn);
+      metadata.mobileActiveTurnId = activeTurn;
+    }
     const turns = mergeTurns(page.turns, liveTurns);
     if (this.archivedIds.has(threadId)) throw new Error("这段对话已归档，可在已归档列表中恢复。");
     const thread = { ...metadata, turns };
@@ -2047,6 +2258,8 @@ function threadMetadataFromPayload(payload: unknown, threadId: string): Record<s
   const outer = asRecord(payload) ?? {};
   const nested = asRecord(outer.thread) ?? outer;
   const latestThreadSettings = {
+    ...(typeof nested.model === "string" ? { model: nested.model } : {}),
+    ...(typeof nested.reasoningEffort === "string" ? { effort: nested.reasoningEffort } : {}),
     ...(asRecord(nested.latestThreadSettings) ?? {}),
     ...(typeof outer.model === "string" ? { model: outer.model } : {}),
     ...(typeof outer.reasoningEffort === "string" ? { effort: outer.reasoningEffort } : {}),
@@ -2062,6 +2275,10 @@ function threadMetadataFromPayload(payload: unknown, threadId: string): Record<s
     latestThreadSettings,
     turns: Array.isArray(nested.turns) ? nested.turns : [],
   };
+}
+
+function isMobileThreadSource(value: unknown): boolean {
+  return value === MOBILE_THREAD_SOURCE || value === MOBILE_PROJECTLESS_SOURCE;
 }
 
 function mergeTurns(...groups: unknown[][]): Array<Record<string, unknown>> {
@@ -2194,6 +2411,10 @@ function toThreadSummary(thread: Record<string, unknown>): ThreadSummary {
   const subAgent = asRecord(source?.subAgent ?? source?.sub_agent);
   const threadSpawn = asRecord(subAgent?.thread_spawn ?? subAgent?.threadSpawn);
   return {
+    ...(isMobileThreadSource(thread.threadSource) || thread.mobileManaged === true ? { mobileManaged: true } : {}),
+    ...(thread.threadSource === MOBILE_PROJECTLESS_SOURCE ? { projectless: true } : {}),
+    ...(typeof thread.model === "string" ? { model: thread.model } : {}),
+    ...(typeof thread.reasoningEffort === "string" ? { effort: thread.reasoningEffort } : {}),
     id: String(thread.id ?? ""),
     name:
       typeof thread.name === "string"

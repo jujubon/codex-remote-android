@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 type DesktopAction = {
-  action: "open" | "create" | "projects" | "native-read" | "native-send" | "native-model-check";
+  action: "open" | "create" | "projects" | "native-read" | "native-send" | "native-model-check" | "native-project-create";
   threadId: string;
   cwd?: string;
   prompt?: string;
@@ -22,6 +22,7 @@ type DesktopAction = {
 interface DesktopActionResult {
   thread_id?: string;
   projects?: { path: string; name: string }[];
+  project?: { id?: string; path: string };
   turn_id?: string;
   previous_turn_id?: string | null;
   queue_id?: string;
@@ -47,7 +48,7 @@ export async function desktopAction(request: DesktopAction): Promise<DesktopActi
     throw new DesktopActionError("未取得匹配的桌面排队回执，请核对桌面队列。", true);
   }
   const script = fileURLToPath(new URL("../windows/desktop_action.py", import.meta.url));
-  const fallback = request.action.startsWith("native-");
+  const fallback = request.action.startsWith("native-") && request.action !== "native-project-create";
   return new Promise<DesktopActionResult>((resolve, reject) => {
     const child = execFile(process.env.CMR_PYTHON || "python", ["-B", "-X", "utf8", script], {
       timeout: fallback ? 20_000 : 60_000, windowsHide: true, maxBuffer: fallback ? 4 * 1024 * 1024 : 1024 * 1024,

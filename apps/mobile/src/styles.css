@@ -221,20 +221,13 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 .composer-file-hint { margin: 0 0 6px; color: var(--muted); font-size: .75rem; }
 .composer-running-controls { display: flex; align-items: stretch; gap: 7px; margin-bottom: 7px; }
 .delivery-mode-picker { min-width: 0; flex: 1 1 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid #deded8; border-radius: 9px; background: #f1f1ee; }
-.delivery-mode-picker button { min-width: 0; min-height: 40px; display: grid; align-content: center; gap: 1px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: #6b6b65; text-align: left; }
+.delivery-mode-picker button { min-width: 0; min-height: 40px; display: grid; place-items: center; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: #6b6b65; }
 .delivery-mode-picker button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 650; }
-.delivery-mode-picker button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8a8a83; font-size: 8px; }
 .delivery-mode-picker button.is-selected { background: #fff; color: #252522; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.delivery-mode-picker button.is-selected small { color: #696963; }
 .delivery-mode-picker .queue-mode-option.is-selected { background: #f7f4eb; color: #66531f; box-shadow: inset 0 0 0 1px #d8ca9e, 0 1px 3px rgba(0,0,0,.05); }
 .delivery-mode-picker button:disabled { opacity: .55; }
 .interrupt-button { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 56px; padding: 5px 8px; border: 1px solid #e0c6c3; border-radius: 8px; background: #fff8f7; color: var(--red); font-size: 9px; }
 .interrupt-button svg { width: 13px; height: 13px; }
-.queue-mode-notice { display: flex; align-items: flex-start; gap: 8px; margin: 0 1px 7px; padding: 7px 9px; border: 1px solid #ddd2ad; border-radius: 7px; background: #faf8f1; color: #655a3b; }
-.queue-mode-notice > span { width: 6px; height: 6px; flex: 0 0 auto; margin-top: 4px; border: 1.5px solid #8f7b40; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(143,123,64,.1); }
-.queue-mode-notice p { min-width: 0; display: grid; gap: 1px; margin: 0; }
-.queue-mode-notice strong { font-size: 9px; font-weight: 650; }
-.queue-mode-notice small { font-size: 8px; line-height: 1.45; }
 .composer { display: flex; align-items: flex-end; gap: 7px; padding: 5px 5px 5px 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
 .composer:focus-within { border-color: #777772; box-shadow: 0 0 0 2px rgba(32,32,31,.07); }
 .composer textarea { min-height: 34px; max-height: 132px; resize: none; padding: 8px 0 6px; border: 0; background: transparent; box-shadow: none; line-height: 1.45; font-size: 12px; }

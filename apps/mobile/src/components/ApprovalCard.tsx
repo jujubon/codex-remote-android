@@ -1,9 +1,38 @@
 import type { ApprovalDecision, ApprovalRequest, PermissionMode } from '../types/protocol';
 import { AlertIcon } from './Icons';
 import { useState } from 'react';
+import type { AsyncQuestion } from '../lib/asyncQuestions';
 
 function stringDecision(decision: ApprovalDecision): string | null {
   return typeof decision === 'string' ? decision : null;
+}
+
+export function AsyncQuestionCard({ question, disabled, onAnswer }: {
+  question: AsyncQuestion;
+  disabled: boolean;
+  onAnswer: (answer: string) => Promise<boolean> | boolean;
+}) {
+  const [choice, setChoice] = useState('');
+  const [custom, setCustom] = useState('');
+  const [sending, setSending] = useState(false);
+  const answer = custom.trim() || choice;
+  return (
+    <form className="approval-card new-thread-form async-question" onSubmit={async event => {
+      event.preventDefault();
+      if (!answer || disabled || sending) return;
+      setSending(true);
+      try { await onAnswer(answer); } finally { setSending(false); }
+    }}>
+      <strong>{question.title}</strong>
+      {question.options.map((option, index) => (
+        <button key={index} type="button" className="secondary-button" aria-pressed={option === choice && !custom}
+          disabled={disabled || sending} onClick={() => { setChoice(option); setCustom(''); }}>{option}</button>
+      ))}
+      <input aria-label="自行撰写答复" value={custom} onChange={event => setCustom(event.target.value)}
+        placeholder="自行撰写答复…" disabled={disabled || sending} maxLength={4000} />
+      <button className="primary-button" type="submit" disabled={!answer || disabled || sending}>提交回答</button>
+    </form>
+  );
 }
 
 export function ApprovalCard({ approval, permissionMode, onResolve }: { approval: ApprovalRequest; permissionMode: PermissionMode; onResolve: (approvalId: string, decision: ApprovalDecision) => void }) {

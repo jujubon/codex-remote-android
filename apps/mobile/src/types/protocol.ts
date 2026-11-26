@@ -17,6 +17,9 @@ export interface AccountUsage {
 
 export interface ThreadSummary {
   projectless?: boolean;
+  mobileManaged?: boolean;
+  model?: string | null;
+  effort?: string | null;
   id: string;
   name: string | null;
   preview: string;
@@ -128,7 +131,7 @@ export type ClientMessage =
   | { type: "thread.open"; requestId?: string; threadId: string; historyLimit?: number; knownTurnIds?: string[] }
   | { type: "thread.close"; requestId?: string; threadId: string }
   | { type: "thread.history"; requestId?: string; threadId: string; cursor?: string | null; limit?: number; knownTurnIds?: string[] }
-  | { type: "thread.start"; requestId?: string; cwd?: string; destination?: "projectless" | "newProject"; projectName?: string; model?: string; modelProvider?: string; prompt?: string }
+  | { type: "thread.start"; requestId?: string; cwd?: string; destination?: "projectless" | "newProject"; projectName?: string; model?: string; modelProvider?: string; prompt?: string; mobileManaged?: boolean }
   | { type: "thread.compact"; requestId?: string; threadId: string }
   | { type: "thread.settings"; requestId?: string; threadId: string; model?: string; effort?: string; summary?: "auto" | "concise" | "detailed" | "none"; permissionMode?: PermissionMode; collaborationMode?: unknown }
   | { type: "prompt.queue.list"; requestId?: string; threadId?: string }
@@ -143,6 +146,7 @@ export type ClientMessage =
       text: string;
       clientUserMessageId?: string;
       deliveryMode?: PromptDeliveryMode;
+      expectedTurnId?: string;
       model?: string;
       effort?: string;
       summary?: "auto" | "concise" | "detailed" | "none";
@@ -156,7 +160,7 @@ export type ClientMessage =
 
 export type ServerMessagePayload =
   | ArchiveResult
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; mobileManagedThreads?: boolean; archiveManagement?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }
@@ -169,7 +173,7 @@ export type ServerMessagePayload =
   | { type: "thread"; requestId?: string; thread: unknown; history?: ThreadHistoryPageInfo }
   | { type: "thread.history"; requestId?: string; threadId: string; turns: unknown[]; history: ThreadHistoryPageInfo }
   | { type: "thread.compaction.accepted"; requestId?: string; threadId: string }
-  | { type: "thread.settings.updated"; requestId?: string; threadId: string; settings?: { model: string | null; effort: string | null } }
+  | { type: "thread.settings.updated"; requestId?: string; threadId: string; settings?: { model: string | null; effort: string | null; mobileSendOnly?: boolean } }
   | { type: "usage.result"; requestId: string; usage: AccountUsage }
   | { type: "prompt.queue"; requestId?: string; items: PromptQueueItem[] }
   | { type: "prompt.queued"; requestId?: string; threadId: string; item: PromptQueueItem }
@@ -212,6 +216,9 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface RemoteThread {
   projectless?: boolean;
+  mobileManaged?: boolean;
+  mobileRuntimeActive?: boolean;
+  mobileSendOnly?: boolean;
   id: string;
   title: string;
   preview: string;
@@ -241,6 +248,7 @@ export interface RemoteAttachment {
 
 export interface RemoteMessage {
   deliveryAcknowledged?: boolean;
+  asyncAnswerIds?: string[];
   id: string;
   threadId: string;
   turnId?: string;

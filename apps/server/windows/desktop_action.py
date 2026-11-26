@@ -77,6 +77,13 @@ def new_project(name, get_projects):
 
 
 def run(request):
+    if request['action'] == 'native-project-create':
+        tools, identity = current_desktop_tools()
+        try:
+            project = new_project(request.get('projectName'), lambda: tools.projects(request['threadId'], identity))
+        except ValueError as error:
+            return {'state': 'rejected', 'reply': str(error)}
+        return {'state': 'confirmed', 'project': project}
     if request['action'] in ('native-send', 'native-read', 'native-model-check'):
         try:
             tools, identity = current_desktop_tools()

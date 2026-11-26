@@ -177,10 +177,12 @@
 .composer-shell { background: #fcfbfe; }
 .composer { gap: 6px; padding: 4px; border-color: var(--line-strong); border-radius: 19px; box-shadow: 0 2px 8px rgb(28 17 67 / 5%); }
 .composer:focus-within { border-color: #9580d8; box-shadow: 0 0 0 2px var(--accent-soft); }
-.composer textarea { min-height: 42px; padding-block: 10px 7px; font-size: 14px; }
-.composer .attach-button, .composer .send-button { display: grid; place-items: center; width: auto; min-width: 42px; height: 42px; border-radius: 14px; }
+.composer textarea { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 12px 2px; font-size: 14px; line-height: 20px; }
+.composer textarea:focus { outline: none; background: transparent; box-shadow: none; }
+.composer .attach-button, .composer .send-button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; padding: 0; border-radius: 14px; }
 .composer .attach-button { color: var(--accent); }
-.composer .send-button.send-mode-queue { display: flex; }
+.async-question .secondary-button { text-align: left; }
+.async-question .secondary-button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
 .sheet-backdrop { backdrop-filter: none; }
 .bottom-sheet, .session-dialog { border-radius: 23px 23px 0 0; background: #fcfbfe; }

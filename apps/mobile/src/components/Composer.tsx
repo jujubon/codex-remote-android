@@ -110,11 +110,9 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
   }
 
   const placeholder = sending
-    ? deliveryMode === 'queue' ? '正在加入下一轮…' : '正在上传并发送…'
+    ? '正在发送…'
     : !connected ? '等待重新连接…'
-      : deliveryMode === 'queue' ? '输入下一轮任务；当前执行不会被打断…'
-        : deliveryMode === 'steer' ? '补充要求，引导当前执行…'
-          : '给 Codex 发消息…';
+      : '给 Codex 发消息…';
   const sendLabel = deliveryMode === 'queue' ? '排队' : deliveryMode === 'steer' ? '引导' : '发送';
 
   return (
@@ -130,7 +128,6 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
               disabled={sending || !canSteer}
             >
               <strong>引导当前</strong>
-              <small>立即补充要求</small>
             </button>
             <button
               type="button"
@@ -140,18 +137,11 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
               disabled={sending}
             >
               <strong>排队下一轮</strong>
-              <small>当前完成后执行</small>
             </button>
           </div>
           <button className="interrupt-button" type="button" onClick={onInterrupt} disabled={!canInterrupt || sending}>
             <StopIcon /> <span>停止</span>
           </button>
-        </div>
-      )}
-      {running && deliveryMode === 'queue' && (
-        <div className="queue-mode-notice" role="status">
-          <span aria-hidden="true" />
-          <p><strong>{canSteer ? '已选择排队' : '桌面实时控制未连接'}</strong><small>这条消息会在当前任务结束后作为下一轮发送。</small></p>
         </div>
       )}
       {files.length > 0 && desktopOnly && (!canSteer || deliveryMode === 'queue') && (
@@ -205,6 +195,7 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
             }
           }}
           placeholder={placeholder}
+          aria-label="消息"
           rows={1}
           disabled={!connected || sending}
         />
@@ -216,7 +207,6 @@ export function Composer({ connected, running, onSend, onInterrupt, canInterrupt
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >
           <SendIcon />
-          {running && <span>{sendLabel}</span>}
         </button>
       </form>
     </div>

@@ -3,6 +3,7 @@ import { isAbsoluteHostPath } from '../lib/hostPath';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { RemoteSocket } from '../lib/RemoteSocket';
+import { describeAsyncAnswer } from '../lib/asyncQuestions';
 import { deviceRequest } from '../lib/deviceTools';
 import { cancelApprovalNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
 import { downloadHostFile, saveHostFile, uploadRemoteFile } from '../lib/fileTransfer';
@@ -153,6 +154,9 @@ function normalizeSummary(thread: ThreadSummary): RemoteThread {
     preview: visibleUserText(thread.preview),
     cwd: thread.cwd,
     projectless: Boolean(thread.projectless),
+    ...(thread.mobileManaged ? { mobileManaged: true } : {}),
+    ...(thread.model ? { model: thread.model } : {}),
+    ...(thread.effort ? { effort: thread.effort } : {}),
     modelProvider: thread.modelProvider,
     updatedAt: timestamp(thread.updatedAt),
     state: stateFromStatus(thread.status),
@@ -177,6 +181,7 @@ export function mergeThreadSummaries(current: RemoteThread[], incoming: ThreadSu
     return {
       ...previous,
       ...summary,
+      ...(previous?.mobileSendOnly ? { model: previous.model, effort: previous.effort } : {}),
       state: keepObservedState ? previous.state : summary.state,
       parentThreadId: summary.parentThreadId ?? previous?.parentThreadId ?? null,
       agentNickname: summary.agentNickname ?? previous?.agentNickname ?? null,
@@ -358,6 +363,7 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
   } else if (normalizedType.includes('agentmessage') || normalizedType.includes('assistant')) {
     role = 'assistant';
     content = textFromContent(item.text ?? item.content ?? item.message);
+    if (!content && Array.isArray(item.questions) && item.questions.length) content = 'Codex 等你回答';
   } else if (isContextCompactionItem(item)) {
     role = 'system';
     content = item.completed === true ? '上下文压缩完成' : item.completed === false ? '已开始压缩上下文' : '上下文压缩';
@@ -429,13 +435,15 @@ export function itemToMessage(itemValue: unknown, threadId: string, turnId: stri
     ? `发送了 ${attachments.length} 张图片`
     : `发送了 ${attachments.length} 个附件`;
   const statusText = String(item.status ?? '').toLowerCase();
+  const asyncAnswer = role === 'user' ? describeAsyncAnswer(content) : undefined;
   const itemCreatedAt = parsedTimestamp(item.createdAt ?? item.created_at ?? restoreMessage?.createdAt);
   return {
     id,
     threadId,
     turnId,
     role,
-    content,
+    content: asyncAnswer?.text ?? content,
+    ...(asyncAnswer ? { asyncAnswerIds: asyncAnswer.ids } : {}),
     ...(assistantPhase ? { assistantPhase } : {}),
     ...(attachments.length ? { attachments } : {}),
     createdAt: itemCreatedAt ?? fallbackCreatedAt,
@@ -971,7 +979,7 @@ export function normalizeThreadPayload(payload: unknown): {
   if (!id) return { thread: null, messages: [] };
   const turns = Array.isArray(threadData.turns) ? threadData.turns : [];
   const messages: RemoteMessage[] = [];
-  let currentTurnId: string | undefined;
+  let currentTurnId = stringValue(threadData.mobileActiveTurnId);
   const reportedState = stateFromStatus(threadData.threadRuntimeStatus ?? threadData.status);
 
   turns.forEach((turnValue, turnIndex) => {
@@ -1010,9 +1018,17 @@ export function normalizeThreadPayload(payload: unknown): {
       parentThreadId: stringValue(threadData.parentThreadId) ?? subagentMetadataFromSource(threadData.source).parentThreadId ?? null,
       agentNickname: stringValue(threadData.agentNickname) ?? subagentMetadataFromSource(threadData.source).agentNickname ?? null,
       agentRole: stringValue(threadData.agentRole) ?? subagentMetadataFromSource(threadData.source).agentRole ?? null,
-      model: stringValue(record(threadData.latestThreadSettings)?.model, threadData.latestModel),
-      effort: stringValue(record(threadData.latestThreadSettings)?.effort === null ? undefined :
-        (record(threadData.latestThreadSettings)?.effort ?? threadData.latestReasoningEffort)),
+      ...(threadData.mobileManaged === true || ['codex-remote-mobile', 'codex-remote-mobile-projectless'].includes(String(threadData.threadSource)) ? { mobileManaged: true } : {}),
+      ...(typeof threadData.mobileRuntimeActive === 'boolean' ? { mobileRuntimeActive: threadData.mobileRuntimeActive } : {}),
+      ...(threadData.threadSource === 'codex-remote-mobile-projectless' ? { projectless: true } : {}),
+      ...(record(threadData.latestThreadSettings)?.mobileSendOnly === true ? { mobileSendOnly: true } :
+        typeof threadData.model === 'string' ? { mobileSendOnly: false } : {}),
+      ...(() => {
+        const settings = record(threadData.latestThreadSettings);
+        const model = stringValue(settings?.model, threadData.model, threadData.latestModel, outer?.model);
+        const effort = stringValue(settings?.effort, threadData.reasoningEffort, threadData.latestReasoningEffort, outer?.reasoningEffort);
+        return model ? { model, effort: settings?.effort === null ? undefined : effort } : {};
+      })(),
       permissionMode: permissionModeFromThread(threadData),
       source: {
         ...(record(threadData.source) ?? { original: threadData.source ?? null }),
@@ -1200,6 +1216,7 @@ export function useRemote(config: RemoteConfig | null) {
   const [connectionUrl, setConnectionUrl] = useState('');
   const [codexReady, setCodexReady] = useState(false);
   const [desktopOnly, setDesktopOnly] = useState(false);
+  const mobileManagedSupportedRef = useRef(false);
   const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
@@ -1674,7 +1691,8 @@ export function useRemote(config: RemoteConfig | null) {
           updateCompactionStatus(threadId, { phase: 'running', startedAt, turnId, automatic: !compactionsRef.current[threadId] });
         }
         setThreads((current) => {
-          const updated = current.map((thread) => thread.id === threadId ? { ...thread, state: 'running' as const, currentTurnStartedAt: startedAt } : thread);
+          const updated = current.map((thread) => thread.id === threadId ? { ...thread, state: 'running' as const, currentTurnStartedAt: startedAt,
+            ...(params?.mobileRuntimeActive === true ? { mobileManaged: true, mobileRuntimeActive: true } : {}) } : thread);
           threadsRef.current = updated;
           return updated;
         });
@@ -1959,6 +1977,7 @@ export function useRemote(config: RemoteConfig | null) {
         case 'welcome': {
           setArchiveSupported(message.archiveManagement === true);
           setDesktopOnly(message.desktopOnly === true);
+          mobileManagedSupportedRef.current = message.mobileManagedThreads === true;
           setDesktopIpcReady(message.desktopIpcReady);
           setDesktopProjectMenus(message.desktopOnly === true && message.projectCreation === true);
           setDesktopProjects([]);
@@ -2110,6 +2129,17 @@ export function useRemote(config: RemoteConfig | null) {
             modelRequest.current = null;
             setModelPending(false);
             const confirmed = message.settings ?? change;
+            if (message.settings) {
+              setThreads(current => {
+                const updated = current.map(thread => thread.id === change.threadId ? { ...thread,
+                  model: message.settings?.model ?? undefined,
+                  effort: message.settings?.effort ?? undefined,
+                  mobileSendOnly: message.settings?.mobileSendOnly === true,
+                } : thread);
+                threadsRef.current = updated;
+                return updated;
+              });
+            }
             if (selectedThreadRef.current === change.threadId) {
               if (message.settings || confirmed.model) setSelectedModelState(confirmed.model ?? '');
               if (message.settings || confirmed.effort) setSelectedEffortState(confirmed.effort ?? '');
@@ -2161,7 +2191,7 @@ export function useRemote(config: RemoteConfig | null) {
           }
           if (selectedThreadRef.current === normalized.thread.id) {
             if (normalized.thread.model) setSelectedModelState(normalized.thread.model);
-            if (normalized.thread.effort) setSelectedEffortState(normalized.thread.effort);
+            if (normalized.thread.model) setSelectedEffortState(normalized.thread.effort ?? '');
             if (normalized.thread.permissionMode) applyPermissionModeSnapshot(normalized.thread.id, normalized.thread.permissionMode);
           }
           break;
@@ -2383,6 +2413,9 @@ export function useRemote(config: RemoteConfig | null) {
         setHistoryByThread(cached.historyByThread);
         setSelectedThreadId(cached.selectedThreadId);
         selectedThreadRef.current = cached.selectedThreadId;
+        const cachedThread = cached.threads.find(thread => thread.id === cached.selectedThreadId);
+        setSelectedModelState(cachedThread?.model ?? '');
+        setSelectedEffortState(cachedThread?.effort ?? '');
         serverIdRef.current = cached.serverId;
         syncVersionRef.current = cached.syncVersion;
         syncCursorRef.current = cached.syncCursor;
@@ -2506,6 +2539,9 @@ export function useRemote(config: RemoteConfig | null) {
     if (previous && previous !== threadId) socketRef.current?.send({ type: 'thread.close', threadId: previous });
     selectedThreadRef.current = threadId;
     setSelectedThreadId(threadId);
+    const cachedThread = threadsRef.current.find(candidate => candidate.id === threadId);
+    setSelectedModelState(cachedThread?.model ?? '');
+    setSelectedEffortState(cachedThread?.effort ?? '');
     if (!threadId) return;
     setThreads((current) => current.map((thread) => (thread.id === threadId ? { ...thread, unread: 0 } : thread)));
     setHistoryLoadingByThread((current) => ({ ...current, [threadId]: true }));
@@ -2547,6 +2583,7 @@ export function useRemote(config: RemoteConfig | null) {
       setLastError('正在确认模型设置，请稍后再发送。');
       return false;
     }
+    const expectedTurnId = deliveryMode === 'steer' ? turnIdsRef.current[threadId] : undefined;
 
     const appendLocalSystemMessage = (title: string, body: string) => {
       const localMessage: RemoteMessage = {
@@ -2692,6 +2729,7 @@ export function useRemote(config: RemoteConfig | null) {
       text: prompt || `请查看我上传的 ${attachments.length} 个文件。`,
       clientUserMessageId,
       deliveryMode,
+      ...(expectedTurnId ? { expectedTurnId } : {}),
       ...(!desktopOnly && selectedModel ? { model: selectedModel } : {}),
       ...(!desktopOnly && selectedEffort ? { effort: selectedEffort } : {}),
       ...(skill ? { skill: { name: skill.name, path: skill.path } } : {}),
@@ -2703,12 +2741,14 @@ export function useRemote(config: RemoteConfig | null) {
       return false;
     }
     if (deliveryMode !== 'queue') {
+      const asyncAnswer = describeAsyncAnswer(prompt);
       const optimistic: RemoteMessage = {
         id: `local_${requestId}`,
         threadId,
         turnId: deliveryMode === 'steer' ? turnIdsRef.current[threadId] : undefined,
         role: 'user',
-        content: prompt || `请查看我上传的 ${attachments.length} 个文件。`,
+        content: asyncAnswer?.text ?? (prompt || `请查看我上传的 ${attachments.length} 个文件。`),
+        ...(asyncAnswer ? { asyncAnswerIds: asyncAnswer.ids } : {}),
         createdAt: Date.now(),
         timestampSource: 'live',
         status: 'complete',
@@ -2789,6 +2829,7 @@ export function useRemote(config: RemoteConfig | null) {
       type: 'thread.start',
       prompt,
       requestId,
+      ...(mobileManagedSupportedRef.current ? { mobileManaged: true } : {}),
       ...(destination ? { destination, projectName } : { cwd: normalizedCwd }),
       ...(model?.trim() ? { model: model.trim() } : {}),
       ...(modelProvider?.trim() ? { modelProvider: modelProvider.trim() } : {}),
@@ -2930,7 +2971,8 @@ export function useRemote(config: RemoteConfig | null) {
     [approvals, selectedThreadId],
   );
   const running = selectedThread?.state === 'running' || selectedThread?.state === 'waiting_input' || selectedThread?.state === 'waiting_approval';
-  const canSteer = !(desktopOnly && desktopIpcReady === false);
+  const canSteer = selectedThread?.mobileManaged ? selectedThread.mobileRuntimeActive === true && codexReady
+    : !(desktopOnly && desktopIpcReady === false);
   const canInterrupt = canSteer && Boolean(selectedThreadId && turnIds[selectedThreadId]);
 
   return {
