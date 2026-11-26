@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { mkdtemp, rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { FileInbox } from "../src/file-inbox.js";
 import {
   FileTransferError,
   FileTransferManager,
@@ -40,6 +41,40 @@ afterEach(async () => {
 });
 
 describe("file transfer primitives", () => {
+  it("lists confirmed phone receipts and reuses the same bytes without taking ownership", async () => {
+    let now = 0;
+    const { manager, root, uploads } = await fixture({ now: () => now });
+    const received = join(root, "received");
+    await mkdir(received);
+    const indexPath = join(root, "state", "inbox.json");
+    const inbox = new FileInbox(indexPath, manager);
+    const share = join(received, "phone.txt");
+    await writeFile(share, "phone");
+    await writeFile(join(received, "untracked.txt"), "not a receipt");
+    await inbox.recordShare(share);
+    const chat = await manager.receiveUpload({ stream: Readable.from([Buffer.from("chat")]), fileName: "chat.txt" });
+    await manager.commitUpload(chat.uploadId);
+    await manager.receiveUpload({ stream: Readable.from([Buffer.from("draft")]), fileName: "draft.txt" });
+
+    const reloaded = new FileInbox(indexPath, manager);
+    const entries = await reloaded.list(received);
+    expect(entries.map(entry => [entry.fileName, entry.source])).toEqual(expect.arrayContaining([["phone.txt", "share"], ["chat.txt", "chat"]]));
+    expect(entries).toHaveLength(2);
+    const entry = entries.find(candidate => candidate.source === "share")!;
+    const registered = await reloaded.use(received, entry.id);
+    expect(registered.path).toBe(entry.path);
+    expect(await readdir(uploads)).toHaveLength(2);
+    expect(await manager.getUpload(registered.uploadId)).toEqual(registered);
+    await manager.commitUpload(registered.uploadId);
+    now += 3_000;
+    await manager.cleanupExpired();
+    expect(await readFile(share, "utf8")).toBe("phone");
+    expect(await readFile(chat.path, "utf8")).toBe("chat");
+    await expect(reloaded.use(root, entry.id)).rejects.toMatchObject({ httpStatus: 410 });
+    await writeFile(share, "replacement with other contents");
+    await expect(reloaded.use(received, entry.id)).rejects.toMatchObject({ httpStatus: 410 });
+  });
+
   it("sanitizes traversal, separators, controls, and excessively long names", () => {
     expect(sanitizeFileName(" ../../secret\\name\u0000.txt ")).toBe("_.._secret_name.txt");
     expect(Buffer.byteLength(sanitizeFileName(`${"你".repeat(100)}.png`))).toBeLessThanOrEqual(180);

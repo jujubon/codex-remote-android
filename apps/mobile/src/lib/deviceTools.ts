@@ -1,6 +1,7 @@
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import { createRequestId } from '../types/protocol';
 import { toWebSocketUrl, type RemoteConfig } from './configStore';
+import type { RemoteUploadResult } from './fileTransfer';
 
 const nativeClipboard = registerPlugin<{
   read(): Promise<{ text: string }>;
@@ -9,11 +10,25 @@ const nativeClipboard = registerPlugin<{
 
 export interface DeviceStatus {
   supported: boolean;
+  version?: string;
   receiveFolder: string | null;
   shareError?: string;
   autoOpen: boolean;
   awakeUntil: number | null;
   reader?: { localActive: boolean; remoteReady: boolean; canOpenLocal?: boolean };
+}
+
+export interface InboxFile {
+  id: string;
+  fileName: string;
+  path: string;
+  size: number;
+  receivedAt: number;
+  source: 'share' | 'chat';
+}
+
+export function registerInboxUpload(config: RemoteConfig, id: string) {
+  return deviceRequest<RemoteUploadResult>(config, 'inbox/use', { id });
 }
 
 export const QUICK_SHARE_KEY = 'codex.remote.quick-share';
@@ -56,7 +71,7 @@ export async function deviceRequest<T>(config: RemoteConfig, action: string, bod
   const url = new URL(toWebSocketUrl(config.serverUrl));
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/device/' + action;
-  const method = action === 'status' || action === 'usage' ? 'GET' : 'POST';
+  const method = ['status', 'usage', 'inbox'].includes(action) ? 'GET' : 'POST';
   const timeoutMs = action === 'reader/open-remote' ? 25_000 : action === 'reader/open-local' ? 18_000 : action === 'usage' ? 6_000 : 12_000;
   const headers: Record<string, string> = { Authorization: 'Bearer ' + config.pairingToken, 'ngrok-skip-browser-warning': '1' };
   if (body) headers['Content-Type'] = 'application/json';

@@ -114,6 +114,7 @@ export class DeviceTools {
     private readonly defaultFolder: string = join(homedir(), "Desktop", "PhoneDrop"),
     private readonly currentTurn: (threadId: string) => string | undefined = () => undefined,
     private readonly turnFinished: (threadId: string, turnId: string) => boolean = () => false,
+    private readonly recordShare?: (path: string) => Promise<void>,
   ) {}
 
   async settings(): Promise<Settings> {
@@ -234,6 +235,7 @@ export class DeviceTools {
           contentLength: length == null ? null : Number(length),
         });
         const saved = await storeDrop(options.folder, upload.fileName, upload.path);
+        await this.indexShare(saved);
         return {
           fileName: parse(saved).base,
           opened: options.autoOpen && await this.openPreview(saved, "file"),
@@ -249,8 +251,14 @@ export class DeviceTools {
     return this.rememberDrop(typeof requestId === "string" ? requestId : undefined, async () => {
       const options = await this.settings();
       const saved = await storeDrop(options.folder, "来自手机的链接.txt", Buffer.from(url + "\r\n"));
+      await this.indexShare(saved);
       return { fileName: parse(saved).base, opened: options.autoOpen && await this.openPreview(url, "link") };
     });
+  }
+
+  private async indexShare(path: string) {
+    try { await this.recordShare?.(path); }
+    catch { console.warn("[file-inbox] could not index a saved share"); }
   }
 
   private async openPreview(target: string, kind: "file" | "link"): Promise<boolean> {

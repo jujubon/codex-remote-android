@@ -13,9 +13,15 @@ import { GitDiffPanel } from './GitDiffPanel';
 import { PromptQueuePanel } from './PromptQueuePanel';
 import { TransientActivity } from './TransientActivity';
 import { ElapsedTime } from './ElapsedTime';
+import type { InboxFile } from '../lib/deviceTools';
+import { approvalAttention, type AttentionTarget } from '../lib/attention';
 
 interface ConversationScreenProps {
   draftKey: string;
+  inboxFile?: InboxFile;
+  onClearInboxFile: (id: string) => void;
+  attention?: AttentionTarget;
+  attentionStatus?: AttentionTarget;
   onArchive?: () => void;
   onTaskPower: () => void;
   accountPanel: React.ReactNode;
@@ -48,7 +54,7 @@ interface ConversationScreenProps {
   onBack: () => void;
   onLoadOlderHistory: () => void;
   onReconnect: () => void;
-  onSend: (content: string, files: File[] | undefined, deliveryMode: PromptDeliveryMode, waitForReceipt?: boolean) => Promise<boolean> | boolean;
+  onSend: (content: string, files: File[] | undefined, deliveryMode: PromptDeliveryMode, waitForReceipt?: boolean, inboxId?: string) => Promise<boolean> | boolean;
   onCancelQueuedPrompt: (itemId: string) => void;
   onPromoteQueuedPrompt: (itemId: string) => void;
   onResumePromptQueue: () => void;
@@ -352,7 +358,9 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ draftKey, onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ draftKey, inboxFile, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, desktopOnly, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+  const screenRef = useRef<HTMLElement>(null);
+  const focusedAttention = useRef<AttentionTarget | undefined>(undefined);
   const streamRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -541,9 +549,26 @@ export function ConversationScreen({ draftKey, onArchive, onTaskPower, accountPa
     [models, selectedModel],
   );
   const effortOptions = activeModel?.supportedReasoningEfforts ?? [];
+  const questions = useMemo(() => thread.mobileManaged && !selectedAgentId ? pendingAsyncQuestions(messages) : [],
+    [thread.mobileManaged, selectedAgentId, messages]);
+  const needsDesktop = attentionStatus?.handling === 'desktop' && attention?.kind === attentionStatus.kind;
+  useEffect(() => {
+    if (!attention || focusedAttention.current === attention) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = Array.from(screenRef.current?.querySelectorAll<HTMLElement>('[data-attention-kind]') ?? []).find(element =>
+        element.dataset.attentionKind === attention.kind &&
+        (attention.id === undefined || element.dataset.attentionId === attention.id));
+      if (!target) return;
+      focusedAttention.current = attention;
+      if (streamRef.current?.contains(target)) followingRef.current = false;
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [attention, approvals, questions, promptQueue, needsDesktop]);
 
   return (
-    <main className="app-screen conversation-screen">
+    <main ref={screenRef} className="app-screen conversation-screen">
       <header className="top-bar conversation-top-bar">
         <button className="back-button nav-icon-button" type="button" onClick={onBack} aria-label="返回任务列表"><ArrowLeftIcon /></button>
         <div className="conversation-title">
@@ -688,11 +713,20 @@ export function ConversationScreen({ draftKey, onArchive, onTaskPower, accountPa
                 )}
               </details>
             ))}
-            {approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />)}
-            {thread.mobileManaged && !selectedAgentId && pendingAsyncQuestions(messages).map(question => (
-              <AsyncQuestionCard key={question.id} question={question} disabled={phase !== 'connected' || (running && !canSteer)}
-                onAnswer={answer => onSend(encodeAsyncAnswer(question, answer), undefined, running ? 'steer' : 'auto')} />
+            {approvals.map(approval => (
+              <div key={approval.id} className="attention-target" tabIndex={-1}
+                data-attention-kind={approvalAttention(approval.method, String(approval.wireId)).kind} data-attention-id={String(approval.wireId)}>
+                <ApprovalCard approval={approval} permissionMode={selectedPermissionMode} onResolve={onResolveApproval} />
+              </div>
             ))}
+            {questions.map(question => (
+              <div key={question.id} className="attention-target" tabIndex={-1} data-attention-kind="input" data-attention-id={question.id}>
+                <AsyncQuestionCard question={question} disabled={phase !== 'connected' || (running && !canSteer)}
+                  onAnswer={answer => onSend(encodeAsyncAnswer(question, answer), undefined, running ? 'steer' : 'auto')} />
+              </div>
+            ))}
+            {needsDesktop && <p className="attention-target desktop-attention" tabIndex={-1}
+              data-attention-kind={attention.kind}>此项需要在电脑上的 Codex 对话中处理。</p>}
           </div>
         </section>
         {(hasNewContent || frozenEntryEnd != null) && (
@@ -707,7 +741,8 @@ export function ConversationScreen({ draftKey, onArchive, onTaskPower, accountPa
       <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
-      <PromptQueuePanel items={promptQueue} onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
+      <PromptQueuePanel items={promptQueue} attention={attention?.kind === 'queue' ? attention : undefined}
+        onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
       <dialog className="session-dialog" ref={settingsRef} aria-labelledby="session-options" onClose={() => setSettingsOpen(false)} onClick={event => {
         if (event.target === event.currentTarget) settingsRef.current?.close();
       }}>
@@ -773,7 +808,7 @@ export function ConversationScreen({ draftKey, onArchive, onTaskPower, accountPa
           thread.state === 'error' ? '执行异常' : thread.state === 'not_loaded' ? '未载入' : '等待同步'}
       </div>}
       {!settingsOpen && notice}
-      <Composer draftKey={draftKey} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer draftKey={draftKey} inboxFile={inboxFile} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} desktopOnly={desktopOnly && !thread.mobileManaged} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

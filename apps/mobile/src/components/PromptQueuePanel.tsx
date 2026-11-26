@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { AttentionTarget } from '../lib/attention';
 import type { PromptQueueItem } from '../types/protocol';
 import { ChevronDownIcon } from './Icons';
 
 interface PromptQueuePanelProps {
   items: PromptQueueItem[];
+  attention?: AttentionTarget;
   onCancel: (itemId: string) => void;
   onPromote: (itemId: string) => void;
   onResume: () => void;
@@ -18,8 +20,9 @@ const statusLabel: Record<PromptQueueItem['status'], string> = {
   uncertain: '结果待确认',
 };
 
-export function PromptQueuePanel({ items, onCancel, onPromote, onResume, running }: PromptQueuePanelProps) {
+export function PromptQueuePanel({ items, attention, onCancel, onPromote, onResume, running }: PromptQueuePanelProps) {
   const [expanded, setExpanded] = useState(true);
+  useEffect(() => { if (attention) setExpanded(true); }, [attention]);
   const ordered = useMemo(() => [...items].sort((a, b) => a.createdAt - b.createdAt), [items]);
   if (ordered.length === 0) return null;
   const paused = ordered.some((item) => item.status === 'paused');
@@ -44,7 +47,8 @@ export function PromptQueuePanel({ items, onCancel, onPromote, onResume, running
                     ? '等待电脑端'
                     : '等待自动发送';
               return (
-                <li key={item.id} className={`queue-item queue-status-${item.status} ${desktopBlocked ? 'queue-desktop-blocked' : ''}`}>
+                <li key={item.id} tabIndex={-1} data-attention-kind="queue" data-attention-id={item.id}
+                  className={`attention-target queue-item queue-status-${item.status} ${desktopBlocked ? 'queue-desktop-blocked' : ''}`}>
                   <div className="queue-order">{index + 1}</div>
                   <div className="queue-copy">
                     <div><strong>{desktopBlocked ? '等待电脑端协调' : statusLabel[item.status]}</strong><time>{new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></div>

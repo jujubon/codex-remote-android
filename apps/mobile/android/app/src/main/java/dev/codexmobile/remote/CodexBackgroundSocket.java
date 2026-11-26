@@ -61,6 +61,7 @@ final class CodexBackgroundSocket {
     private final CodexApprovalTracker approvalTracker = new CodexApprovalTracker();
     private final Set<String> notifiedApprovalIds = ConcurrentHashMap.newKeySet();
     private final Set<String> knownThreadIds = ConcurrentHashMap.newKeySet();
+    private final Map<String, String> notifiedQueue = new ConcurrentHashMap<>();
     private final CodexNotificationLedger notificationLedger;
     private final Map<String, String> recoveredApprovalEntries = new ConcurrentHashMap<>();
     private final Map<String, String> recoveredAttentionEntries = new ConcurrentHashMap<>();
@@ -147,6 +148,7 @@ final class CodexBackgroundSocket {
         completionTimers.clear();
         threadStates.clear();
         lastCompletionAt.clear();
+        notifiedQueue.clear();
         desiredAttention.clear();
         notifiedAttention.clear();
         notifiedApprovalIds.clear();
@@ -280,7 +282,10 @@ final class CodexBackgroundSocket {
         switch (type) {
             case "welcome":
                 WebSocket active = socket;
-                if (active != null) active.send("{\"type\":\"threads.list\",\"requestId\":\"android-background-welcome\"}");
+                if (active != null) {
+                    active.send("{\"type\":\"threads.list\",\"requestId\":\"android-background-welcome\"}");
+                    active.send("{\"type\":\"prompt.queue.list\",\"requestId\":\"android-background-queue\"}");
+                }
                 break;
             case "threads":
             case "threads.snapshot":
@@ -302,6 +307,12 @@ final class CodexBackgroundSocket {
             case "approval.resolved":
                 handleApprovalResolved(String.valueOf(message.opt("approvalRequestId")));
                 break;
+            case "prompt.queue":
+                handleQueue("", message.optJSONArray("items"));
+                break;
+            case "prompt.queue.updated":
+                handleQueue(message.optString("threadId", ""), message.optJSONArray("items"));
+                break;
             case "turn.completed":
                 handleTurnCompleted(message.optString("threadId", ""), message.optJSONObject("turn"));
                 break;
@@ -310,6 +321,41 @@ final class CodexBackgroundSocket {
                 break;
             default:
                 break;
+        }
+    }
+
+    private synchronized void handleQueue(String scope, JSONArray items) {
+        if (items == null) return;
+        Set<String> pending = new HashSet<>();
+        for (int index = 0; index < items.length(); index++) {
+            JSONObject item = items.optJSONObject(index);
+            if (item == null) continue;
+            String itemId = item.optString("id", "");
+            String threadId = item.optString("threadId", "");
+            if (itemId.isEmpty() || threadId.isEmpty()) continue;
+            String title;
+            switch (item.optString("status", "")) {
+                case "failed": title = "Codex 队列投递失败"; break;
+                case "uncertain": title = "Codex 队列结果待确认"; break;
+                case "paused": title = "Codex 队列已暂停"; break;
+                default: continue;
+            }
+            pending.add(itemId);
+            if (notifiedQueue.containsKey(itemId)) continue;
+            int id = notificationId("queue:" + itemId);
+            recoveredNotificationEntries.remove(String.valueOf(id));
+            if (!notificationLedger.claimNotification(id, threadId) ||
+                    post(id, CodexNotificationChannels.APPROVALS, "approval", threadId, "openQueue:" + itemId,
+                            title, threadTitles.getOrDefault(threadId, "打开任务查看队列"))) {
+                notifiedQueue.put(itemId, threadId);
+            } else notificationLedger.removeNotification(id);
+        }
+        for (Map.Entry<String, String> entry : notifiedQueue.entrySet()) {
+            if ((!scope.isEmpty() && !scope.equals(entry.getValue())) || pending.contains(entry.getKey())) continue;
+            int id = notificationId("queue:" + entry.getKey());
+            NotificationManagerCompat.from(context).cancel(id);
+            notificationLedger.removeNotification(id);
+            notifiedQueue.remove(entry.getKey());
         }
     }
 
@@ -441,8 +487,9 @@ final class CodexBackgroundSocket {
             notificationLedger.putApproval(requestId, threadId);
             return;
         }
-        if (post(id, CodexNotificationChannels.APPROVALS,
-                "approval", threadId, "openApproval", title, text)) {
+        boolean isInput = method.equals("item/tool/requestUserInput");
+        if (post(id, isInput ? CodexNotificationChannels.INPUTS : CodexNotificationChannels.APPROVALS,
+                "approval", threadId, (isInput ? "openInput:" : "openApproval:") + requestId, title, text)) {
             notifiedApprovalIds.add(requestId);
             notificationLedger.putApproval(requestId, threadId);
         } else {
@@ -576,7 +623,7 @@ final class CodexBackgroundSocket {
                 String text = threadTitles.getOrDefault(threadId, "Codex 任务") + " · 打开 App 继续处理。";
                 if (post(notificationId("attention:" + state + ":" + threadId),
                         "input".equals(state) ? CodexNotificationChannels.INPUTS : CodexNotificationChannels.APPROVALS,
-                        "approval", threadId, "input".equals(state) ? "openThread" : "openApproval", title, text)) {
+                        "approval", threadId, "input".equals(state) ? "openInput" : "openApproval", title, text)) {
                     notifiedAttention.put(threadId, state);
                     notificationLedger.putAttention(threadId, state);
                 }

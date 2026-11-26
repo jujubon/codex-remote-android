@@ -19,6 +19,8 @@ import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
+import type { InboxFile } from './lib/deviceTools';
+import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 
 export function popThreadBackStack(stack: string[]): { previousThreadId: string | null; remaining: string[] } {
@@ -35,19 +37,27 @@ export function App() {
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
   const [backgroundError, setBackgroundError] = useState('');
+  const [inboxSelection, setInboxSelection] = useState<{ file: InboxFile; threadId?: string }>();
+  const [attention, setAttention] = useState<{ threadId: string; target: AttentionTarget }>();
   const [selectedAgentByThread, setSelectedAgentByThread] = useState<Record<string, string | null>>({});
   const threadBackStackRef = useRef<string[]>([]);
   const threadListPosition = useRef<ThreadListPosition>({ query: '', filter: '全部项目', scrollTop: 0 });
   const remote = useRemote(config ?? null);
   const hidden = useHiddenProjects(remote.serverId ?? config?.serverUrl ?? '');
 
-  const openRootThread = useCallback((threadId: string) => {
+  const openRootThread = useCallback((threadId: string, target?: AttentionTarget) => {
     threadBackStackRef.current = [];
     setHomePage('projects');
     setTaskPowerThreadId(null);
+    setAttention(target ? { threadId, target } : undefined);
     setSelectedAgentByThread((current) => ({ ...current, [threadId]: null }));
     remote.selectThread(threadId);
   }, [remote.selectThread]);
+
+  useEffect(() => {
+    const threadId = remote.selectedThread?.id;
+    if (threadId) setInboxSelection(current => current && !current.threadId ? { ...current, threadId } : current);
+  }, [remote.selectedThread?.id]);
 
   const openNestedThread = useCallback((threadId: string) => {
     const currentThreadId = remote.selectedThreadId;
@@ -111,10 +121,10 @@ export function App() {
     if (!Capacitor.isNativePlatform()) return;
     let listener: { remove: () => Promise<void> } | null = null;
     const consumedNonces = new Set<string>();
-    const openAction = (action: { threadId?: string; nonce?: string }) => {
+    const openAction = (action: { threadId?: string; nonce?: string; action?: string }) => {
       if (action.nonce && consumedNonces.has(action.nonce)) return;
       if (action.nonce) consumedNonces.add(action.nonce);
-      if (action.threadId && action.threadId !== 'global') openRootThread(action.threadId);
+      if (action.threadId && action.threadId !== 'global') openRootThread(action.threadId, parseAttentionAction(action.action));
     };
     void CodexBackground.addListener('notificationAction', openAction).then((handle) => { listener = handle; });
     void CodexBackground.consumePendingAction().then(({ action }) => { if (action) openAction(action); }).catch(() => undefined);
@@ -148,8 +158,8 @@ export function App() {
     if (!Capacitor.isNativePlatform()) return;
     let listener: { remove: () => Promise<void> } | null = null;
     void LocalNotifications.addListener('localNotificationActionPerformed', ({ notification }) => {
-      const extra = notification.extra as { threadId?: unknown } | undefined;
-      if (typeof extra?.threadId === 'string') openRootThread(extra.threadId);
+      const extra = notification.extra as { threadId?: unknown; action?: unknown } | undefined;
+      if (typeof extra?.threadId === 'string') openRootThread(extra.threadId, parseAttentionAction(extra.action));
     }).then((handle) => {
       listener = handle;
     });
@@ -164,6 +174,8 @@ export function App() {
     threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
     setShowSettings(false);
     setConfig(null);
+    setInboxSelection(undefined);
+    setAttention(undefined);
     setHomePage('projects');
   }
 
@@ -184,7 +196,11 @@ export function App() {
         initialConfig={config}
         accountPanel={config ? accountPanel : undefined}
         onSaved={(saved) => {
-          if (config?.serverUrl !== saved.serverUrl || config?.pairingToken !== saved.pairingToken) void stopCrossNetworkReader();
+          if (config?.serverUrl !== saved.serverUrl || config?.pairingToken !== saved.pairingToken) {
+            void stopCrossNetworkReader();
+            setInboxSelection(undefined);
+            setAttention(undefined);
+          }
           setConfig(saved);
           setShowSettings(false);
         }}
@@ -199,6 +215,12 @@ export function App() {
   }
 
   const notice = <>
+      {!remote.selectedThread && inboxSelection && (
+        <div className="error-toast" role="status">
+          <span>已选 {inboxSelection.file.fileName} · {inboxSelection.threadId ? '已添加到所选对话的输入框' : '打开对话后发送'}</span>
+          <button className="nav-icon-button" aria-label="取消附件选择" type="button" onClick={() => setInboxSelection(undefined)}><CloseIcon /></button>
+        </div>
+      )}
       {!remote.lastError && !backgroundError && remote.queueReceipt && (
         <div className="error-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
       )}
@@ -220,6 +242,10 @@ export function App() {
         <ConversationScreen
           key={draftKey}
           draftKey={draftKey}
+          inboxFile={inboxSelection?.threadId === remote.selectedThread.id ? inboxSelection.file : undefined}
+          onClearInboxFile={id => setInboxSelection(current => current?.file.id === id ? undefined : current)}
+          attention={attention?.threadId === remote.selectedThread.id ? attention.target : undefined}
+          attentionStatus={remote.threadAttention[remote.selectedThread.id]}
           onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
           onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
@@ -270,6 +296,12 @@ export function App() {
         />
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
+          hostVersion={remote.hostVersion}
+          checkSync={remote.checkConversationSync}
+          onUseInbox={file => {
+            setInboxSelection({ file });
+            setHomePage('projects');
+          }}
           connectionUrl={remote.connectionUrl}
           phase={remote.phase}
           detail={phaseDetail}
@@ -279,6 +311,7 @@ export function App() {
           notice={notice} />
       ) : (
         <ThreadList
+          attention={remote.threadAttention}
           position={threadListPosition}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           hidden={hidden}

@@ -45,6 +45,7 @@ import {
   cancelThreadAttentionNotification,
   initializeNotifications,
   notifyApprovalRequested,
+  notifyQueueProblem,
   notifyThreadAttention,
   notifyTurnFinished,
 } from '../src/lib/notifications';
@@ -146,14 +147,22 @@ describe('Android task and attention alerts', () => {
 
     expect(mocks.notifyApproval).toHaveBeenCalledTimes(3);
     expect(mocks.notifyApproval).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      threadId: 'thread-3', title: 'Codex 请求额外权限', action: 'openApproval',
+      threadId: 'thread-3', title: 'Codex 请求额外权限', action: 'openApproval:approval-1',
     }));
     expect(mocks.notifyApproval).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      threadId: 'thread-3', title: 'Codex 等待你的输入', action: 'openThread', alertKind: 'input',
+      threadId: 'thread-3', title: 'Codex 等待你的输入', action: 'openInput', alertKind: 'input',
     }));
     expect(mocks.notifyApproval).toHaveBeenNthCalledWith(3, expect.objectContaining({
-      threadId: 'thread-3', title: 'Codex 等待 Computer Use 确认', action: 'openApproval',
+      threadId: 'thread-3', title: 'Codex 等待 Computer Use 确认', action: 'openApproval:computer-use-1',
     }));
+  });
+
+  it('uses the exact question and queue item in notification actions', async () => {
+    await notifyApprovalRequested({ requestId: 31, threadId: 'thread-3', method: 'item/tool/requestUserInput' });
+    await notifyQueueProblem({ id: 'item-1', threadId: 'thread-3', status: 'uncertain',
+      clientUserMessageId: 'msg-1', text: 'private prompt', createdAt: 1, updatedAt: 2, fileNames: [] }, 'Test');
+    expect(mocks.notifyApproval).toHaveBeenNthCalledWith(1, expect.objectContaining({ action: 'openInput:31', alertKind: 'input' }));
+    expect(mocks.notifyApproval).toHaveBeenNthCalledWith(2, expect.objectContaining({ action: 'openQueue:item-1', text: 'Test' }));
   });
 });
 

@@ -94,7 +94,7 @@ interface DownloadRecord extends DownloadTicket {
 }
 
 interface UploadRecord extends StoredUpload {
-  storageDirectory: string;
+  storageDirectory?: string;
   pins: number;
   committed: boolean;
 }
@@ -344,12 +344,52 @@ export class FileTransferManager {
   async commitUpload(uploadId: string): Promise<boolean> {
     const record = this.uploads.get(uploadId);
     if (!record) return false;
-    const markerPath = resolve(record.storageDirectory, COMMITTED_UPLOAD_MARKER);
-    const marker = await open(markerPath, "a", 0o600);
+    if (!record.storageDirectory) return true;
+    const marker = await open(resolve(record.storageDirectory, COMMITTED_UPLOAD_MARKER), "a", 0o600);
     await marker.close();
     record.committed = true;
     record.expiresAt = Number.MAX_SAFE_INTEGER;
     return true;
+  }
+
+  /** Registers one file verified by the inbox, without creating or deleting a copy. */
+  async registerInboxFile(path: string): Promise<StoredUpload> {
+    const canonicalPath = await realpath(path).catch(() => undefined);
+    if (canonicalPath !== path) throw new FileTransferError("FILE_CHANGED", "文件已移动或改变，请刷新。", 409);
+    const metadata = await stat(canonicalPath);
+    if (!metadata.isFile()) throw new FileTransferError("NOT_A_FILE", "请选择普通文件。", 400);
+    const { size } = metadata;
+    if (!size) throw new FileTransferError("INVALID_ARGUMENT", "文件为空。", 400);
+    if (size > Math.min(this.maxUploadBytes, this.maxDownloadBytes))
+      throw new FileTransferError("FILE_TOO_LARGE", "文件超出附件大小限制。", 413);
+    this.trustedFiles.set(canonicalPath, { canonicalPath, expiresAt: Number.MAX_SAFE_INTEGER });
+    const fileName = basename(canonicalPath);
+    const createdAt = this.now();
+    const record: UploadRecord = {
+      uploadId: this.uniqueId(this.uploads), fileName, mimeType: inferMimeType(fileName), size,
+      path: canonicalPath, createdAt, expiresAt: createdAt + this.uploadTtlMs, pins: 0, committed: false,
+    };
+    this.uploads.set(record.uploadId, record);
+    return this.publicUpload(record);
+  }
+
+  async committedUploadPaths(): Promise<string[]> {
+    const entries = await readdir(this.uploadDirectory, { withFileTypes: true });
+    const paths: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[A-Za-z0-9_-]{22,128}$/.test(entry.name)) continue;
+      const root = resolve(this.uploadDirectory, entry.name);
+      try {
+        if (await realpath(root) !== root) continue;
+        const children = await readdir(root, { withFileTypes: true });
+        if (!children.some(child => child.name === COMMITTED_UPLOAD_MARKER && child.isFile())) continue;
+        const file = children.find(child => child.name !== COMMITTED_UPLOAD_MARKER && child.isFile());
+        if (file) paths.push(resolve(root, file.name));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return paths;
   }
 
   async getUpload(uploadId: string): Promise<StoredUpload> {
@@ -462,7 +502,7 @@ export class FileTransferManager {
     const record = this.uploads.get(uploadId);
     if (!record) return false;
     this.uploads.delete(uploadId);
-    await rm(record.storageDirectory, { recursive: true, force: true });
+    if (record.storageDirectory) await rm(record.storageDirectory, { recursive: true, force: true });
     return true;
   }
 
@@ -501,7 +541,7 @@ export class FileTransferManager {
     for (const [id, record] of this.uploads) {
       if (record.pins === 0 && record.expiresAt <= now) {
         this.uploads.delete(id);
-        await rm(record.storageDirectory, { recursive: true, force: true });
+        if (record.storageDirectory) await rm(record.storageDirectory, { recursive: true, force: true });
         uploads += 1;
       }
     }

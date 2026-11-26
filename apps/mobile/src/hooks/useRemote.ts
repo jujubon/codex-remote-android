@@ -3,9 +3,10 @@ import { isAbsoluteHostPath } from '../lib/hostPath';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { RemoteSocket } from '../lib/RemoteSocket';
-import { describeAsyncAnswer } from '../lib/asyncQuestions';
-import { deviceRequest } from '../lib/deviceTools';
-import { cancelApprovalNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
+import { describeAsyncAnswer, pendingAsyncQuestions } from '../lib/asyncQuestions';
+import { deviceRequest, registerInboxUpload } from '../lib/deviceTools';
+import { attentionForThread, queueNeedsAttention } from '../lib/attention';
+import { cancelApprovalNotification, cancelQueueNotification, cancelThreadAttentionNotification, notifyApprovalRequested, notifyCompactionFailed, notifyQueueProblem, notifyThreadAttention, notifyTurnFinished } from '../lib/notifications';
 import { downloadHostFile, saveHostFile, uploadRemoteFile } from '../lib/fileTransfer';
 import { NotificationGenerationGuard, NotificationOperationQueue, settleGuardedNotification } from '../lib/notificationGuard';
 import { cacheScope, clearRemoteCache, loadRemoteCache, messagesForThread, saveRemoteCache, type CachedHistoryState, type RemoteCacheSnapshot } from '../lib/remoteCache';
@@ -1218,6 +1219,7 @@ export function useRemote(config: RemoteConfig | null) {
   const [desktopOnly, setDesktopOnly] = useState(false);
   const mobileManagedSupportedRef = useRef(false);
   const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
+  const [hostVersion, setHostVersion] = useState('');
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
   const [projectStatus, setProjectStatus] = useState('');
@@ -1294,12 +1296,39 @@ export function useRemote(config: RemoteConfig | null) {
   const [lastError, setLastError] = useState('');
   const [compactionsByThread, setCompactionsByThread] = useState<Record<string, CompactionStatus>>({});
   const [promptQueueByThread, setPromptQueueByThread] = useState<Record<string, PromptQueueItem[]>>({});
+  const notifiedQueueItems = useRef(new Map<string, string>());
+  useEffect(() => {
+    const next = new Map(Object.values(promptQueueByThread).flat().filter(queueNeedsAttention).map(item => [item.id, item]));
+    for (const item of next.values()) {
+      if (notifiedQueueItems.current.has(item.id)) continue;
+      notifiedQueueItems.current.set(item.id, item.threadId);
+      void notifyQueueProblem(item, threadsRef.current.find(thread => thread.id === item.threadId)?.title || '打开任务查看队列');
+    }
+    for (const id of notifiedQueueItems.current.keys()) {
+      if (next.has(id)) continue;
+      notifiedQueueItems.current.delete(id);
+      void cancelQueueNotification(id);
+    }
+  }, [promptQueueByThread]);
   const [gitDiffByThread, setGitDiffByThread] = useState<Record<string, GitDiffSnapshot>>({});
   const compactionsRef = useRef<Record<string, CompactionStatus>>({});
   const compactionTurnIdsRef = useRef<Record<string, Set<string>>>({});
   const pendingCompactionRequestsRef = useRef<Map<string, string>>(new Map());
   const pendingThreadStartRequestsRef = useRef<Set<string>>(new Set());
   const sendReceipts = useRef<Map<string, (accepted: boolean) => void>>(new Map());
+  const syncChecks = useRef(new Map<string, (success: boolean) => void>());
+  const checkConversationSync = useCallback(() => new Promise<void>((resolve, reject) => {
+    const requestId = createRequestId('diagnostic-sync');
+    const finish = (success: boolean) => {
+      window.clearTimeout(timer);
+      syncChecks.current.delete(requestId);
+      if (success) resolve();
+      else reject(new Error('未收到对话同步回执。'));
+    };
+    const timer = window.setTimeout(() => finish(false), 8000);
+    syncChecks.current.set(requestId, finish);
+    if (!socketRef.current?.send({ type: 'threads.sync', requestId, knownVersion: threadIndexVersionRef.current })) finish(false);
+  }), []);
   const notifiedCompactionFailuresRef = useRef<Set<string>>(new Set());
   const seenCompactionItemsRef = useRef<Record<string, Map<string, boolean | undefined>>>({});
   const [historyByThread, setHistoryByThread] = useState<Record<string, CachedHistoryState>>({});
@@ -1976,6 +2005,7 @@ export function useRemote(config: RemoteConfig | null) {
       if (typeof message.syncCursor === 'number' && message.syncCursor <= syncCursorRef.current) return;
       switch (message.type) {
         case 'welcome': {
+          setHostVersion(message.version);
           setArchiveSupported(message.archiveManagement === true);
           setDesktopOnly(message.desktopOnly === true);
           mobileManagedSupportedRef.current = message.mobileManagedThreads === true;
@@ -2045,11 +2075,13 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'threads.snapshot': {
+          if (message.requestId) syncChecks.current.get(message.requestId)?.(true);
           threadIndexVersionRef.current = message.version;
           replaceThreadsAndSyncAttention(mergeThreadSummaries(threadsRef.current, message.threads, true));
           break;
         }
         case 'threads.delta':
+          if (message.requestId) syncChecks.current.get(message.requestId)?.(true);
           if (message.baseVersion !== threadIndexVersionRef.current) {
             socketRef.current?.send({ type: 'threads.sync', requestId: createRequestId('threads-resync') });
             break;
@@ -2308,6 +2340,10 @@ export function useRemote(config: RemoteConfig | null) {
           break;
         }
         case 'error': {
+          if (message.requestId && syncChecks.current.has(message.requestId)) {
+            syncChecks.current.get(message.requestId)?.(false);
+            break;
+          }
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(false);
           if (message.requestId?.startsWith('turn_') && message.code !== 'submission_state_unknown') {
             const localId = `local_${message.requestId}`;
@@ -2582,10 +2618,10 @@ export function useRemote(config: RemoteConfig | null) {
     if (!sent) setHistoryLoadingByThread((current) => ({ ...current, [threadId]: false }));
   }, [historyLoadingByThread]);
 
-  const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto', waitForReceipt = false): Promise<boolean> => {
+  const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto', waitForReceipt = false, inboxId?: string): Promise<boolean> => {
     const threadId = selectedThreadRef.current;
     const text = content.trim();
-    if (!threadId || (!text && files.length === 0)) return false;
+    if (!threadId || (!text && files.length === 0 && !inboxId)) return false;
     if (modelRequest.current?.threadId === threadId) {
       setLastError('正在确认模型设置，请稍后再发送。');
       return false;
@@ -2703,16 +2739,20 @@ export function useRemote(config: RemoteConfig | null) {
     }
 
     const attachments: Array<{ type: 'image' | 'file'; uploadId: string; fileName: string; mimeType: string; localPath?: string }> = [];
-    if (files.length > 0) {
+    if (files.length > 0 || inboxId) {
       if (!config) return false;
+      const endpoint = socketRef.current?.serverUrl ?? config.serverUrl;
       try {
+        const uploads = inboxId ? [await registerInboxUpload({ ...config, serverUrl: endpoint }, inboxId)] : [];
         for (const file of files) {
-          const upload = await uploadRemoteFile({
-            serverUrl: socketRef.current?.serverUrl ?? config.serverUrl,
+          uploads.push(await uploadRemoteFile({
+            serverUrl: endpoint,
             token: config.pairingToken,
             file,
             fileName: file.name,
-          });
+          }));
+        }
+        for (const upload of uploads) {
           attachments.push({
             type: upload.mimeType.startsWith('image/') ? 'image' : 'file',
             uploadId: upload.uploadId,
@@ -2733,7 +2773,7 @@ export function useRemote(config: RemoteConfig | null) {
       type: 'turn.start',
       requestId,
       threadId,
-      text: prompt || `请查看我上传的 ${attachments.length} 个文件。`,
+      text: prompt || `请查看这 ${attachments.length} 个附件。`,
       clientUserMessageId,
       deliveryMode,
       ...(expectedTurnId ? { expectedTurnId } : {}),
@@ -2994,10 +3034,20 @@ export function useRemote(config: RemoteConfig | null) {
     : !(desktopOnly && desktopIpcReady === false);
   const canInterrupt = canSteer && Boolean(selectedThreadId && turnIds[selectedThreadId]);
 
+  const threadAttention = useMemo(() => Object.fromEntries(threads.flatMap(thread => {
+    const target = attentionForThread(thread, approvals, promptQueueByThread[thread.id] ?? [],
+      thread.mobileManaged ? pendingAsyncQuestions(messagesByThread[thread.id] ?? [])[0]?.id : undefined,
+      desktopOnly && !thread.mobileManaged && desktopIpcReady === false);
+    return target ? [[thread.id, target]] : [];
+  })), [threads, approvals, promptQueueByThread, messagesByThread, desktopOnly, desktopIpcReady]);
+
   return {
     phase,
     phaseDetail,
     connectionUrl: phase === 'connected' ? connectionUrl : '',
+    hostVersion: phase === 'connected' ? hostVersion : '',
+    checkConversationSync,
+    threadAttention,
     codexReady,
     desktopOnly,
     canSteer,

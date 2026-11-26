@@ -1,7 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { CodexBackground } from './background';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { WireApprovalRequest } from '../types/protocol';
+import type { PromptQueueItem, WireApprovalRequest } from '../types/protocol';
+import { approvalAttention, attentionAction } from './attention';
 
 const COMPLETION_CHANNEL = 'codex_completions_v4';
 const APPROVAL_CHANNEL = 'codex_approvals_v4';
@@ -162,13 +163,16 @@ export async function notifyApprovalRequested(approval: WireApprovalRequest): Pr
         : 'Codex 等待命令确认';
   const body = approval.command || approval.reason || approval.detail || '打开 App 查看详情并确认。';
   const id = notificationId(`approval:${String(approval.requestId)}`);
+  const target = approvalAttention(approval.method, String(approval.requestId));
+  const action = attentionAction(target);
   if (Capacitor.isNativePlatform()) {
     try {
       await CodexBackground.notifyApproval({
         threadId: approval.threadId || 'global',
         title,
         text: body,
-        action: 'openApproval',
+        action,
+        alertKind: target.kind === 'input' ? 'input' : 'approval',
         notificationId: id,
       });
       return true;
@@ -183,9 +187,9 @@ export async function notifyApprovalRequested(approval: WireApprovalRequest): Pr
         title,
         body,
         largeBody: approval.detail || approval.command,
-        channelId: APPROVAL_CHANNEL,
-        sound: APPROVAL_SOUND,
-        extra: { type: 'approval', requestId: String(approval.requestId), threadId: approval.threadId },
+        channelId: target.kind === 'input' ? INPUT_CHANNEL : APPROVAL_CHANNEL,
+        sound: target.kind === 'input' ? INPUT_SOUND : APPROVAL_SOUND,
+        extra: { action, threadId: approval.threadId },
       }],
     });
     return true;
@@ -203,13 +207,14 @@ export async function notifyThreadAttention(options: {
   const id = notificationId(`attention:${options.kind}:${options.threadId}`);
   const title = options.kind === 'input' ? 'Codex 等待你的输入' : 'Codex 等待审批';
   const body = `${options.threadTitle} · 打开 App 继续处理。`;
+  const action = attentionAction({ kind: options.kind });
   if (Capacitor.isNativePlatform()) {
     try {
       await CodexBackground.notifyApproval({
         threadId: options.threadId,
         title,
         text: body,
-        action: options.kind === 'input' ? 'openThread' : 'openApproval',
+        action,
         alertKind: options.kind,
         notificationId: id,
       });
@@ -226,13 +231,32 @@ export async function notifyThreadAttention(options: {
         body,
         channelId: options.kind === 'input' ? INPUT_CHANNEL : APPROVAL_CHANNEL,
         sound: options.kind === 'input' ? INPUT_SOUND : APPROVAL_SOUND,
-        extra: { type: `attention-${options.kind}`, threadId: options.threadId },
+        extra: { action, threadId: options.threadId },
       }],
     });
     return true;
   } catch {
     return false;
   }
+}
+
+export async function notifyQueueProblem(item: PromptQueueItem, threadTitle: string): Promise<void> {
+  if (!(await initializeNotifications())) return;
+  const notificationIdValue = notificationId(`queue:${item.id}`);
+  const title = item.status === 'uncertain' ? 'Codex 队列结果待确认' : item.status === 'paused' ? 'Codex 队列已暂停' : 'Codex 队列投递失败';
+  const action = attentionAction({ kind: 'queue', id: item.id });
+  try {
+    await CodexBackground.notifyApproval({ threadId: item.threadId, title, text: threadTitle, action, notificationId: notificationIdValue });
+  } catch {
+    await LocalNotifications.schedule({ notifications: [{
+      id: notificationIdValue, title, body: threadTitle, channelId: APPROVAL_CHANNEL, sound: APPROVAL_SOUND,
+      extra: { action, threadId: item.threadId },
+    }] }).catch(() => undefined);
+  }
+}
+
+export function cancelQueueNotification(itemId: string) {
+  return cancelNotificationById(notificationId(`queue:${itemId}`));
 }
 
 export async function cancelApprovalNotification(requestId: string | number): Promise<void> {

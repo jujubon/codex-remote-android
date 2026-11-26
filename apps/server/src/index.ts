@@ -12,6 +12,7 @@ import { authenticateBearer } from "./auth.js";
 import { buildCodexEnvironment, HOST_VERSION, loadConfig } from "./config.js";
 import { DesktopIpcBridge } from "./desktop-ipc-bridge.js";
 import { FileTransferError, FileTransferManager } from "./file-transfer.js";
+import { FileInbox } from "./file-inbox.js";
 import { LAN_PORT, listenForLanDiscovery, trustedLanAddress } from "./lan-discovery.js";
 import { MobileGateway } from "./gateway.js";
 import { PromptQueueStore } from "./prompt-queue.js";
@@ -44,6 +45,7 @@ if (attachmentFolder) {
 }
 if (allowedRoots.includes(uploadDirectory)) await mkdir(uploadDirectory, { recursive: true, mode: 0o700 });
 const files = await FileTransferManager.create({ allowedRoots, uploadDirectory });
+const inbox = new FileInbox(join(dirname(config.promptQueueFile), "file-inbox.json"), files);
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue);
 const heartbeat = gateway.startHeartbeat();
@@ -52,6 +54,7 @@ const device = new DeviceTools(
   process.env.CMR_PHONE_DROP_DIR,
   threadId => gateway.currentTurnForPowerHold(threadId),
   (threadId, turnId) => gateway.turnFinishedForPowerHold(threadId, turnId),
+  path => inbox.recordShare(path),
 );
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
@@ -200,11 +203,15 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === "GET" && request.url === "/api/device/status") {
-    json(response, 200, { ...await device.status(), reader: reader.status() });
+    json(response, 200, { ...await device.status(), version: HOST_VERSION, reader: reader.status() });
     return;
   }
   if (request.method === "GET" && request.url === "/api/device/usage") {
     json(response, 200, await gateway.readAccountUsage());
+    return;
+  }
+  if (request.method === "GET" && request.url === "/api/device/inbox") {
+    json(response, 200, { files: await inbox.list((await device.settings()).folder) });
     return;
   }
   if (!device.supported || request.method !== "POST") {
@@ -212,6 +219,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     return;
   }
   switch (request.url) {
+    case "/api/device/inbox/use": {
+      const body = await readJsonBody(request, 2048);
+      json(response, 200, await inbox.use((await device.settings()).folder, body.id));
+      return;
+    }
     case "/api/device/reader/open-local":
       request.resume();
       json(response, 200, await reader.openLocal());

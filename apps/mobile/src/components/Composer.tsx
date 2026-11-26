@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
 import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
 import { PlusIcon, SendIcon, StopIcon } from './Icons';
+import type { InboxFile } from '../lib/deviceTools';
 
 export type DeliveryMode = 'auto' | 'steer' | 'queue';
 
@@ -30,13 +31,16 @@ interface ComposerProps {
   desktopOnly?: boolean;
   models: ModelOption[];
   skills: SkillOption[];
-  onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode, waitForReceipt?: boolean) => Promise<boolean> | boolean;
+  inboxFile?: InboxFile;
+  onClearInboxFile: (id: string) => void;
+  onSend: (content: string, files: File[] | undefined, deliveryMode: DeliveryMode, waitForReceipt?: boolean, inboxId?: string) => Promise<boolean> | boolean;
   onInterrupt: () => void;
 }
 
-export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills }: ComposerProps) {
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, desktopOnly, models, skills, inboxFile, onClearInboxFile }: ComposerProps) {
   const [content, setContent] = useState(() => readComposerDraft(draftKey));
   const [files, setFiles] = useState<File[]>([]);
+  const hasAttachments = files.length > 0 || Boolean(inboxFile);
   const [sending, setSending] = useState(false);
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -94,14 +98,15 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (sendingRef.current || sending || (!content.trim() && files.length === 0)) return;
+    if (!connected || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
     sendingRef.current = true;
     setSending(true);
     try {
-      if (await onSend(content, files, deliveryMode, true)) {
+      if (await onSend(content, files, deliveryMode, true, inboxFile?.id)) {
         clearSentComposerDraft(draftKey, content);
         setContent('');
         setFiles([]);
+        if (inboxFile) onClearInboxFile(inboxFile.id);
         if (deliveryMode === 'queue') setSelectedDeliveryMode('steer');
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
@@ -167,8 +172,11 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           ))}
         </div>
       )}
-      {files.length > 0 && (
+      {hasAttachments && (
         <div className="attachment-strip">
+          {inboxFile && <button type="button" disabled={sending} onClick={() => onClearInboxFile(inboxFile.id)} aria-label={`移除 ${inboxFile.fileName}`}>
+            <span>收件箱</span><strong>{inboxFile.fileName}</strong><small>×</small>
+          </button>}
           {files.map((file, index) => (
             <button key={`${file.name}:${file.size}:${index}`} type="button" onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
               <span>{file.type.startsWith('image/') ? '图片' : '文件'}</span>
@@ -212,7 +220,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
-          disabled={!connected || sending || (!content.trim() && files.length === 0)}
+          disabled={!connected || sending || (!content.trim() && !hasAttachments)}
           aria-label={sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >

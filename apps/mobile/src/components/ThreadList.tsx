@@ -5,6 +5,7 @@ import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
 import { ChatIcon, ChevronDownIcon, CloseIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon } from './Icons';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
+import type { AttentionTarget } from '../lib/attention';
 
 export const PROJECT_COLLAPSE_STORAGE_KEY = 'codex-mobile.project-collapse.v1';
 export const PROJECT_AUTO_COLLAPSE_THRESHOLD = 6;
@@ -134,9 +135,10 @@ interface ThreadListProps {
   hidden: ReturnType<typeof useHiddenProjects>;
   footer: React.ReactNode;
   threads: RemoteThread[];
+  attention: Record<string, AttentionTarget>;
   phase: ConnectionPhase;
   phaseDetail: string;
-  onSelect: (threadId: string) => void;
+  onSelect: (threadId: string, target?: AttentionTarget) => void;
   onCreate: (cwd?: string) => void;
   notice?: React.ReactNode;
   onSettings: () => void;
@@ -173,6 +175,7 @@ function formatDuration(durationMs: number): string {
 
 function ThreadRow({
   thread,
+  attention,
   childrenByParent,
   depth,
   onSelect,
@@ -180,9 +183,10 @@ function ThreadRow({
   onToggleChildren,
 }: {
   thread: RemoteThread;
+  attention?: AttentionTarget;
   childrenByParent: Map<string, RemoteThread[]>;
   depth: number;
-  onSelect: (threadId: string) => void;
+  onSelect: (threadId: string, target?: AttentionTarget) => void;
   expandedParents: Set<string>;
   onToggleChildren: (threadId: string) => void;
 }) {
@@ -202,7 +206,7 @@ function ThreadRow({
         className={`thread-card ${isAgent ? 'thread-card-agent' : ''}`}
         style={rowStyle}
         type="button"
-        onClick={() => onSelect(thread.id)}
+        onClick={() => onSelect(thread.id, attention)}
       >
         <span className={`thread-state state-${thread.state}`} aria-label={threadStateLabel(thread.state)}><span /></span>
         <span className="thread-main">
@@ -221,6 +225,9 @@ function ThreadRow({
           {thread.preview && thread.preview.trim() !== thread.title?.trim() && <span className="thread-preview">{thread.preview}</span>}
           <span className="thread-meta">
             {thread.state !== 'idle' && <span className={`state-label state-label-${thread.state}`}>{threadStateLabel(thread.state)}</span>}
+            {attention && <span className="duration-label">
+              {attention.kind === 'queue' ? '队列待处理' : attention.kind === 'input' ? '等待回复' : '审批待处理'} · {attention.handling === 'phone' ? '手机可处理' : attention.handling === 'desktop' ? '到电脑处理' : '打开查看'}
+            </span>}
             {completedDuration && thread.state !== 'running' && <span className="duration-label">用时 {completedDuration}</span>}
             {thread.tokenUsage && <span className="token-label">{thread.tokenUsage.totalTokens.toLocaleString()} tokens</span>}
             {children.length > 0 && <span className="agent-count">{children.length} 个 Subagent</span>}
@@ -259,7 +266,7 @@ function ThreadRow({
   );
 }
 
-export function ThreadList({ position, onArchives, threads, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden }: ThreadListProps) {
+export function ThreadList({ position, onArchives, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -307,10 +314,10 @@ export function ThreadList({ position, onArchives, threads, phase, phaseDetail, 
       if (!visibleInHistory(thread, visibility)) return false;
       if (!thread.projectless && thread.cwd && hidden.isHidden(thread.cwd)) return false;
       if (filter === '进行中' && thread.state !== 'running') return false;
-      if (filter === '待处理' && thread.state !== 'waiting_approval' && thread.state !== 'waiting_input') return false;
+      if (filter === '待处理' && !attention[thread.id]) return false;
       return !term || [thread.title, thread.cwd, thread.preview, thread.agentNickname].some(value => value?.toLocaleLowerCase().includes(term));
     });
-  }, [threads, query, filter, hidden, visibility]);
+  }, [threads, query, filter, hidden, visibility, attention]);
   const groups = useMemo(() => groupThreadsByCwd(filtered), [filtered]);
   const flatList = filter !== '全部项目' || Boolean(query.trim());
   const recent = useMemo(() => flatList ? [...filtered].sort((a, b) => b.updatedAt - a.updatedAt) : [], [filtered, flatList]);
@@ -397,7 +404,8 @@ export function ThreadList({ position, onArchives, threads, phase, phaseDetail, 
           <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在「管理 → 对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { updateQuery(''); updateFilter('全部项目'); }}>查看全部项目</button></div>
         ) : flatList ? recent.map(thread => (
           <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd) ? NO_PROJECT : projectName(thread.cwd)}</small>
-            <ThreadRow thread={thread} childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
+            <ThreadRow thread={thread} attention={filter === '待处理' ? attention[thread.id] : undefined}
+              childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} />
           </div>
         )) : groups.map(({ cwd, items }) => {
           const ids = new Set(items.map((thread) => thread.id));
