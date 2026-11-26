@@ -729,7 +729,7 @@ export class MobileGateway {
         case "projects.list": {
           if (!this.config.desktopOnly) throw new Error("当前连接不支持桌面项目目录。");
           const source = await this.desktopProjectSource();
-          const result = await desktopAction({ action: "projects", threadId: source.id });
+          const result = await this.runDesktopAction({ action: "projects", threadId: source.id });
           this.send(socket, { type: "projects", requestId: message.requestId, projects: result.projects ?? [] });
           break;
         }
@@ -743,7 +743,7 @@ export class MobileGateway {
             if (message.destination !== undefined && !["projectless", "newProject"].includes(message.destination)) throw new Error("未知的对话位置。");
             const cwd = message.destination ? undefined : requiredAbsolutePath(message.cwd, "cwd");
             const source = await this.desktopProjectSource(cwd);
-            const created = await desktopAction({ action: "create", threadId: source.id, cwd, prompt, destination: message.destination, projectName: message.projectName });
+            const created = await this.runDesktopAction({ action: "create", threadId: source.id, cwd, prompt, destination: message.destination, projectName: message.projectName });
             if (!created.thread_id) throw new Error("桌面未返回新对话编号，请刷新列表核对。");
             this.threadIndexLoadedAt = 0;
             if (message.destination === "projectless") {
@@ -1119,7 +1119,8 @@ export class MobileGateway {
   private async desktopProjectSource(cwd?: string) {
     await this.ensureThreadIndex();
     const threads = this.threadIndex.snapshot().filter(row => !row.parentThreadId);
-    const source = threads.find(row => this.desktopIpc?.hasOwner(row.id)) ?? threads.find(row => row.cwd === cwd) ?? threads[0];
+    const source = threads.find(row => this.desktopIpc?.hasOwner(row.id)) ?? threads.find(row => row.cwd === cwd)
+      ?? threads.find(row => !row.mobileManaged && !row.projectless) ?? threads[0];
     if (!source) throw new Error("请先在电脑 Codex 中打开一个对话。");
     return source;
   }

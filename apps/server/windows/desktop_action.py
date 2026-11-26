@@ -14,9 +14,10 @@ from native_app_tools import NativeAppTools
 from endpoint_hint import discover_native_endpoints
 
 
-def current_desktop_tools():
+def current_desktop_tools(required_tools=('read_thread', 'send_message_to_thread')):
     # WindowsApps is managed by MSIX; the pipe name alone never establishes identity.
     packages = Path(os.environ['ProgramFiles']) / 'WindowsApps'
+    required = set(required_tools)
     for path in discover_native_endpoints():
         if 'codex-app-tools-' not in path:
             continue
@@ -29,11 +30,21 @@ def current_desktop_tools():
                     or relative.parts[1].lower() != 'app' or relative.name.lower() not in ('chatgpt.exe', 'codex.exe')):
                 continue
             tools = NativeAppTools(endpoint=path)
-            if {'read_thread', 'send_message_to_thread'} <= tools.capabilities(ident):
+            if required <= tools.capabilities(ident):
                 return tools, ident
         except (OSError, ValueError, TimeoutError, DesktopControlError):
             continue
     raise ValueError('verified-desktop-tools-unavailable')
+
+
+def project_desktop_tools(required_tools):
+    try:
+        return current_desktop_tools(required_tools)
+    except ValueError:
+        # Older Desktop builds can still authenticate their app-tools through the legacy pipe.
+        with WindowsDesktopPipe() as pipe:
+            identity, _, _ = pipe_server_identity(pipe)
+        return NativeAppTools(), identity
 
 
 def find_project(projects, directory):
@@ -77,9 +88,18 @@ def new_project(name, get_projects):
 
 
 def run(request):
-    if request['action'] == 'native-project-create':
-        tools, identity = current_desktop_tools()
+    if request['action'] == 'projects':
         try:
+            tools, identity = project_desktop_tools(('read_thread', 'list_projects'))
+            projects = tools.projects(request['threadId'], identity)
+        except (OSError, ValueError, TimeoutError, DesktopControlError):
+            return {'state': 'rejected', 'reply': '暂时无法读取电脑项目。请保持 Codex Desktop 打开，再重新打开「新聊天」。'}
+        return {'state': 'confirmed', 'projects': [
+            {'path': project['path'], 'name': project['name']} for project in projects if project['path']
+        ]}
+    if request['action'] == 'native-project-create':
+        try:
+            tools, identity = current_desktop_tools(('read_thread', 'list_projects'))
             project = new_project(request.get('projectName'), lambda: tools.projects(request['threadId'], identity))
         except ValueError as error:
             return {'state': 'rejected', 'reply': str(error)}
@@ -96,22 +116,23 @@ def run(request):
             return {'state': 'rejected', 'reply': '新版桌面接口暂不可用，请检查 Codex Desktop。'}
         return tools.send_text(thread, request['prompt'], identity, uuid.uuid4().hex,
                                model=request.get('model'), thinking=request.get('thinking'))
-    with WindowsDesktopPipe() as pipe:
-        identity, _, _ = pipe_server_identity(pipe)
-    tools = NativeAppTools()
     thread = request['threadId']
     operation = uuid.uuid4().hex
     if request['action'] == 'open':
-        return tools.open_thread(thread, identity, operation)
-    def get_projects():
-        return tools.projects(thread, identity)
-    if request['action'] == 'projects':
-        return {'state': 'confirmed', 'projects': [{'path': p['path'], 'name': p['name']} for p in get_projects() if p['path']]}
+        with WindowsDesktopPipe() as pipe:
+            identity, _, _ = pipe_server_identity(pipe)
+        return NativeAppTools().open_thread(thread, identity, operation)
     if request['action'] != 'create':
         raise ValueError('unknown action')
     prompt = request.get('prompt')
     if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 4000:
         return {'state': 'rejected', 'reply': '首条消息需要 1 至 4000 个字符。'}
+    required_tools = ['read_thread', 'create_thread']
+    if request.get('destination') != 'projectless':
+        required_tools.append('list_projects')
+    tools, identity = project_desktop_tools(required_tools)
+    def get_projects():
+        return tools.projects(thread, identity)
     try:
         if request.get('destination') == 'projectless':
             project = {'id': None, 'name': '无项目', 'path': None}

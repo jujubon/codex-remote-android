@@ -208,6 +208,32 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("returns the verified Desktop project catalog when the legacy desktop IPC is offline", async () => {
+    const desktop = new FakeDesktop();
+    desktop.ready = desktop.owner = false;
+    const calls: Parameters<typeof desktopAction>[0][] = [];
+    const projects = [{ path: join(tmpdir(), "registered-project"), name: "Registered project" }];
+    const { bridge, port } = await start(desktop, undefined, { desktopOnly: true }, async request => {
+      calls.push(request);
+      return { projects };
+    });
+    bridge.threadListData.unshift({
+      id: "recent-mobile", name: "Mobile task", cwd: join(tmpdir(), "mobile"), updatedAt: 10,
+      threadSource: "codex-remote-mobile-projectless",
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<Record<string, unknown>> = [];
+    ws.on("message", data => messages.push(JSON.parse(String(data))));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    ws.send(JSON.stringify({ type: "projects.list", requestId: "project-picker" }));
+    await waitFor(() => messages.some(message => message.requestId === "project-picker"));
+    expect(calls).toEqual([{ action: "projects", threadId: "thread-1" }]);
+    expect(messages.find(message => message.requestId === "project-picker")).toMatchObject({ type: "projects", projects });
+    expect(bridge.calls.some(call => call.method === "turn/start")).toBe(false);
+    ws.close();
+  });
+
   it("keeps quota errors distinct from retries and accepts a new turn after recovery", async () => {
     const { bridge, port } = await start();
     const request = bridge.request.bind(bridge);
