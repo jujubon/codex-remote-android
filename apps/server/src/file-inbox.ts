@@ -41,13 +41,13 @@ export class FileInbox {
     return this.updateShares(paths => [path, ...paths.filter(previous => previous !== path)].slice(0, LIMIT));
   }
 
-  private updateShares(update: (paths: string[]) => string[]): Promise<void> {
+  private updateShares(update: (paths: string[]) => string[] | Promise<string[]>): Promise<void> {
     const operation = this.writes.then(async () => {
       const paths = await this.shares();
       const temp = `${this.indexPath}.${randomUUID()}.tmp`;
       try {
         await mkdir(dirname(this.indexPath), { recursive: true, mode: 0o700 });
-        await writeFile(temp, JSON.stringify(update(paths)), { mode: 0o600 });
+        await writeFile(temp, JSON.stringify(await update(paths)), { mode: 0o600 });
         await rename(temp, this.indexPath);
       } finally {
         await unlink(temp).catch(() => undefined);
@@ -58,6 +58,12 @@ export class FileInbox {
   }
 
   async list(receiveFolder: string): Promise<InboxEntry[]> {
+    const recent = (await this.collect(receiveFolder)).sort((a, b) => b.receivedAt - a.receivedAt).slice(0, LIMIT);
+    this.lastListing = { receiveFolder, entries: new Map(recent.map(entry => [entry.id, entry])) };
+    return recent;
+  }
+
+  private async collect(receiveFolder: string): Promise<InboxEntry[]> {
     const shareRoot = await realpath(receiveFolder).catch(error => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -77,9 +83,7 @@ export class FileInbox {
     };
     for (const path of shared) await append(path, "share");
     for (const path of uploaded) await append(path, "chat");
-    const recent = entries.sort((a, b) => b.receivedAt - a.receivedAt).slice(0, LIMIT);
-    this.lastListing = { receiveFolder, entries: new Map(recent.map(entry => [entry.id, entry])) };
-    return recent;
+    return entries;
   }
 
   private async find(receiveFolder: string, id: unknown) {
@@ -98,6 +102,31 @@ export class FileInbox {
     if (await isInUse(entry.path)) {
       throw new FileTransferError("FILE_IN_USE", "文件正在被任务或排队消息使用，请稍后再删除。", 409);
     }
+    await this.removeEntry(entry);
+    if (entry.source === "share") await this.forgetShares(new Set([entry.path]));
+    return { id: entry.id, deleted: true };
+  }
+
+  async clear(receiveFolder: string, isInUse: (path: string) => Promise<boolean>) {
+    const snapshot = await this.collect(receiveFolder);
+    const removedShares = new Set<string>();
+    const result = { deleted: 0, inUse: 0, failed: 0 };
+    for (const entry of snapshot) {
+      try {
+        if (await isInUse(entry.path)) { result.inUse++; continue; }
+        await this.removeEntry(entry);
+        result.deleted++;
+        if (entry.source === "share") removedShares.add(entry.path);
+      } catch (error) {
+        if (error instanceof FileTransferError && error.code === "FILE_IN_USE") result.inUse++;
+        else result.failed++;
+      }
+    }
+    if (removedShares.size) await this.forgetShares(removedShares);
+    return result;
+  }
+
+  private async removeEntry(entry: InboxEntry): Promise<void> {
     const actual = await lstat(entry.path).catch(() => undefined);
     if (!actual?.isFile() || await realpath(entry.path).catch(() => undefined) !== entry.path ||
         receiptId(entry.path, entry.source, actual) !== entry.id) {
@@ -109,11 +138,16 @@ export class FileInbox {
     await unlink(entry.path);
     this.lastListing = undefined;
     await this.files.forgetDeletedInboxFile(entry.path);
-    if (entry.source === "share") {
-      await this.updateShares(paths => paths.filter(path => path !== entry.path))
-        .catch(error => console.warn("[inbox] could not remove old receipt", error));
-    }
-    return { id: entry.id, deleted: true };
+  }
+
+  private async forgetShares(removed: ReadonlySet<string>): Promise<void> {
+    await this.updateShares(async paths => {
+      const retained = await Promise.all(paths.map(async path => {
+        if (!removed.has(path)) return true;
+        return lstat(path).then(() => true, error => (error as NodeJS.ErrnoException).code !== "ENOENT");
+      }));
+      return paths.filter((_, index) => retained[index]);
+    }).catch(error => console.warn("[inbox] could not remove old receipt", error));
   }
 
   async preview(receiveFolder: string, id: string, thumbnail: boolean) {

@@ -44,7 +44,7 @@ public class CompanionUpdatePlugin extends Plugin {
             return;
         }
         if (!updating.compareAndSet(false, true)) {
-            call.reject("手机更新正在处理，请稍候。");
+            call.resolve(new JSObject().put("state", "inProgress"));
             return;
         }
         publishProgress(version, "preparing", 0, 0);
@@ -69,37 +69,44 @@ public class CompanionUpdatePlugin extends Plugin {
                 if (cached != null) for (File file : cached) {
                     if (!apk.equals(file) && file.getName().endsWith(".apk")) file.delete();
                 }
+                part.delete();
                 getActivity().runOnUiThread(() -> openInstaller(call, apk));
             } catch (Exception error) {
-                clearProgress();
-                updating.set(false);
+                part.delete();
+                finishUpdate();
                 call.reject(error instanceof IOException && error.getMessage() != null && error.getMessage().endsWith("。")
                     ? error.getMessage() : "无法下载手机更新，请检查网络后重试。");
-            } finally {
-                part.delete();
+                return;
             }
         }, "companion-update").start();
     }
 
     private void openInstaller(PluginCall call, File apk) {
+        String state;
         try {
             if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
                 getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + getContext().getPackageName())));
-                call.resolve(new JSObject().put("state", "permission"));
-                return;
+                state = "permission";
+            } else {
+                Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+                Intent install = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive");
+                install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                getActivity().startActivity(install);
+                state = "installer";
             }
-            Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
-            Intent install = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive");
-            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            getActivity().startActivity(install);
-            call.resolve(new JSObject().put("state", "installer"));
         } catch (RuntimeException error) {
+            finishUpdate();
             call.reject("无法打开 Android 安装界面，请从发布页下载安装。");
-        } finally {
-            clearProgress();
-            updating.set(false);
+            return;
         }
+        finishUpdate();
+        call.resolve(new JSObject().put("state", state));
+    }
+
+    private void finishUpdate() {
+        clearProgress();
+        updating.set(false);
     }
 
     private void publishProgress(String version, String stage, long downloaded, long total) {

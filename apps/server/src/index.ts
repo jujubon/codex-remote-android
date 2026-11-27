@@ -289,6 +289,12 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
       json(response, 200, await inbox.remove((await device.settings()).folder, body.id, path => gateway.isInboxAttachmentInUse(path)));
       return;
     }
+    case "/api/device/inbox/clear": {
+      const body = await readJsonBody(request, 1024);
+      if (body.confirm !== true) throw new FileTransferError("INVALID_ARGUMENT", "请确认清空收件箱。", 400);
+      json(response, 200, await inbox.clear((await device.settings()).folder, path => gateway.isInboxAttachmentInUse(path)));
+      return;
+    }
     case "/api/device/reader/open-local":
       request.resume();
       json(response, 200, await reader.openLocal());

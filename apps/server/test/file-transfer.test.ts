@@ -73,6 +73,45 @@ describe("file transfer primitives", () => {
     expect(await inbox.list(received)).toEqual([]);
   });
 
+  it("clears the inbox beyond its recent listing while preserving active, replaced, and newly received files", async () => {
+    const { manager, root } = await fixture();
+    const inbox = new FileInbox(join(root, "inbox.json"), manager);
+    const received = join(root, "received");
+    await mkdir(received);
+    const changed = join(received, "changed.txt");
+    const shared = join(received, "shared.txt");
+    const unrelated = join(received, "unrelated.txt");
+    const newShare = join(received, "new.txt");
+    for (const path of [changed, shared, unrelated]) await writeFile(path, "original");
+    await inbox.recordShare(changed);
+    await inbox.recordShare(shared);
+
+    const uploads = [];
+    for (let index = 0; index < 61; index++) {
+      const upload = await manager.receiveUpload({ fileName: `chat-${index}.txt`, stream: Readable.from(["file"]) });
+      await manager.commitUpload(upload.uploadId);
+      uploads.push(upload);
+    }
+    const [active, pinned] = uploads;
+    manager.pinUpload(pinned!.uploadId);
+    expect(await inbox.list(received)).toHaveLength(60);
+
+    const result = await inbox.clear(received, async path => {
+      if (path === changed) {
+        await writeFile(changed, "replacement bytes");
+        await writeFile(newShare, "new file");
+        await inbox.recordShare(newShare);
+      }
+      return path === active!.path;
+    });
+
+    expect(result).toEqual({ deleted: 60, inUse: 2, failed: 1 });
+    expect((await inbox.list(received)).map(file => file.path)).toEqual(expect.arrayContaining([active!.path, pinned!.path, changed, newShare]));
+    expect(await inbox.list(received)).toHaveLength(4);
+    expect(await readFile(unrelated, "utf8")).toBe("original");
+    expect(await readFile(changed, "utf8")).toBe("replacement bytes");
+  });
+
   it("recovers opted-in attachments after restart and keeps queued, reused and permanent files safe", async () => {
     const { manager, root, uploads } = await fixture();
     const upload = (fileName: string, deleteAfterTurn: boolean) =>

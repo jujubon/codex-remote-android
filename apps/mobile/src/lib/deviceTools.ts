@@ -99,7 +99,7 @@ export async function deviceRequest<T>(config: RemoteConfig, action: string, bod
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/device/' + action;
   const method = ['status', 'usage', 'antigravity/usage', 'inbox', 'update/status'].includes(action) ? 'GET' : 'POST';
-  const timeoutMs = action === 'reader/open-remote' ? 25_000 : action === 'antigravity/usage' ? 22_000
+  const timeoutMs = action === 'inbox/clear' ? 60_000 : action === 'reader/open-remote' ? 25_000 : action === 'antigravity/usage' ? 22_000
     : action.startsWith('usage/reset/') ? 25_000 : action === 'reader/open-local' ? 18_000 : action === 'usage' ? 6_000 : 12_000;
   const headers: Record<string, string> = { Authorization: 'Bearer ' + config.pairingToken, 'ngrok-skip-browser-warning': '1' };
   if (body) headers['Content-Type'] = 'application/json';

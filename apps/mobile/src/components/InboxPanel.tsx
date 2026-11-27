@@ -105,9 +105,10 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
   const [swiped, setSwiped] = useState<string | null>(null);
   const [pendingSetting, setPendingSetting] = useState(false);
   const [settingError, setSettingError] = useState('');
-  const [deleteTarget, setDeleteTarget] = useState<InboxFile>();
+  const [deleteTarget, setDeleteTarget] = useState<InboxFile | 'clear'>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [clearReceipt, setClearReceipt] = useState('');
   const [preview, setPreview] = useState<{ file: InboxFile; url?: string }>();
 
   async function changeAttachmentCleanup(enabled: boolean) {
@@ -132,20 +133,33 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
     }
   }
 
-  function confirmDelete(file: InboxFile) {
+  function confirmDelete(file: InboxFile | 'clear') {
     setDeleteTarget(file);
     setDeleteError('');
     deleteDialog.current?.showModal();
   }
 
-  async function deleteFile(file: InboxFile) {
+  async function deleteFile(file: InboxFile | 'clear') {
     if (deleting) return;
     setDeleting(true);
     setDeleteError('');
+    setClearReceipt('');
     try {
-      const result = await deviceRequest<{ id: string; deleted: boolean }>(config, 'inbox/delete', { id: file.id });
-      if (result.id !== file.id || !result.deleted) throw new Error('电脑未确认删除，请刷新收件箱。');
-      setFiles(current => current?.filter(entry => entry.id !== file.id));
+      if (file === 'clear') {
+        const result = await deviceRequest<{ deleted: number; inUse: number; failed: number }>(config, 'inbox/clear', { confirm: true });
+        const summary = [
+          `已删除 ${result.deleted} 项`,
+          result.inUse > 0 ? `${result.inUse} 项正在使用，已保留` : '',
+          result.failed > 0 ? `${result.failed} 项未删除，可刷新后重试` : '',
+        ].filter(Boolean).join('，');
+        setClearReceipt(`${summary}。`);
+        setVisibleCount(INBOX_PAGE_SIZE);
+        await refresh();
+      } else {
+        const result = await deviceRequest<{ id: string; deleted: boolean }>(config, 'inbox/delete', { id: file.id });
+        if (result.id !== file.id || !result.deleted) throw new Error('电脑未确认删除，请刷新收件箱。');
+        setFiles(current => current?.filter(entry => entry.id !== file.id));
+      }
       deleteDialog.current?.close();
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : '删除失败，请重试。');
@@ -170,8 +184,13 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
       {settingError && <p className="inbox-feedback" role="alert">{settingError}</p>}
       <div className="computer-utility-header">
         <span className="utility-muted">{loading ? '正在读取…' : files ? `最近 ${files.length} 项` : ''}</span>
-        <button className="secondary-button" type="button" disabled={loading} onClick={() => void refresh()}>刷新</button>
+        <div className="inbox-list-actions">
+          {files && files.length > 0 && <button className="secondary-button inbox-clear-button" type="button"
+            disabled={loading || deleting} onClick={() => confirmDelete('clear')}>清空</button>}
+          <button className="secondary-button" type="button" disabled={loading || deleting} onClick={() => void refresh()}>刷新</button>
+        </div>
       </div>
+      {clearReceipt && <p className="computer-feedback" role="status">{clearReceipt}</p>}
       {error && <p className="inbox-feedback" role="status">{error}</p>}
       {!loading && !error && files?.length === 0 && <p>暂无收件。</p>}
       {files && files.length > 0 && <ul className="computer-inbox-list">{files.slice(0, visibleCount).map(file => {
@@ -197,21 +216,23 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
         onClick={() => setVisibleCount(count => count + INBOX_PAGE_SIZE)}>显示更多 · 还剩 {files.length - visibleCount} 项</button>}
       </>}
     </div>
-    <dialog className="session-dialog" ref={deleteDialog} aria-labelledby={deleteTitleId}
+    <dialog className="session-dialog" ref={deleteDialog} aria-labelledby={deleteTitleId} data-confirming={deleting || undefined}
       onCancel={event => { if (deleting) event.preventDefault(); }} onClose={() => setDeleteTarget(undefined)}>
       {deleteTarget && <div className="session-sheet archive-sheet inbox-delete-sheet">
-        <header className="sheet-title-row"><h2 id={deleteTitleId}>删除电脑上的文件？</h2>
+        <header className="sheet-title-row"><h2 id={deleteTitleId}>{deleteTarget === 'clear' ? '清空手机收件箱？' : '删除电脑上的文件？'}</h2>
           <button className="nav-icon-button" type="button" aria-label="取消删除" disabled={deleting}
             onClick={() => deleteDialog.current?.close()}><CloseIcon /></button>
         </header>
-        <p>{deleteTarget.fileName}</p>
-        <small>文件将从电脑和收件箱移除。{deleteTarget.source === 'chat' ? '聊天记录中的这份附件也将无法打开。' : ''}</small>
+        {deleteTarget === 'clear' ? <p>这会删除电脑上已收录的手机分享和对话附件，包括列表里尚未展开的文件。正在发送、排队或被任务使用的附件会保留。已删除的附件无法从聊天记录打开。</p> : <>
+          <p>{deleteTarget.fileName}</p>
+          <small>文件将从电脑和收件箱移除。{deleteTarget.source === 'chat' ? '聊天记录中的这份附件也将无法打开。' : ''}</small>
+        </>}
         {deleteError && <p className="inbox-feedback" role="alert">{deleteError}</p>}
         <div className="sheet-actions">
           <button className="secondary-button" type="button" autoFocus disabled={deleting}
             onClick={() => deleteDialog.current?.close()}>取消</button>
           <button className="swipe-delete-confirm" type="button" disabled={deleting}
-            onClick={() => void deleteFile(deleteTarget)}>{deleting ? '正在删除…' : '确认删除'}</button>
+            onClick={() => void deleteFile(deleteTarget)}>{deleting ? '正在删除…' : deleteTarget === 'clear' ? '确认清空' : '确认删除'}</button>
         </div>
       </div>}
     </dialog>

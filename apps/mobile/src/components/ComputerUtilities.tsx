@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
-import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type DownloadBytes, type HostUpdate, type PhoneUpdateProgress, type RemoteRelease, type StartupUpdate } from '../lib/updates';
+import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, installPhoneRelease, releasePage, type DownloadBytes, type HostUpdate, type PhoneUpdateProgress, type RemoteRelease, type StartupUpdate } from '../lib/updates';
 import { ComputerCardHeading } from './ComputerCardHeading';
 import { AlertIcon, CheckIcon, CloseIcon, GaugeIcon, UpdateIcon } from './Icons';
 
@@ -89,7 +89,7 @@ function UpdateToast({ text, tone, transient, dismissible, progress, children, o
   }, [leaving]);
   const Icon = tone === 'success' ? CheckIcon : tone === 'error' ? AlertIcon : UpdateIcon;
   return createPortal(
-    <div className="update-toast" data-tone={tone} data-leaving={leaving || undefined} data-progress={Boolean(progress) || undefined}>
+    <div className="update-toast" data-tone={tone} data-leaving={leaving || undefined} data-progress={Boolean(progress) || undefined} data-actions={Boolean(children) || undefined}>
       <span className="update-toast-icon"><Icon aria-hidden="true" /></span>
       <p role="status">{text}</p>
       {dismissible && <button type="button" className="nav-icon-button update-toast-close"
@@ -207,14 +207,21 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     setError('');
     setPhoneStatus('');
     try {
-      const result = await CompanionUpdate.install({ version: target.version, sha256: target.androidSha256, bytes: target.androidBytes });
-      setPhoneStatus(result.state === 'permission'
-        ? '允许安装应用后，返回再点「更新手机」。'
-        : '请在 Android 安装界面确认更新。');
+      const result = await installPhoneRelease(target.version, target.androidSha256, target.androidBytes);
+      if (result.state === 'inProgress') {
+        const current = await CompanionUpdate.getProgress().catch(() => undefined);
+        if (current && current.stage !== 'idle') setPhoneProgress(current);
+        else setPhoneStatus('手机更新已提交，请查看系统安装界面。');
+      } else {
+        setPhoneProgress(undefined);
+        setPhoneStatus(result.state === 'permission'
+          ? '允许安装应用后，返回再点「更新手机」。'
+          : '请在 Android 安装界面确认更新。');
+      }
     } catch (failure) {
+      setPhoneProgress(undefined);
       setError(failure instanceof Error ? failure.message : '手机更新失败，请重试。');
     } finally {
-      setPhoneProgress(undefined);
       setInstalling(undefined);
     }
   }

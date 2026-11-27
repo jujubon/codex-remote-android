@@ -20,11 +20,20 @@ export interface StartupUpdate {
   host: boolean;
 }
 
+type PhoneInstallResult = { state: 'permission' | 'installer' | 'inProgress' };
+
 export const CompanionUpdate = registerPlugin<{
-  install(options: { version: string; sha256: string; bytes?: number }): Promise<{ state: 'permission' | 'installer' }>;
+  install(options: { version: string; sha256: string; bytes?: number }): Promise<PhoneInstallResult>;
   getProgress(): Promise<PhoneUpdateProgress | { stage: 'idle' }>;
   addListener(eventName: 'downloadProgress', listener: (progress: PhoneUpdateProgress | { stage: 'idle' }) => void): Promise<PluginListenerHandle>;
 }>('CompanionUpdate');
+
+let phoneInstall: Promise<PhoneInstallResult> | undefined;
+
+export function installPhoneRelease(version: string, sha256: string, bytes?: number): Promise<PhoneInstallResult> {
+  phoneInstall ??= CompanionUpdate.install({ version, sha256, bytes }).finally(() => { phoneInstall = undefined; });
+  return phoneInstall;
+}
 
 export interface DownloadBytes {
   downloadedBytes?: number;

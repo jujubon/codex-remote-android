@@ -845,7 +845,10 @@
 .inbox-show-more { justify-self: center; }
 .inbox-feedback { margin: 0; color: #8b3045; overflow-wrap: anywhere; }
 .inbox-delete-sheet p, .inbox-delete-sheet small { overflow-wrap: anywhere; }
-.inbox-delete-sheet .swipe-delete-confirm { width: auto; padding-inline: 16px; }
+.inbox-delete-sheet .sheet-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.inbox-delete-sheet .sheet-actions > button { min-height: 44px; }
+.inbox-list-actions { display: flex; align-items: center; gap: 8px; }
+.inbox-list-actions .inbox-clear-button { color: #8b3045; }
 @media (max-width: 365px) {
   .inbox-row { gap: 6px; }
   .inbox-row-actions { gap: 2px; }
@@ -952,6 +955,7 @@
 .update-toast .update-toast-close { width: 36px; height: 36px; min-width: 36px; }
 .update-toast-close svg { width: 17px; height: 17px; }
 .update-toast[data-progress] { width: min(360px, 100%); padding: 12px 14px; }
+.update-toast[data-actions] { width: min(360px, 100%); }
 .update-progress-list { grid-column: 1 / -1; display: grid; gap: 11px; margin-top: 5px; }
 .update-download { display: grid; gap: 6px; min-width: 0; }
 .update-download-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: .8125rem; }
@@ -976,24 +980,27 @@
 .update-download-track[data-indeterminate] span { width: 32%; opacity: .68; }
 .update-toast-actions {
   grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
   padding-bottom: 3px;
 }
-.update-toast-actions .primary-button {
+.update-toast-actions :is(.primary-button, .update-release-link) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding-inline: 11px;
+  min-height: 44px;
+  padding-inline: 6px;
   border-radius: 10px;
   font-size: .8125rem;
+  text-align: center;
+  line-height: 1.3;
+  white-space: normal;
   text-decoration: none;
 }
-.update-release-link { display: inline-flex; align-items: center; min-height: 38px; padding-inline: 6px; color: var(--accent); font-size: .8125rem; font-weight: 600; text-decoration: none; }
+.update-release-link { border: 1px solid var(--line-strong); color: var(--accent); background: var(--surface); font-weight: 650; }
+.update-release-link:active { background: var(--accent-soft); }
 .update-toast[data-leaving] { pointer-events: none; opacity: 0; }
 @media (prefers-reduced-motion: no-preference) {
   .update-check-spinner { animation: update-spin .8s linear infinite; }
