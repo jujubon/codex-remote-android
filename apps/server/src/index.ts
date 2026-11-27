@@ -220,6 +220,10 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, { ...await device.status(), version: HOST_VERSION, reader: reader.status(), hostUpdateSupported: updates.supported });
     return;
   }
+  if (request.method === "GET" && request.url === "/api/device/audio/mute" && device.supported) {
+    json(response, 200, await device.audioMuteStatus());
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/update/status") {
     json(response, 200, { update: await updates.status() });
     return;
@@ -325,6 +329,17 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     case "/api/device/power/lock":
       await device.lock();
       break;
+    case "/api/device/power/shutdown": {
+      const body = await readJsonBody(request, 1024);
+      if (body.confirm !== true) throw new FileTransferError("INVALID_ARGUMENT", "请确认关闭电脑。", 400);
+      json(response, 202, device.requestShutdown());
+      return;
+    }
+    case "/api/device/audio/mute": {
+      const body = await readJsonBody(request, 1024);
+      json(response, 200, await device.setAudioMute(body.muted));
+      return;
+    }
     case "/api/device/power/hold": {
       const body = await readJsonBody(request, 2048);
       await device.startHold(body.minutes, body.threadId);

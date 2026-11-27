@@ -10,7 +10,7 @@ import { FileTransferError, sanitizeFileName, type FileTransferManager, type Sto
 
 type Settings = { folder: string; autoOpen: boolean };
 type Receipt = { fileName: string; opened: boolean };
-type NativeReply = { ok: boolean; text?: string; opened?: boolean };
+type NativeReply = { ok: boolean; text?: string; opened?: boolean; muted?: boolean };
 type CodexDesktopState = "unavailable" | "closed" | "starting" | "open";
 type PowerHold = { child: ChildProcessWithoutNullStreams; until: number; tick: NodeJS.Timeout };
 type SettingsDocument = { receiveFolder?: unknown; autoOpen?: unknown; chatAttachmentFolder?: unknown };
@@ -125,6 +125,9 @@ export class DeviceTools {
   private readonly desktopCloseRequests = new Map<"codex" | "antigravity", Promise<boolean>>();
   private hold: PowerHold | null = null;
   private changingHold = false;
+  private audioOperation: Promise<unknown> = Promise.resolve();
+  private shutdownPendingUntil = 0;
+  private shutdownError?: string;
   private readonly receipts = new Map<string, { operation: Promise<Receipt>; expiresAt: number }>();
 
   constructor(
@@ -149,6 +152,9 @@ export class DeviceTools {
     ]);
     const info = {
       supported: this.supported,
+      computerControls: this.supported,
+      shutdownPending: Date.now() < this.shutdownPendingUntil,
+      shutdownError: this.shutdownError,
       desktopCloseSupported: this.supported,
       awakeUntil: this.hold?.until ?? null,
       antigravityDesktopInstalled: Boolean(antigravity),
@@ -191,6 +197,43 @@ export class DeviceTools {
 
   async lock(): Promise<void> {
     await this.native({ action: "lock" });
+  }
+
+  audioMuteStatus() {
+    return this.audioMute();
+  }
+
+  setAudioMute(muted: unknown) {
+    if (typeof muted !== "boolean") return invalid("请提供有效的电脑静音状态。");
+    return this.audioMute(muted);
+  }
+
+  private audioMute(muted?: boolean): Promise<{ muted: boolean }> {
+    const next = this.audioOperation.then(async () => {
+      const reply = await this.native(muted === undefined ? { action: "audio-mute-read" }
+        : { action: "audio-mute-write", muted }).catch(() => {
+        throw new Error("无法访问电脑的默认音频输出，请检查 Windows 声音设置。");
+      });
+      if (typeof reply.muted !== "boolean") throw new Error("电脑未返回静音状态。");
+      return { muted: reply.muted };
+    });
+    this.audioOperation = next.catch(() => undefined);
+    return next;
+  }
+
+  requestShutdown() {
+    if (Date.now() >= this.shutdownPendingUntil) {
+      this.shutdownError = undefined;
+      this.shutdownPendingUntil = Date.now() + 15_000;
+      // Give the paired client time to receive its receipt before Windows signs out.
+      setTimeout(() => {
+        void this.native({ action: "shutdown" }).catch(() => {
+          this.shutdownPendingUntil = 0;
+          this.shutdownError = "Windows 未确认关机，请查看电脑上的权限或保存提示。";
+        });
+      }, 1500).unref();
+    }
+    return { requested: true };
   }
 
   private get codexDesktopAvailable(): boolean {

@@ -10,7 +10,7 @@
 | --- | --- |
 | **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a running turn, or stop it. |
 | **Antigravity** | Start and resume chats through the signed-in Windows CLI and check usage. Open the official Google remote panel from the desktop controls for desktop conversations. |
-| **Computer** | Check the connection, share files and plain text, preview received images, lock the PC, keep it awake with the screen off, mirror your phone, and install updates. |
+| **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
 
 <p align="center">
   <img src="docs/images/app-preview.webp" alt="The Codex, Antigravity, and Computer tabs, shown with sample data" width="840">
@@ -41,6 +41,8 @@ Set your trusted Wi-Fi or hotspot to **Private** in Windows. Run `Enable-Trusted
 To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manual LAN address field. The Computer tab shows which route is in use. Hotspot connectivity depends on both devices' network settings. [Hotspots and mirroring (Chinese)](docs/phone-reader.md#手机开热点给电脑)
 
 ## Everyday use
+
+- **Control your PC.** Under **Computer → Computer controls** (`电脑控制`), lock the PC, keep it awake with its display off, or mute and unmute the default audio output. Shutting down requires confirmation and disconnects the phone.
 
 - **Pick up a Codex task.** Search projects, conversations, and messages. Open the elapsed-time row to see a turn's tool activity. Live controls in desktop-created chats depend on the available Codex Desktop connection and the session state. [Desktop connection details (Chinese)](docs/desktop-ipc.md)
 - **Launch or close a desktop app.** Tap **Launch** (`启动`) in the relevant assistant tab. Green means the window is open and amber means it is opening or closing. The **⋯** next to search opens project and conversation management. For the Antigravity desktop panel, enable Remote Control on the PC and sign in to the panel with the same Google account.

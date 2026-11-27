@@ -55,7 +55,7 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
         <ConnectionDiagnostics key={`${phase}:${active}`} config={deviceConfig} sync={checkSync} endpoint={endpoint} routeLabel={routeLabel} />
       </section>
       <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
-      <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
+      <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} connected={connected} />
       <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox}
         deleteAfterTurn={deleteAttachmentsAfterTurn} onChangeAttachmentCleanup={onChangeAttachmentCleanup} />
       <UpdatePanel hostVersion={hostVersion} config={deviceConfig} connected={connected}

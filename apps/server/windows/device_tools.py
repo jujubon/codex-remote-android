@@ -3,11 +3,14 @@ import ctypes as c
 from ctypes import wintypes as w
 import json
 import os
+import subprocess
 import sys
 import time
+import uuid
 
 user = c.WinDLL("user32", use_last_error=True)
 kernel = c.WinDLL("kernel32", use_last_error=True)
+ole = c.WinDLL("ole32")
 CF_UNICODETEXT = 13
 CODEX_PACKAGE = "OpenAI.Codex_2p2nqsd0c76g0"
 WINDOW_CALLBACK = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
@@ -49,6 +52,58 @@ open_process = bind(kernel, "OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
 package_family = bind(kernel, "GetPackageFamilyName", w.LONG, w.HANDLE, c.POINTER(w.UINT), w.LPWSTR)
 image_path = bind(kernel, "QueryFullProcessImageNameW", w.BOOL, w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD))
 close_handle = bind(kernel, "CloseHandle", w.BOOL, w.HANDLE)
+
+# Windows Core Audio COM interface identifiers.
+GUID = c.c_ubyte * 16
+MMDEVICE_ENUMERATOR = GUID.from_buffer_copy(uuid.UUID("BCDE0395-E52F-467C-8E3D-C4579291692E").bytes_le)
+IID_DEVICE_ENUMERATOR = GUID.from_buffer_copy(uuid.UUID("A95664D2-9614-4F35-A746-DE8DB63617E6").bytes_le)
+IID_ENDPOINT_VOLUME = GUID.from_buffer_copy(uuid.UUID("5CDF2C82-841E-4546-9722-0CF74078229A").bytes_le)
+co_initialize = bind(ole, "CoInitializeEx", c.c_long, c.c_void_p, w.DWORD)
+co_uninitialize = bind(ole, "CoUninitialize", None)
+co_create_instance = bind(ole, "CoCreateInstance", c.c_long, c.POINTER(GUID), c.c_void_p,
+                          w.DWORD, c.POINTER(GUID), c.POINTER(c.c_void_p))
+
+
+def com_method(interface, slot, result, *arguments):
+    table = c.cast(interface, c.POINTER(c.POINTER(c.c_void_p)))[0]
+    return c.WINFUNCTYPE(result, c.c_void_p, *arguments)(table[slot])
+
+
+def check_hresult(result):
+    if result < 0:
+        raise c.WinError(result)
+
+
+def audio_mute(muted=None):
+    check_hresult(co_initialize(None, 2))  # COINIT_APARTMENTTHREADED
+    enumerator, device, volume = c.c_void_p(), c.c_void_p(), c.c_void_p()
+    try:
+        check_hresult(co_create_instance(c.byref(MMDEVICE_ENUMERATOR), None, 1,
+                                         c.byref(IID_DEVICE_ENUMERATOR), c.byref(enumerator)))
+        get_default_endpoint = com_method(enumerator, 4, c.c_long, c.c_int, c.c_int, c.POINTER(c.c_void_p))
+        check_hresult(get_default_endpoint(enumerator, 0, 0, c.byref(device)))  # eRender, eConsole
+        activate = com_method(device, 3, c.c_long, c.POINTER(GUID), w.DWORD, c.c_void_p, c.POINTER(c.c_void_p))
+        check_hresult(activate(device, c.byref(IID_ENDPOINT_VOLUME), 1, None, c.byref(volume)))
+        if muted is not None:
+            set_mute = com_method(volume, 14, c.c_long, w.BOOL, c.c_void_p)
+            check_hresult(set_mute(volume, muted, None))
+        actual = w.BOOL()
+        get_mute = com_method(volume, 15, c.c_long, c.POINTER(w.BOOL))
+        check_hresult(get_mute(volume, c.byref(actual)))
+        return {"muted": bool(actual.value)}
+    finally:
+        for interface in (volume, device, enumerator):
+            if interface:
+                com_method(interface, 2, w.ULONG)(interface)  # IUnknown::Release
+        co_uninitialize()
+
+
+def shutdown_computer():
+    executable = os.path.join(os.environ["SystemRoot"], "System32", "shutdown.exe")
+    result = subprocess.run([executable, "/s", "/t", "0"], capture_output=True,
+                            timeout=4, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        raise RuntimeError(f"Windows declined shutdown ({result.returncode}).")
 
 
 def checked(value):
@@ -160,6 +215,16 @@ def handle(request):
     elif action == "lock":
         checked(lock_screen())
         send()
+    elif action == "audio-mute-read":
+        send(audio_mute())
+    elif action == "audio-mute-write":
+        muted = request["muted"]
+        if type(muted) is not bool:
+            raise ValueError("The mute state must be a boolean.")
+        send(audio_mute(muted))
+    elif action == "shutdown":
+        shutdown_computer()
+        send()
     elif action == "open":
         os.startfile(request["target"])
         send()
@@ -198,5 +263,5 @@ def handle(request):
 if __name__ == "__main__":
     try:
         handle(json.loads(sys.stdin.readline()))
-    except (OSError, ValueError, RuntimeError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         send(error=str(exc))
