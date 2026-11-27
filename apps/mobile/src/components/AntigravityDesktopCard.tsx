@@ -47,7 +47,7 @@ export function AntigravityDesktopCard({ config, connected, installed }: {
 
   return <section className="computer-utility" aria-label="Antigravity 桌面对话">
     <ComputerCardHeading title="Antigravity 桌面对话" icon={<MonitorIcon />} />
-    <div className="computer-actions">
+    <div className="device-actions">
       <button type="button" className="secondary-button" disabled={!connected || installed === false || Boolean(busy)}
         onClick={() => void startDesktop()}>{busy === 'desktop' ? '正在启动…' : '启动电脑桌面版'}</button>
       {Capacitor.getPlatform() === 'android'
