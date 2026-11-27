@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DeviceTools, readChatAttachmentFolder, storeDrop } from "../src/device-tools.js";
+import { DeviceTools, findAntigravityDesktop, readChatAttachmentFolder, storeDrop } from "../src/device-tools.js";
 
 const temporary: string[] = [];
 
@@ -17,6 +17,37 @@ async function fixture() {
   const config = join(directory, "device-tools.json");
   return { path, config, tools: new DeviceTools(config, path) };
 }
+
+describe("Antigravity desktop discovery", () => {
+  it("prefers the per-user desktop app over the system-wide installation", async () => {
+    const { path } = await fixture();
+    const local = join(path, "Local");
+    const programs = join(path, "Program Files");
+    const userExe = join(local, "Programs", "Antigravity", "Antigravity.exe");
+    const systemExe = join(programs, "Antigravity", "Antigravity.exe");
+    for (const executable of [userExe, systemExe]) {
+      await mkdir(dirname(executable), { recursive: true });
+      await writeFile(executable, "fixture");
+    }
+    const env = { LOCALAPPDATA: local, ProgramFiles: programs };
+    await expect(findAntigravityDesktop(env)).resolves.toBe(userExe);
+    await rm(userExe);
+    await expect(findAntigravityDesktop(env)).resolves.toBe(systemExe);
+  });
+
+  it("accepts a host-configured Antigravity executable and rejects other targets", async () => {
+    const { path } = await fixture();
+    await mkdir(path);
+    const executable = join(path, "Antigravity.exe");
+    const other = join(path, "agy.exe");
+    await writeFile(executable, "fixture");
+    await writeFile(other, "fixture");
+    await expect(findAntigravityDesktop({ CMR_ANTIGRAVITY_DESKTOP_BIN: executable })).resolves.toBe(executable);
+    for (const target of [other, "Antigravity.exe", join(path, "missing", "Antigravity.exe")]) {
+      await expect(findAntigravityDesktop({ CMR_ANTIGRAVITY_DESKTOP_BIN: target })).resolves.toBeUndefined();
+    }
+  });
+});
 
 describe("PhoneDrop persistence", () => {
   it("preserves both complete files under concurrent same-name writes", async () => {

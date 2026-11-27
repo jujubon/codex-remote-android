@@ -257,6 +257,10 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
       request.resume();
       json(response, 200, await reader.openRemote());
       return;
+    case "/api/device/antigravity/open":
+      request.resume();
+      await device.openAntigravityDesktop();
+      break;
     case "/api/device/clipboard/read":
       json(response, 200, await device.clipboardRead());
       return;

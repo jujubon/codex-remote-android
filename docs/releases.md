@@ -8,6 +8,11 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.42
+
+- 「电脑 → Antigravity 桌面对话」新增启动电脑桌面版的按钮。电脑在线时可从手机发起启动，再进入 Google 官方远程控制。
+- 启动按钮需要 Android 和 Windows 配套服务均更新至 0.9.42。电脑上已开启的 Antigravity 远程控制可继续使用。
+
 ## 0.9.41
 
 - Android「电脑 → Antigravity 桌面对话」在应用内打开 Google 官方远程控制，优先使用已启用的 Chrome。关闭标签页即可回到电脑页。

@@ -113,6 +113,10 @@ def handle(request):
     elif action == "open":
         os.startfile(request["target"])
         send()
+    elif action == "antigravity-open":
+        target = request["target"]
+        os.startfile(target, cwd=os.path.dirname(target))
+        send()
     elif action == "hold":
         checked(execution_state(0x80000001))  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
         try:

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { link, mkdir, open, readFile, realpath, unlink, copyFile } from "node:fs/promises";
+import { link, mkdir, open, readFile, realpath, stat, unlink, copyFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, parse, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -30,6 +30,18 @@ async function readSettingsDocument(settingsFile: string): Promise<SettingsDocum
   }
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return invalid("电脑上的收件设置应为 JSON 对象。");
   return settings as SettingsDocument;
+}
+
+export async function findAntigravityDesktop(env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  const candidates = env.CMR_ANTIGRAVITY_DESKTOP_BIN ? [env.CMR_ANTIGRAVITY_DESKTOP_BIN] : [
+    env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs", "Antigravity", "Antigravity.exe"),
+    env.ProgramFiles && join(env.ProgramFiles, "Antigravity", "Antigravity.exe"),
+    env["ProgramFiles(x86)"] && join(env["ProgramFiles(x86)"], "Antigravity", "Antigravity.exe"),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && isAbsolute(candidate) && parse(candidate).base.toLowerCase() === "antigravity.exe" &&
+        (await stat(candidate).catch(() => undefined))?.isFile()) return candidate;
+  }
 }
 
 export async function readChatAttachmentFolder(settingsFile: string): Promise<string | undefined> {
@@ -105,6 +117,7 @@ export async function storeDrop(directory: string, name: string, source: string 
 export class DeviceTools {
   readonly supported = process.platform === "win32";
   private clipboardOperation: Promise<unknown> = Promise.resolve();
+  private antigravityLaunch?: Promise<void>;
   private hold: PowerHold | null = null;
   private changingHold = false;
   private readonly receipts = new Map<string, { operation: Promise<Receipt>; expiresAt: number }>();
@@ -125,7 +138,11 @@ export class DeviceTools {
   }
 
   async status() {
-    const info = { supported: this.supported, awakeUntil: this.hold?.until ?? null };
+    const info = {
+      supported: this.supported,
+      awakeUntil: this.hold?.until ?? null,
+      antigravityDesktopInstalled: this.supported && Boolean(await findAntigravityDesktop()),
+    };
     try {
       const settings = await this.settings();
       return { ...info, receiveFolder: settings.folder, autoOpen: settings.autoOpen };
@@ -160,6 +177,15 @@ export class DeviceTools {
 
   async lock(): Promise<void> {
     await this.native({ action: "lock" });
+  }
+
+  openAntigravityDesktop(): Promise<void> {
+    this.antigravityLaunch ??= (async () => {
+      const target = this.supported ? await findAntigravityDesktop() : undefined;
+      if (!target) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到 Antigravity 桌面版。", 409);
+      await this.native({ action: "antigravity-open", target });
+    })().finally(() => { this.antigravityLaunch = undefined; });
+    return this.antigravityLaunch;
   }
 
   async startHold(minutes: unknown, threadId: unknown): Promise<void> {
@@ -270,7 +296,9 @@ export class DeviceTools {
   }
 
   private startNative(): ChildProcessWithoutNullStreams {
-    return spawn(process.env.CMR_PYTHON || "python", ["-B", "-X", "utf8", windowsDeviceScript], { windowsHide: true });
+    const env = { ...process.env };
+    delete env.CMR_TOKEN;
+    return spawn(process.env.CMR_PYTHON || "python", ["-B", "-X", "utf8", windowsDeviceScript], { env, windowsHide: true });
   }
 
   private native(payload: object): Promise<NativeReply> {

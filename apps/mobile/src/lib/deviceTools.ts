@@ -15,6 +15,7 @@ export interface DeviceStatus {
   shareError?: string;
   autoOpen: boolean;
   awakeUntil: number | null;
+  antigravityDesktopInstalled?: boolean;
   reader?: { localActive: boolean; remoteReady: boolean; canOpenLocal?: boolean };
 }
 
