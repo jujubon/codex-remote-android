@@ -7,16 +7,19 @@ import { PhoneReader } from './CrossNetworkReader';
 import { DeviceTools } from './DeviceTools';
 import { GaugeIcon, MonitorIcon, SettingsIcon } from './Icons';
 import type { InboxFile } from '../lib/deviceTools';
+import type { StartupUpdate } from '../lib/updates';
 import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
 import { InboxPanel } from './InboxPanel';
 import { ComputerCardHeading } from './ComputerCardHeading';
 
-export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice }: {
+export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, requestedUpdate, onUpdateStarted, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice }: {
   config: RemoteConfig;
   connectionUrl?: string;
   phase: ConnectionPhase;
   detail: string;
   hostVersion: string;
+  requestedUpdate?: StartupUpdate;
+  onUpdateStarted: () => void;
   checkSync: () => Promise<void>;
   onUseInbox: (file: InboxFile) => void;
   onReconnect: () => void;
@@ -55,7 +58,8 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
       <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox}
         deleteAfterTurn={deleteAttachmentsAfterTurn} onChangeAttachmentCleanup={onChangeAttachmentCleanup} />
-      <UpdatePanel hostVersion={hostVersion} config={deviceConfig} connected={connected} hostUpdateSupported={status?.hostUpdateSupported} />
+      <UpdatePanel hostVersion={hostVersion} config={deviceConfig} connected={connected}
+        hostUpdateSupported={status?.hostUpdateSupported} requestedUpdate={requestedUpdate} onUpdateStarted={onUpdateStarted} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}
     {footer}

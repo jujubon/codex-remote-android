@@ -427,7 +427,8 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
         )}</nav>
         <div className="project-list-toolbar">
           <div className="project-counts">
-            <span>{flatList ? `${filtered.length} 个对话` : `${groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目 · ${filtered.length} 个对话`}</span>
+            {!flatList && <span>{groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目</span>}
+            <span>{filtered.length} 个对话</span>
           </div>
           <div className="project-list-actions">
             {desktopAction}

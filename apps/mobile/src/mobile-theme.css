@@ -525,15 +525,23 @@
 .top-actions .nav-icon-button { width: 44px; }
 .back-button.nav-icon-button { color: var(--ink); }
 
-.project-list-toolbar { min-height: 44px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .8125rem; }
-.project-list-actions { display: flex; align-items: center; gap: 6px; }
-.project-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; min-width: 0; }
-.project-list-actions .quota-button { color: var(--accent); }
+.project-list-toolbar { min-height: 46px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: var(--muted); font-size: .8125rem; }
+.project-list-actions { display: flex; flex: 0 0 auto; align-items: center; padding-inline: 3px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.project-counts { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; line-height: 1.35; }
+.project-counts span { white-space: nowrap; }
+.project-counts span + span::before { content: '·'; margin-inline-end: 6px; }
+@media (max-width: 360px) {
+  .project-counts span + span::before { content: none; }
+}
+.project-list-actions > button { min-height: 44px; padding-inline: 8px; }
+.project-list-actions > button + button { position: relative; }
+.project-list-actions > button + button::before { content: ''; position: absolute; inset-inline-start: 0; inset-block: 12px; border-inline-start: 1px solid var(--line); }
+.project-list-actions .quota-button { width: 44px; color: var(--accent); }
 .quota-ring {
   display: grid;
   place-items: center;
-  width: 35px;
-  height: 35px;
+  width: 29px;
+  height: 29px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: conic-gradient(var(--accent) var(--quota-fill), var(--line-strong) var(--quota-fill));
@@ -541,8 +549,8 @@
 .quota-ring > span {
   display: grid;
   place-items: center;
-  width: 29px;
-  height: 29px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--surface);
   font-size: .58rem;
@@ -552,12 +560,29 @@
 .quota-ring[data-known=false] { background: var(--line-strong); }
 .quota-ring[data-known=false] > span { color: var(--muted); }
 .project-list-actions .assistant-desktop-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.assistant-desktop-link svg { width: 17px; height: 17px; }
-.assistant-desktop-link i { width: 6px; height: 6px; border-radius: 50%; background: #387954; }
+.assistant-desktop-link svg { width: 15px; height: 15px; }
+.assistant-desktop-link i { box-sizing: border-box; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.assistant-desktop-link i[data-state='open'] { background: #387954; }
+.assistant-desktop-link i[data-state='pending'] { background: #ae691e; }
+.assistant-desktop-link i[data-state='offline'] { background: transparent; border: 1px solid var(--muted); }
 .assistant-desktop-sheet .device-actions { padding-top: 12px; }
-@media (max-width: 350px) {
-  .assistant-desktop-link span { display: none; }
+.assistant-desktop-sheet .device-actions > button { min-height: 44px; }
+.assistant-desktop-sheet .assistant-desktop-close { color: #8b3045; }
+.assistant-close-warning { margin: 10px 0 0; color: var(--muted); font-size: .875rem; }
+.session-dialog.startup-update-dialog {
+  inset: 0;
+  width: min(360px, calc(100% - 36px - var(--app-safe-left) - var(--app-safe-right)));
+  margin: auto;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgb(32 22 68 / 25%);
 }
+.startup-update-sheet { padding: 20px; }
+.startup-update-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); }
+.startup-update-icon svg { width: 23px; height: 23px; }
+.startup-update-sheet h2 { margin: 12px 0 6px; font-size: 1.2rem; }
+.startup-update-sheet p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.55; }
+.startup-update-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+.startup-update-buttons button { min-height: 44px; border-radius: 11px; padding-inline: 6px; }
 .session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
 .usage-resets { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); }
 .usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
-import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type HostUpdate, type RemoteRelease } from '../lib/updates';
+import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type HostUpdate, type RemoteRelease, type StartupUpdate } from '../lib/updates';
 import { ComputerCardHeading } from './ComputerCardHeading';
 import { AlertIcon, CheckIcon, CloseIcon, GaugeIcon, UpdateIcon } from './Icons';
 
@@ -99,8 +99,9 @@ function UpdateToast({ text, tone, transient, dismissible, children, onDismiss }
   );
 }
 
-export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupported }: {
+export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupported, requestedUpdate, onUpdateStarted }: {
   hostVersion: string; config: RemoteConfig; connected: boolean; hostUpdateSupported?: boolean;
+  requestedUpdate?: StartupUpdate; onUpdateStarted: () => void;
 }) {
   const [mobileVersion, setMobileVersion] = useState('');
   const [release, setRelease] = useState<RemoteRelease>();
@@ -111,6 +112,8 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
   const [phoneStatus, setPhoneStatus] = useState('');
   const [dismissed, setDismissed] = useState(false);
   const confirmation = useRef<HTMLDialogElement>(null);
+  const card = useRef<HTMLElement>(null);
+  const appliedRequest = useRef<StartupUpdate | undefined>(undefined);
   const native = Capacitor.getPlatform() === 'android';
   useEffect(() => {
     if (native) void CapacitorApp.getInfo().then(info => setMobileVersion(info.version)).catch(() => undefined);
@@ -150,13 +153,13 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     }
   }
 
-  async function updatePhone() {
-    if (!release?.androidSha256) return;
+  async function updatePhone(target = release) {
+    if (!target?.androidSha256) return;
     setInstalling('phone');
     setError('');
     setPhoneStatus('');
     try {
-      const result = await CompanionUpdate.install({ version: release.version, sha256: release.androidSha256 });
+      const result = await CompanionUpdate.install({ version: target.version, sha256: target.androidSha256 });
       setPhoneStatus(result.state === 'permission'
         ? '允许安装应用后，返回再点「更新手机」。'
         : '请在 Android 安装界面确认更新。');
@@ -167,20 +170,39 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     }
   }
 
-  async function updateHost() {
-    if (!release) return;
+  async function updateHost(target = release): Promise<boolean> {
+    if (!target) return false;
     confirmation.current?.close();
     setInstalling('host');
     setError('');
     try {
-      setHostUpdate(await deviceRequest<HostUpdate>(config, 'update/start', { version: release.version }));
+      setHostUpdate(await deviceRequest<HostUpdate>(config, 'update/start', { version: target.version }));
       setPhoneStatus('');
+      return true;
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '电脑更新请求失败，请重试。');
+      return false;
     } finally {
       setInstalling(undefined);
     }
   }
+
+  useEffect(() => {
+    if (!requestedUpdate || appliedRequest.current === requestedUpdate) return;
+    appliedRequest.current = requestedUpdate;
+    onUpdateStarted();
+    card.current?.scrollIntoView({ block: 'end' });
+    setRelease(requestedUpdate.release);
+    setDismissed(false);
+    async function apply(update: StartupUpdate) {
+      if (update.host && connected) {
+        const supported = hostUpdateSupported ?? (await deviceRequest<DeviceStatus>(config, 'status').catch(() => undefined))?.hostUpdateSupported;
+        if (supported && !await updateHost(update.release)) return;
+      }
+      if (update.phone && native) await updatePhone(update.release);
+    }
+    void apply(requestedUpdate);
+  }, [requestedUpdate, onUpdateStarted, config, connected, hostUpdateSupported, native]);
 
   const mobileComparison = release ? compareReleaseVersions(mobileVersion, release.version) : undefined;
   const hostComparison = release ? compareReleaseVersions(hostVersion, release.version) : undefined;
@@ -203,7 +225,7 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
   const showActions = available && !pending;
   const transient = !pending && !showActions && !phoneStatus && tone !== 'error';
   const canCheck = !busy && !pending;
-  return <section className="computer-utility" aria-busy={busy || Boolean(installing) || watchingHost}>
+  return <section ref={card} className="computer-utility" aria-busy={busy || Boolean(installing) || watchingHost}>
     <ComputerCardHeading title="版本与更新" icon={<UpdateIcon />}>
       <button className="secondary-button update-check-button" type="button" disabled={!canCheck} onClick={() => void check()}>
         {busy && <span className="update-check-spinner" aria-hidden="true" />}{busy ? '正在检查…' : '检查更新'}

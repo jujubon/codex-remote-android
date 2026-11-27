@@ -24,10 +24,13 @@ import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/co
 import { initializeNotifications } from './lib/notifications';
 import { loadInboxImage, type InboxFile } from './lib/deviceTools';
 import { AssistantDesktopAction } from './components/AssistantDesktopAction';
+import { StartupUpdateDialog } from './components/StartupUpdateDialog';
 import { useAntigravityUsage } from './hooks/useAntigravityUsage';
+import { useStartupUpdate } from './hooks/useStartupUpdate';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 import type { Assistant } from './types/protocol';
+import type { StartupUpdate } from './lib/updates';
 
 const assistantPageKey = 'codex-mobile.assistant-page.v1';
 function savedAssistantPage(): Assistant {
@@ -49,6 +52,8 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState<boolean>();
   const [homePage, setHomePage] = useState<HomePage>(savedAssistantPage);
+  const [startupUpdateHandled, setStartupUpdateHandled] = useState(false);
+  const [requestedUpdate, setRequestedUpdate] = useState<StartupUpdate>();
   const lastAssistantPage = useRef<Assistant>(homePage === 'antigravity' ? 'antigravity' : 'codex');
   const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
@@ -64,6 +69,7 @@ export function App() {
   const codexPosition = useRef<ThreadListPosition>(emptyListPosition());
   const antigravityPosition = useRef<ThreadListPosition>(emptyListPosition());
   const remote = useRemote(config ?? null, deleteAttachmentsAfterTurn === true);
+  const startupUpdate = useStartupUpdate(Boolean(config), remote.hostVersion);
   const antigravityUsage = useAntigravityUsage(config, remote.connectionUrl, remote.phase === 'connected');
   const pageThreads = useMemo(() => remote.threads.filter(thread => (thread.assistant ?? 'codex') === homePage), [remote.threads, homePage]);
   useEffect(() => {
@@ -360,6 +366,8 @@ export function App() {
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
           hostVersion={remote.hostVersion}
+          requestedUpdate={requestedUpdate}
+          onUpdateStarted={() => setRequestedUpdate(undefined)}
           deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
           onChangeAttachmentCleanup={async (enabled) => {
             await saveAttachmentCleanupPreference(enabled);
@@ -406,6 +414,12 @@ export function App() {
         />
       )}
 
+      {startupUpdate && !startupUpdateHandled && !remote.selectedThreadId && !showNewThread && !archiveTarget && !deleteAntigravityTarget &&
+        <StartupUpdateDialog update={startupUpdate} onLater={() => setStartupUpdateHandled(true)} onUpdate={update => {
+          setStartupUpdateHandled(true);
+          setRequestedUpdate(update);
+          goToPage('computer');
+        }} />}
       {taskPowerThreadId && taskPowerThreadId === remote.selectedThreadId &&
         <DevicePowerDialog config={config} phase={remote.phase} threadId={taskPowerThreadId} onClose={() => setTaskPowerThreadId(null)} />}
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}

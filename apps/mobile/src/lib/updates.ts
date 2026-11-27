@@ -13,6 +13,12 @@ export interface RemoteRelease {
   url: string;
 }
 
+export interface StartupUpdate {
+  release: RemoteRelease;
+  phone: boolean;
+  host: boolean;
+}
+
 export const CompanionUpdate = registerPlugin<{
   install(options: { version: string; sha256: string }): Promise<{ state: 'permission' | 'installer' }>;
 }>('CompanionUpdate');

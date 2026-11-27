@@ -37,6 +37,7 @@ global_free = bind(kernel, "GlobalFree", w.HANDLE, w.HANDLE)
 global_size = bind(kernel, "GlobalSize", c.c_size_t, w.HANDLE)
 execution_state = bind(kernel, "SetThreadExecutionState", w.DWORD, w.DWORD)
 screen_message = bind(user, "SendNotifyMessageW", w.BOOL, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
+post_message = bind(user, "PostMessageW", w.BOOL, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
 lock_screen = bind(user, "LockWorkStation", w.BOOL)
 session_id = bind(kernel, "ProcessIdToSessionId", w.BOOL, w.DWORD, c.POINTER(w.DWORD))
 enum_windows = bind(user, "EnumWindows", w.BOOL, WINDOW_CALLBACK, w.LPARAM)
@@ -63,12 +64,11 @@ def require_desktop_session():
         raise RuntimeError("An interactive Windows user session is required.")
 
 
-def desktop_window_open(target=None):
-    found = False
+def desktop_windows(target=None):
+    windows = []
 
     @WINDOW_CALLBACK
     def visit(window, _):
-        nonlocal found
         if not window_visible(window) or not window_title_length(window) or window_owner(window, 4):  # GW_OWNER
             return True
         pid = w.DWORD()
@@ -85,12 +85,21 @@ def desktop_window_open(target=None):
                 family = c.create_unicode_buffer(128)
                 length = w.UINT(len(family))
                 found = package_family(process, c.byref(length), family) == 0 and family.value == CODEX_PACKAGE
-            return not found
+            if found:
+                windows.append(window)
+            return True
         finally:
             close_handle(process)
 
     enum_windows(visit, 0)
-    return found
+    return windows
+
+
+def request_desktop_close(windows):
+    for window in windows:
+        # WM_CLOSE follows the application's normal close path, including any dialogs.
+        checked(post_message(window, 0x0010, 0, 0))
+    return {"opened": bool(windows)}
 
 
 def clipboard(text=None):
@@ -154,14 +163,22 @@ def handle(request):
     elif action == "open":
         os.startfile(request["target"])
         send()
-    elif action in ("antigravity-status", "antigravity-open"):
+    elif action in ("antigravity-status", "antigravity-open", "antigravity-close"):
         target = request["target"]
-        opened = desktop_window_open(os.path.normcase(target))
+        windows = desktop_windows(os.path.normcase(target))
+        if action == "antigravity-close":
+            send(request_desktop_close(windows))
+            return
+        opened = bool(windows)
         if not opened and action == "antigravity-open":
             os.startfile(target, cwd=os.path.dirname(target))
         send({"opened": opened})
-    elif action == "codex-status" or action == "codex-open":
-        opened = desktop_window_open()
+    elif action in ("codex-status", "codex-open", "codex-close"):
+        windows = desktop_windows()
+        if action == "codex-close":
+            send(request_desktop_close(windows))
+            return
+        opened = bool(windows)
         if not opened and action == "codex-open":
             os.startfile("shell:AppsFolder\\" + CODEX_PACKAGE + "!App")
         send({"opened": opened})

@@ -122,6 +122,7 @@ export class DeviceTools {
   private codexLaunch?: Promise<CodexDesktopState>;
   private codexCheck?: Promise<CodexDesktopState>;
   private codexStartingUntil = 0;
+  private readonly desktopCloseRequests = new Map<"codex" | "antigravity", Promise<boolean>>();
   private hold: PowerHold | null = null;
   private changingHold = false;
   private readonly receipts = new Map<string, { operation: Promise<Receipt>; expiresAt: number }>();
@@ -148,6 +149,7 @@ export class DeviceTools {
     ]);
     const info = {
       supported: this.supported,
+      desktopCloseSupported: this.supported,
       awakeUntil: this.hold?.until ?? null,
       antigravityDesktopInstalled: Boolean(antigravity),
       antigravityDesktopOpen: antigravity
@@ -209,6 +211,7 @@ export class DeviceTools {
   }
 
   async openCodexDesktop(): Promise<CodexDesktopState> {
+    if (this.desktopCloseRequests.has("codex")) throw new FileTransferError("INVALID_ARGUMENT", "正在关闭 Codex 桌面，请稍后再试。", 409);
     if (!this.codexDesktopAvailable) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到可启动的 Codex Desktop。", 409);
     if (this.codexLaunch) return this.codexLaunch;
     if (Date.now() < this.codexStartingUntil) return this.codexDesktopStatus();
@@ -221,12 +224,32 @@ export class DeviceTools {
   }
 
   openAntigravityDesktop(): Promise<void> {
+    if (this.desktopCloseRequests.has("antigravity")) throw new FileTransferError("INVALID_ARGUMENT", "正在关闭 Antigravity 桌面，请稍后再试。", 409);
     this.antigravityLaunch ??= (async () => {
       const target = this.supported ? await findAntigravityDesktop() : undefined;
       if (!target) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到 Antigravity 桌面版。", 409);
       await this.native({ action: "antigravity-open", target });
     })().finally(() => { this.antigravityLaunch = undefined; });
     return this.antigravityLaunch;
+  }
+
+  closeDesktop(assistant: "codex" | "antigravity"): Promise<boolean> {
+    const existing = this.desktopCloseRequests.get(assistant);
+    if (existing) return existing;
+    const operation = (async () => {
+      if (assistant === "codex") {
+        if (!this.codexDesktopAvailable) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到 Codex Desktop。", 409);
+        if (this.codexLaunch || Date.now() < this.codexStartingUntil)
+          throw new FileTransferError("INVALID_ARGUMENT", "Codex 桌面正在启动，请稍后再关闭。", 409);
+        return (await this.native({ action: "codex-close" })).opened === true;
+      }
+      if (this.antigravityLaunch) throw new FileTransferError("INVALID_ARGUMENT", "Antigravity 桌面正在启动，请稍后再关闭。", 409);
+      const target = this.supported ? await findAntigravityDesktop() : undefined;
+      if (!target) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到 Antigravity 桌面版。", 409);
+      return (await this.native({ action: "antigravity-close", target })).opened === true;
+    })().finally(() => { this.desktopCloseRequests.delete(assistant); });
+    this.desktopCloseRequests.set(assistant, operation);
+    return operation;
   }
 
   async startHold(minutes: unknown, threadId: unknown): Promise<void> {

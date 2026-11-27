@@ -305,6 +305,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
       request.resume();
       json(response, 200, { codexDesktop: await device.openCodexDesktop() });
       return;
+    case "/api/device/codex/close":
+    case "/api/device/antigravity/close":
+      request.resume();
+      json(response, 200, { closing: await device.closeDesktop(request.url === "/api/device/codex/close" ? "codex" : "antigravity") });
+      return;
     case "/api/device/clipboard/read":
       json(response, 200, await device.clipboardRead());
       return;

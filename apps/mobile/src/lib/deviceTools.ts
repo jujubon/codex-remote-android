@@ -18,6 +18,7 @@ export interface DeviceStatus {
   codexDesktop?: CodexDesktopState;
   antigravityDesktopInstalled?: boolean;
   antigravityDesktopOpen?: boolean;
+  desktopCloseSupported?: boolean;
   hostUpdateSupported?: boolean;
   reader?: { localActive: boolean; remoteReady: boolean; canOpenLocal?: boolean };
 }
