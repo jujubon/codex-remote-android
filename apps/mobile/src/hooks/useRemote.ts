@@ -31,6 +31,7 @@ import type {
   PermissionMode,
   ThreadSummary,
   Assistant,
+  MessageAttachment,
   WireApprovalRequest,
 } from '../types/protocol';
 import { createRequestId } from '../types/protocol';
@@ -1262,6 +1263,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
   const [hostVersion, setHostVersion] = useState('');
   const [antigravityAvailable, setAntigravityAvailable] = useState(false);
+  const [antigravityAttachments, setAntigravityAttachments] = useState(false);
   const attachmentCleanupRef = useRef(false);
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
@@ -2059,6 +2061,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       switch (message.type) {
         case 'welcome': {
           setAntigravityAvailable(message.antigravityAvailable === true);
+          setAntigravityAttachments(message.antigravityAttachments === true);
           attachmentCleanupRef.current = message.attachmentCleanup === true;
           setHostVersion(message.version);
           setArchiveSupported(message.archiveManagement === true);
@@ -2252,6 +2255,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         case 'thread': {
           const normalized = normalizeThreadPayload(message.thread);
           if (!normalized.thread) break;
+          if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           observeCompactionSnapshot(message.thread, normalized.thread.id);
           const latestTodo = latestPlanMessage(normalized.messages);
           if (latestTodo) setTodoByThread((current) => ({ ...current, [normalized.thread!.id]: latestTodo }));
@@ -2314,6 +2318,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
               item.id === `local_${message.requestId}`
                 ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: displayedText ?? item.content } : item),
           }));
+          if (message.threadId.startsWith('antigravity:') && !isActiveTurnStatus(turn?.status)) break;
           if (turnId) setTurnIds((current) => ({ ...current, [message.threadId]: turnId }));
           updateThreadState(message.threadId, 'running');
           updateAttentionNotification(message.threadId, 'running');
@@ -2706,13 +2711,40 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     return true;
   }, [historyLoadingByThread]);
 
+  const uploadAttachments = useCallback(async (files: File[], inboxId?: string): Promise<MessageAttachment[]> => {
+    if (files.length === 0 && !inboxId) return [];
+    if (!config) throw new Error('请先连接电脑。');
+    const serverUrl = socketRef.current?.serverUrl ?? config.serverUrl;
+    const uploads = inboxId ? [await registerInboxUpload({ ...config, serverUrl }, inboxId)] : [];
+    for (const file of files) {
+      uploads.push(await uploadRemoteFile({
+        serverUrl, token: config.pairingToken, file, fileName: file.name,
+        deleteAfterTurn: deleteAttachmentsAfterTurn && attachmentCleanupRef.current,
+      }));
+    }
+    return uploads.map(upload => ({
+      type: upload.mimeType.startsWith('image/') ? 'image' : 'file',
+      uploadId: upload.uploadId, fileName: upload.fileName, mimeType: upload.mimeType, localPath: upload.path,
+    }));
+  }, [config, deleteAttachmentsAfterTurn]);
+
+  const waitForSendReceipt = useCallback((requestId: string, onTimeout: () => void) => new Promise<boolean>(resolve => {
+    const finish = (accepted: boolean) => {
+      window.clearTimeout(timer);
+      sendReceipts.current.delete(requestId);
+      resolve(accepted);
+    };
+    const timer = window.setTimeout(() => { finish(false); onTimeout(); }, 30_000);
+    sendReceipts.current.set(requestId, finish);
+  }), []);
+
   const sendMessage = useCallback(async (content: string, files: File[] = [], deliveryMode: PromptDeliveryMode = 'auto', waitForReceipt = false, inboxId?: string): Promise<boolean> => {
     const threadId = selectedThreadRef.current;
     const text = content.trim();
     if (!threadId || (!text && files.length === 0 && !inboxId)) return false;
     const antigravity = threadsRef.current.find(thread => thread.id === threadId)?.assistant === 'antigravity';
-    if (antigravity && (files.length || inboxId || deliveryMode !== 'auto')) {
-      setLastError('Antigravity 当前支持普通文字发送。');
+    if (antigravity && (deliveryMode !== 'auto' || (!antigravityAttachments && (files.length || inboxId)))) {
+      setLastError(deliveryMode === 'auto' ? '更新电脑配套服务后即可发送 Antigravity 附件。' : '请等 Antigravity 当前轮结束后再发送。');
       return false;
     }
     if (modelRequest.current?.threadId === threadId) {
@@ -2832,35 +2864,9 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       prompt = skillMatch[2]?.trim() || `请使用 ${skill.name} 技能处理当前任务。`;
     }
 
-    const attachments: Array<{ type: 'image' | 'file'; uploadId: string; fileName: string; mimeType: string; localPath?: string }> = [];
-    if (files.length > 0 || inboxId) {
-      if (!config) return false;
-      const endpoint = socketRef.current?.serverUrl ?? config.serverUrl;
-      try {
-        const uploads = inboxId ? [await registerInboxUpload({ ...config, serverUrl: endpoint }, inboxId)] : [];
-        for (const file of files) {
-          uploads.push(await uploadRemoteFile({
-            serverUrl: endpoint,
-            token: config.pairingToken,
-            file,
-            fileName: file.name,
-            deleteAfterTurn: deleteAttachmentsAfterTurn && attachmentCleanupRef.current,
-          }));
-        }
-        for (const upload of uploads) {
-          attachments.push({
-            type: upload.mimeType.startsWith('image/') ? 'image' : 'file',
-            uploadId: upload.uploadId,
-            fileName: upload.fileName,
-            mimeType: upload.mimeType,
-            localPath: upload.path,
-          });
-        }
-      } catch (error) {
-        setLastError(error instanceof Error ? error.message : '文件上传失败');
-        return false;
-      }
-    }
+    let attachments: MessageAttachment[];
+    try { attachments = await uploadAttachments(files, inboxId); }
+    catch (error) { setLastError(error instanceof Error ? error.message : '文件上传失败'); return false; }
 
     const requestId = createRequestId('turn');
     const clientUserMessageId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : createRequestId('message');
@@ -2882,17 +2888,8 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       setLastError('当前未连接，消息没有发送');
       return false;
     }
-    const receipt = waitForReceipt ? new Promise<boolean>((resolve) => {
-      const finish = (accepted: boolean) => {
-        window.clearTimeout(timer);
-        sendReceipts.current.delete(requestId);
-        resolve(accepted);
-      };
-      const timer = window.setTimeout(() => {
-        finish(false);
+    const receipt = waitForReceipt ? waitForSendReceipt(requestId, () => {
         if (selectedThreadRef.current === threadId) setLastError('未收到电脑发送回执，草稿已保留。请先查看对话再重发。');
-      }, 30_000);
-      sendReceipts.current.set(requestId, finish);
     }) : undefined;
     if (deliveryMode !== 'queue') {
       const asyncAnswer = describeAsyncAnswer(prompt);
@@ -2916,7 +2913,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       if (!waitForReceipt) updateThreadState(threadId, 'running');
     }
     return receipt ?? true;
-  }, [changeModelSettings, deleteAttachmentsAfterTurn, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState]);
+  }, [antigravityAttachments, changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState, uploadAttachments, waitForSendReceipt]);
 
   const refreshGitDiff = useCallback(() => {
     const threadId = selectedThreadRef.current;
@@ -2971,26 +2968,36 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     if (!sent) setLastError('连接已断开，待办仍保留。');
   }, [approvals]);
 
-  const startThread = useCallback((cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant: Assistant = 'codex') => {
+  const startThread = useCallback(async (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant: Assistant = 'codex', files: File[] = []) => {
     const normalizedCwd = cwd.trim();
     if (!destination && !isAbsoluteHostPath(normalizedCwd)) {
       setLastError('工作目录必须是电脑上的绝对路径');
       return false;
     }
+    let attachments: MessageAttachment[];
+    try { attachments = await uploadAttachments(files); }
+    catch (error) { setLastError(error instanceof Error ? error.message : '文件上传失败'); return false; }
     const requestId = createRequestId('thread');
     pendingThreadStartRequestsRef.current.add(requestId);
     const sent = socketRef.current?.send({
       type: 'thread.start',
-      prompt,
+      prompt: prompt || (attachments.length ? `请查看这 ${attachments.length} 个附件。` : prompt),
       requestId,
       ...(assistant === 'antigravity' ? { assistant } : mobileManagedSupportedRef.current ? { mobileManaged: true } : {}),
       ...(destination ? { destination, projectName } : { cwd: normalizedCwd }),
       ...(model?.trim() ? { model: model.trim() } : {}),
       ...(modelProvider?.trim() ? { modelProvider: modelProvider.trim() } : {}),
+      ...(attachments.length ? { attachments } : {}),
     });
     if (!sent) pendingThreadStartRequestsRef.current.delete(requestId);
+    if (sent && assistant === 'antigravity') {
+      return waitForSendReceipt(requestId, () => {
+        pendingThreadStartRequestsRef.current.delete(requestId);
+        setLastError('未收到新聊天回执，请先检查项目列表。');
+      });
+    }
     return Boolean(sent);
-  }, []);
+  }, [uploadAttachments, waitForSendReceipt]);
 
   const selectModel = useCallback((modelId: string) => {
     const model = models.find(option => option.model === modelId);
@@ -3136,7 +3143,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     [selectedThreadId, threads],
   );
   const selectedApprovals = useMemo(
-    () => selectedThread?.assistant === 'antigravity' ? [] : approvals.filter((approval) => !approval.threadId || approval.threadId === selectedThreadId),
+    () => approvals.filter(approval => approval.threadId === selectedThreadId || (!approval.threadId && selectedThread?.assistant !== 'antigravity')),
     [approvals, selectedThreadId, selectedThread?.assistant],
   );
   const running = selectedThread?.state === 'running' || selectedThread?.state === 'waiting_input' || selectedThread?.state === 'waiting_approval';
@@ -3148,7 +3155,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const threadAttention = useMemo(() => Object.fromEntries(threads.flatMap(thread => {
     const target = attentionForThread(thread, approvals, promptQueueByThread[thread.id] ?? [],
       thread.mobileManaged ? pendingAsyncQuestions(messagesByThread[thread.id] ?? [])[0]?.id : undefined,
-      desktopOnly && !thread.mobileManaged && desktopIpcReady === false);
+      thread.assistant !== 'antigravity' && desktopOnly && !thread.mobileManaged && desktopIpcReady === false);
     return target ? [[thread.id, target]] : [];
   })), [threads, approvals, promptQueueByThread, messagesByThread, desktopOnly, desktopIpcReady]);
 
@@ -3162,6 +3169,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     codexReady,
     desktopOnly,
     antigravityAvailable,
+    antigravityAttachments,
     canSteer,
     archiveSupported, archiveRequest,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,

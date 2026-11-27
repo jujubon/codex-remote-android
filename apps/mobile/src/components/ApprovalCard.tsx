@@ -40,6 +40,7 @@ export function AsyncQuestionCard({ question, disabled, onAnswer }: {
 }
 
 export function ApprovalCard({ approval, permissionMode, onResolve }: { approval: ApprovalRequest; permissionMode: PermissionMode; onResolve: (approvalId: string, decision: ApprovalDecision) => void }) {
+  const antigravity = approval.method === 'antigravity/permission';
   const [answers, setAnswers] = useState<Record<string, string>>({});
   if (approval.method === 'item/tool/requestUserInput') {
     const questions = approval.questions ?? [];
@@ -66,8 +67,8 @@ export function ApprovalCard({ approval, permissionMode, onResolve }: { approval
         <span className="approval-icon"><AlertIcon /></span>
         <div><p>需要批准</p><h3>{approval.title}</h3></div>
       </div>
-      <p className="approval-source">来源：<code>{approval.method}</code></p>
-      {permissionMode === 'full-access' && <p className="approval-mode-note">当前任务已选择完全访问。切换前已经产生的审批不会自动撤销；若这是切换后新产生的请求，请保留下方来源用于排查。</p>}
+      <p className="approval-source">{antigravity ? 'Antigravity' : <>来源：<code>{approval.method}</code></>}</p>
+      {!antigravity && permissionMode === 'full-access' && <p className="approval-mode-note">当前任务已选择完全访问。切换前已经产生的审批不会自动撤销；若这是切换后新产生的请求，请保留下方来源用于排查。</p>}
       {approval.description && <p className="approval-description">{approval.description}</p>}
       {approval.command && <pre className="approval-command"><code>{approval.command}</code></pre>}
       {approval.cwd && <p className="approval-cwd">目录：{approval.cwd}</p>}

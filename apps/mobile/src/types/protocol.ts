@@ -1,6 +1,7 @@
 export const WIRE_PROTOCOL = 'codex-mobile-v1' as const;
 
 export type Assistant = "codex" | "antigravity";
+export type MessageAttachment = { type: "image" | "file"; uploadId: string; fileName: string; mimeType: string; localPath?: string };
 
 export type ApprovalDecision =
   | { kind: "answerQuestions"; answers: Record<string, string> }
@@ -134,7 +135,7 @@ export type ClientMessage =
   | { type: "thread.open"; requestId?: string; threadId: string; historyLimit?: number; knownTurnIds?: string[] }
   | { type: "thread.close"; requestId?: string; threadId: string }
   | { type: "thread.history"; requestId?: string; threadId: string; cursor?: string | null; limit?: number; knownTurnIds?: string[] }
-  | { type: "thread.start"; requestId?: string; cwd?: string; destination?: "projectless" | "newProject"; projectName?: string; model?: string; modelProvider?: string; prompt?: string; mobileManaged?: boolean; assistant?: Assistant }
+  | { type: "thread.start"; requestId?: string; cwd?: string; destination?: "projectless" | "newProject"; projectName?: string; model?: string; modelProvider?: string; prompt?: string; mobileManaged?: boolean; assistant?: Assistant; attachments?: MessageAttachment[] }
   | { type: "thread.compact"; requestId?: string; threadId: string }
   | { type: "thread.settings"; requestId?: string; threadId: string; model?: string; effort?: string; summary?: "auto" | "concise" | "detailed" | "none"; permissionMode?: PermissionMode; collaborationMode?: unknown }
   | { type: "prompt.queue.list"; requestId?: string; threadId?: string }
@@ -156,14 +157,14 @@ export type ClientMessage =
       skill?: { name: string; path: string };
       permissionMode?: PermissionMode;
       collaborationMode?: unknown;
-      attachments?: Array<{ type: "image" | "file"; uploadId: string; fileName: string; mimeType: string; localPath?: string }>;
+      attachments?: MessageAttachment[];
     }
   | { type: "turn.interrupt"; requestId?: string; threadId: string; turnId: string }
   | { type: "approval.resolve"; requestId?: string; approvalRequestId: number | string; decision: ApprovalDecision };
 
 export type ServerMessagePayload =
   | ArchiveResult
-  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; mobileManagedThreads?: boolean; archiveManagement?: boolean; attachmentCleanup?: boolean; antigravityAvailable?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
+  | { type: "welcome"; version: string; serverId: string; codexReady: boolean; desktopOnly?: boolean; desktopIpcReady?: boolean; projectCreation?: boolean; mobileManagedThreads?: boolean; archiveManagement?: boolean; attachmentCleanup?: boolean; antigravityAvailable?: boolean; antigravityAttachments?: boolean; syncVersion?: string; latestCursor?: number; threadIndexVersion?: number }
   | { type: "pong"; id?: string }
   | { type: "sync.replay"; requestId?: string; syncVersion: string; fromCursor: number; toCursor: number; events: ServerMessage[] }
   | { type: "sync.reset"; requestId?: string; syncVersion: string; latestCursor: number; reason: string }

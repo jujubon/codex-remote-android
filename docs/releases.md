@@ -8,6 +8,14 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.40
+
+- Antigravity 对话改用 Google 官方 ACP 接口，已有手机对话仍使用原会话 ID 续聊。
+- 新建及已有 Antigravity 对话支持发送附件。常见图片和小型 UTF-8 文本提供内嵌上下文，其他文件以电脑上的资源引用传入。
+- 手机可批准或拒绝 Antigravity 操作，并可停止当前轮。重连后仍会显示待处理审批。
+- 电脑页提供 Antigravity 桌面对话的官方网页入口。App 内的实时引导暂未开放。
+- 请同时更新 Android 和 Windows 配套服务。电脑需要安装并登录支持 ACP 的 `agy`。
+
 ## 0.9.39
 
 - 新聊天可以选 Codex 或 Antigravity，项目列表可以按助手筛选。

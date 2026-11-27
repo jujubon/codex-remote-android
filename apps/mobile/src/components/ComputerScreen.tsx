@@ -11,12 +11,13 @@ import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
 import { InboxPanel } from './InboxPanel';
 import { ComputerCardHeading } from './ComputerCardHeading';
 
-export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice }: {
+export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice, antigravityAvailable }: {
   config: RemoteConfig;
   connectionUrl?: string;
   phase: ConnectionPhase;
   detail: string;
   hostVersion: string;
+  antigravityAvailable?: boolean;
   checkSync: () => Promise<void>;
   onUseInbox: (file: InboxFile) => void;
   onReconnect: () => void;
@@ -55,6 +56,13 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
       <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox}
         deleteAfterTurn={deleteAttachmentsAfterTurn} onChangeAttachmentCleanup={onChangeAttachmentCleanup} />
+      {antigravityAvailable && <section className="computer-utility" aria-label="Antigravity 桌面对话">
+        <ComputerCardHeading title="Antigravity 桌面对话" icon={<MonitorIcon />} />
+        <div className="computer-actions">
+          <a className="secondary-button" href="https://antigravity.google.com/" target="_blank" rel="noreferrer">打开 Google 远程控制</a>
+        </div>
+        <p className="computer-feedback">在电脑 Antigravity 设置中启用远程控制后，用同一 Google 账号查看桌面已有对话。</p>
+      </section>}
       <UpdatePanel hostVersion={hostVersion} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}

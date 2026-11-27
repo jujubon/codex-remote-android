@@ -13,6 +13,7 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ClientMessage,
+  type MessageAttachment,
   type ModelOption,
   type ServerMessage,
   type SkillOption,
@@ -29,12 +30,12 @@ import {
   isExplicitInactiveSteerError,
   isUncertainDesktopSubmissionError,
 } from "./desktop-ipc-bridge.js";
-import type { FileTransferManager } from "./file-transfer.js";
+import type { FileTransferManager, StoredUpload } from "./file-transfer.js";
 import { GitDiffError, readGitDiff, type GitDiffSnapshot } from "./git-diff.js";
 import { PromptQueueStore, type StoredPromptQueueItem } from "./prompt-queue.js";
 import { SyncJournal, ThreadIndexStore } from "./sync-state.js";
 import { isUsageLimitError, USAGE_LIMIT_MESSAGE } from "./usage-limit.js";
-import { isAntigravityThread, type AntigravitySessions } from "./antigravity.js";
+import { isAntigravityApproval, isAntigravityThread, type AntigravitySessions } from "./antigravity.js";
 
 const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024;
 
@@ -544,6 +545,7 @@ export class MobileGateway {
       archiveManagement: true,
       attachmentCleanup: Boolean(this.files),
       antigravityAvailable: this.antigravity?.available,
+      antigravityAttachments: this.antigravity?.available && Boolean(this.files),
       version: HOST_VERSION,
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
@@ -551,7 +553,8 @@ export class MobileGateway {
       latestCursor: this.syncJournal.latestCursor,
       threadIndexVersion: this.threadIndex.currentVersion,
     });
-    const pendingApprovals: ApprovalRequest[] = [];
+    const pendingApprovals: ApprovalRequest[] = this.antigravity?.approvals() ?? [];
+    for (const approval of pendingApprovals) this.send(socket, { type: "approval", approval });
     for (const approval of this.approvals.values()) {
       const params = approval.params ?? {};
       const diff =
@@ -757,10 +760,13 @@ export class MobileGateway {
             if (text.length > 20_000) throw new Error("首条消息过长。");
             if (message.destination === "newProject") throw new Error("请选择已有项目或使用无项目对话。");
             const { cwd } = await this.mobileWorkspace(message);
-            const created = await store.create(cwd, message.destination === "projectless", text, this.antigravityCallbacks);
-            this.socketThreads.get(socket)?.add(created.id);
-            this.openAntigravityThread(socket, created.id, message.requestId);
-            this.publishAntigravityTurn(created.id, created.turn);
+            await this.withAntigravityUploads(message.attachments, async files => {
+              const created = await store.create(cwd, message.destination === "projectless", text, this.antigravityCallbacks, files);
+              this.socketThreads.get(socket)?.add(created.id);
+              this.openAntigravityThread(socket, created.id, message.requestId);
+              this.publishAntigravityTurn(created.id, created.turn);
+              await this.retainAntigravityUploads(files, created.id, created.turn.id);
+            });
             break;
           }
           if (message.assistant !== undefined && message.assistant !== "codex") throw new Error("未知的 AI 助手。");
@@ -960,14 +966,17 @@ export class MobileGateway {
           const threadId = requiredString(message.threadId, "threadId");
           const text = requiredString(message.text, "text");
           if (isAntigravityThread(threadId)) {
-            if (message.attachments?.length || (message.deliveryMode && message.deliveryMode !== "auto"))
-              throw new Error("Antigravity 当前支持普通文字发送。");
+            if (message.deliveryMode && message.deliveryMode !== "auto")
+              throw new Error("请等当前轮结束后再发送 Antigravity 消息。");
             const store = this.antigravitySessionStore();
-            const turn = await store.start(threadId, text, this.antigravityCallbacks, message.clientUserMessageId);
-            this.socketThreads.get(socket)?.add(threadId);
-            this.send(socket, { type: "turn.started", requestId: message.requestId, threadId, turn });
-            if (turn.status === "inProgress") this.publishAntigravityTurn(threadId, turn);
-            else this.openAntigravityThread(socket, threadId);
+            await this.withAntigravityUploads(message.attachments, async files => {
+              const turn = await store.start(threadId, text, this.antigravityCallbacks, message.clientUserMessageId, files);
+              this.socketThreads.get(socket)?.add(threadId);
+              this.send(socket, { type: "turn.started", requestId: message.requestId, threadId, turn });
+              if (turn.status === "inProgress") this.publishAntigravityTurn(threadId, turn);
+              else this.openAntigravityThread(socket, threadId);
+              await this.retainAntigravityUploads(files, threadId, turn.id);
+            });
             break;
           }
           if (message.deliveryMode != null && !["auto", "steer", "queue"].includes(message.deliveryMode))
@@ -1125,6 +1134,10 @@ export class MobileGateway {
           break;
         }
         case "approval.resolve":
+          if (isAntigravityApproval(message.approvalRequestId)) {
+            this.antigravitySessionStore().resolveApproval(message.approvalRequestId, message.decision);
+            break;
+          }
           await this.resolveApproval(
             socket,
             message.approvalRequestId,
@@ -1300,6 +1313,33 @@ export class MobileGateway {
     return this.antigravity;
   }
 
+  private async withAntigravityUploads<T>(attachments: MessageAttachment[] | undefined,
+    handle: (files: StoredUpload[]) => Promise<T>): Promise<T> {
+    if (attachments === undefined || (Array.isArray(attachments) && !attachments.length)) return handle([]);
+    if (!Array.isArray(attachments) || attachments.length > 10) throw new Error("Antigravity 每条消息最多可附带 10 个文件。");
+    const manager = this.files;
+    if (!manager) throw new Error("电脑文件传输暂不可用。");
+    const ids = [...new Set(attachments.map(file => requiredString(file?.uploadId, "attachment.uploadId")))];
+    const pinned: string[] = [];
+    try {
+      const files: StoredUpload[] = [];
+      for (const id of ids) {
+        if (!manager.pinUpload(id)) throw new Error("附件已失效，请重新选择。");
+        pinned.push(id);
+        files.push(await manager.getUpload(id));
+      }
+      return await handle(files);
+    } finally {
+      for (const id of pinned) manager.releaseUpload(id);
+    }
+  }
+
+  private async retainAntigravityUploads(files: StoredUpload[], threadId: string, turnId: string) {
+    const outcomes = await Promise.allSettled(files.map(file => this.files!.commitUpload(file.uploadId, threadId, turnId)));
+    if (outcomes.some(result => result.status === "rejected" || !result.value))
+      console.warn("[antigravity] could not retain an upload");
+  }
+
   private openAntigravityThread(socket: WebSocket, id: string, requestId?: string, limit?: number) {
     const store = this.antigravitySessionStore();
     const page = store.page(id, boundedHistoryLimit(limit));
@@ -1313,6 +1353,14 @@ export class MobileGateway {
   }
 
   private readonly antigravityCallbacks = (threadId: string, turnId: string) => ({
+    approval: (approval: ApprovalRequest) => {
+      this.upsertThreadSummary(this.antigravitySessionStore().summary(threadId));
+      this.broadcast({ type: "approval", approval });
+    },
+    approvalResolved: (requestId: string) => {
+      this.upsertThreadSummary(this.antigravitySessionStore().summary(threadId));
+      this.broadcast({ type: "approval.resolved", approvalRequestId: requestId });
+    },
     delta: (itemId: string, delta: string) => this.broadcastThread(threadId, {
       type: "event", method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta },
     }),
@@ -2237,6 +2285,7 @@ export class MobileGateway {
   }
 
   async isInboxAttachmentInUse(path: string): Promise<boolean> {
+    if (this.antigravity?.attachmentInUse(path)) return true;
     const active = new Set([...this.appServerThreadStatuses.keys(), ...this.desktopThreads.keys(), ...this.nativeDesktopTurns.keys()]);
     const matches = await Promise.all([...active].filter(id => this.isThreadActive(id) || this.nativeDesktopTurns.has(id) ||
       conversationIsActive(this.desktopThreads.get(id))).map(async id => {
@@ -2247,11 +2296,20 @@ export class MobileGateway {
   }
 
   async cleanupCompletedAttachments(): Promise<void> {
-    if (!this.files || !this.bridge.ready || this.cleaningAttachments) return;
+    if (!this.files || this.cleaningAttachments) return;
     this.cleaningAttachments = true;
     try {
       const pending = await this.files.pendingAttachmentCleanup();
       for (const threadId of new Set(pending.map(file => file.threadId))) {
+        if (isAntigravityThread(threadId)) {
+          for (const file of pending.filter(file => file.threadId === threadId)) {
+            if (!file.turnId || !this.antigravity?.finishedTurn(threadId, file.turnId) ||
+                this.antigravity.attachmentInUse(file.path)) continue;
+            await this.files.deleteCompletedAttachment(file, this.promptQueue?.protectedFilePaths() ?? new Set());
+          }
+          continue;
+        }
+        if (!this.bridge.ready) continue;
         const history = await this.readTurnsPage(threadId, null, 50).catch(() => null);
         if (!history) continue;
         for (const file of pending.filter(file => file.threadId === threadId)) {

@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Assistant, ModelOption } from '../types/protocol';
 import { isAbsoluteHostPath } from '../lib/hostPath';
 import { ChevronDownIcon, CloseIcon } from './Icons';
+import { AttachmentDraftPreview } from './AttachmentDraftPreview';
 
 interface NewThreadSheetProps {
   initialDirectory?: string;
   desktopOnly: boolean;
   antigravityAvailable?: boolean;
+  antigravityAttachments?: boolean;
   initialAssistant?: Assistant;
   projectMenus: boolean;
   projectStatus: string;
@@ -14,10 +16,10 @@ interface NewThreadSheetProps {
   models: ModelOption[];
   defaultModel: string;
   onClose: () => void;
-  onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant?: Assistant) => boolean;
+  onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant?: Assistant, files?: File[]) => Promise<boolean> | boolean;
 }
 
-export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvailable, initialAssistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
+export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvailable, antigravityAttachments, initialAssistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [prompt, setPrompt] = useState('');
   const [assistant, setAssistant] = useState<Assistant>(antigravityAvailable && initialAssistant === 'antigravity' ? 'antigravity' : 'codex');
@@ -32,24 +34,41 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvail
   const [model, setModel] = useState(defaultModel);
   const [modelProvider, setModelProvider] = useState('');
   const [error, setError] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [preview, setPreview] = useState<File>();
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const useAttachments = usingAntigravity && antigravityAttachments === true;
 
   useEffect(() => { if (!dialog.current?.open) dialog.current?.showModal(); }, []);
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
+    if (sendingRef.current) return;
     if (mode === 'existing' && projectMenus && !selectedDirectory) { setError('请选择电脑上的已有项目'); return; }
     if (mode === 'existing' && !isAbsoluteHostPath(cwd.trim())) {
       setError('请输入电脑上的绝对路径');
       return;
     }
-    if ((desktopOnly || usingAntigravity) && !prompt.trim()) { setError('请输入首条任务'); return; }
+    const attachments = useAttachments ? files : [];
+    if ((desktopOnly || usingAntigravity) && !prompt.trim() && !attachments.length) { setError('请输入首条消息或添加附件'); return; }
     if (mode === 'newProject' && !projectName.trim()) { setError('请输入项目名称'); return; }
-    if (onStart(selectedDirectory ?? cwd, usingAntigravity ? undefined : model || undefined, usingAntigravity ? undefined : modelProvider || undefined,
-      prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined, assistant)) dialog.current?.close();
-    else setError('任务创建请求未发送，请确认连接状态');
+    sendingRef.current = true;
+    setSending(true);
+    setError('');
+    try {
+      if (await onStart(selectedDirectory ?? cwd, usingAntigravity ? undefined : model || undefined, usingAntigravity ? undefined : modelProvider || undefined,
+        prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined, assistant, attachments)) dialog.current?.close();
+      else setError('未能确认新聊天，消息和附件已保留。');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '未能创建新聊天。');
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   }
 
-  return (
+  return <>
     <dialog className="session-dialog new-thread-dialog" ref={dialog} aria-labelledby="new-thread-title" onClose={onClose}
       onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="session-sheet">
@@ -59,14 +78,34 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvail
           <button className="icon-button nav-icon-button" type="button" onClick={() => dialog.current?.close()} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
-          {antigravityAvailable && <label><span>助手</span><select value={assistant} onChange={event => {
+          {antigravityAvailable && <label><span>助手</span><select value={assistant} disabled={sending} onChange={event => {
             const next = event.target.value as Assistant;
             setAssistant(next);
             if (next === 'antigravity' && (mode === 'newProject' || !cwd)) setMode('projectless');
             if (next === 'codex' && !projectMenus) setMode('existing');
             setError('');
           }}><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select></label>}
-          {(desktopOnly || usingAntigravity) && <label><span>首条消息</span><textarea required placeholder={`给 ${usingAntigravity ? 'Antigravity' : 'Codex'} 发消息…`} rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
+          {(desktopOnly || usingAntigravity) && <label><span>首条消息</span><textarea required={!(useAttachments && files.length)} disabled={sending} placeholder={`给 ${usingAntigravity ? 'Antigravity' : 'Codex'} 发消息…`} rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
+          {useAttachments && <div className="new-thread-attachments">
+            <label className="secondary-button">添加附件
+              <input type="file" multiple aria-label="添加附件" disabled={sending} onChange={event => {
+                const selected = [...files, ...Array.from(event.target.files ?? [])];
+                event.target.value = '';
+                if (selected.length > 10 || selected.reduce((total, file) => total + file.size, 0) > 12 * 1024 * 1024) {
+                  setError('最多可附带 10 个文件，合计不超过 12 MB。');
+                  return;
+                }
+                setFiles(selected);
+                setError('');
+              }} />
+            </label>
+            {files.length > 0 && <div className="attachment-chips">
+              {files.map((file, index) => <div className="attachment-chip" key={index}>
+                <button className="attachment-chip-body" type="button" onClick={() => setPreview(file)} aria-label={`预览 ${file.name}`}><span>{file.name}</span></button>
+                <button className="attachment-chip-remove" type="button" disabled={sending} onClick={() => setFiles(current => current.filter((_, i) => i !== index))} aria-label={`移除 ${file.name}`}><CloseIcon /></button>
+              </div>)}
+            </div>}
+          </div>}
           {hasProjectModes && <label><span>项目（可选）</span><select value={mode} onChange={event => {
             setMode(event.target.value as typeof mode); setError('');
           }}>
@@ -107,10 +146,11 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvail
           {error && <div className="form-error" role="alert">{error}</div>}
           <div className="sheet-actions">
             <button className="secondary-button" type="button" onClick={() => dialog.current?.close()}>取消</button>
-            <button className="primary-button" type="submit">开始聊天</button>
+            <button className="primary-button" type="submit" disabled={sending}>{sending ? '正在创建…' : '开始聊天'}</button>
           </div>
         </form>
       </div>
     </dialog>
-  );
+    {preview && <AttachmentDraftPreview draft={{ name: preview.name, size: preview.size, file: preview }} onClose={() => setPreview(undefined)} />}
+  </>;
 }

@@ -16,6 +16,7 @@ import type { InboxFile } from '../lib/deviceTools';
 import { approvalAttention, type AttentionTarget } from '../lib/attention';
 
 interface ConversationScreenProps {
+  antigravityAttachments?: boolean;
   draftKey: string;
   inboxFile?: InboxFile;
   loadInboxPreview: (id: string, signal: AbortSignal) => Promise<Blob>;
@@ -356,7 +357,7 @@ export function visibleConversationContentKey(
   return `${entryKey}::${approvalKey}`;
 }
 
-export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: ConversationScreenProps) {
+export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onClearInboxFile, attention, attentionStatus, onArchive, onTaskPower, accountPanel, onRefreshUsage, notice, thread, messages, subagents: threadSubagents, approvals, compaction, promptQueue, gitDiff, models, skills, modelPending, selectedModel, selectedEffort, selectedPermissionMode, permissionModeStatus, phase, phaseDetail, running, canInterrupt, canSteer, currentTurnId, historyHasMore, historyLoading, selectedAgentId, onSelectAgent, onBack, onLoadOlderHistory, onReconnect, onSend, onCancelQueuedPrompt, onPromoteQueuedPrompt, onResumePromptQueue, onRefreshGitDiff, onInterrupt, onSelectModel, onSelectEffort, onSelectPermissionMode, onResolveApproval, onDismissCompaction, onOpenThread, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage, antigravityAttachments }: ConversationScreenProps) {
   const screenRef = useRef<HTMLElement>(null);
   const focusedAttention = useRef<AttentionTarget | undefined>(undefined);
   const streamRef = useRef<HTMLElement>(null);
@@ -868,7 +869,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           ))}
         </section>
       )}
-      <Composer draftKey={draftKey} assistantName={assistantName} textOnly={antigravity} inboxFile={antigravity ? undefined : inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer draftKey={draftKey} assistantName={assistantName} waitForIdle={antigravity} allowAttachments={!antigravity || antigravityAttachments === true} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

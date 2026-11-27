@@ -155,7 +155,8 @@ export async function notifyCompactionFailed(options: {
 
 export async function notifyApprovalRequested(approval: WireApprovalRequest): Promise<boolean> {
   if (!(await initializeNotifications())) return false;
-  const title = approval.method === 'item/tool/requestUserInput' ? 'Codex 等你回答' : approval.method.includes('mcpServer/elicitation')
+  const title = approval.method === 'antigravity/permission' ? 'Antigravity 等待审批'
+    : approval.method === 'item/tool/requestUserInput' ? 'Codex 等你回答' : approval.method.includes('mcpServer/elicitation')
     ? 'Codex 等待 Computer Use 确认'
     : approval.method.includes('fileChange')
       ? 'Codex 等待文件修改确认'

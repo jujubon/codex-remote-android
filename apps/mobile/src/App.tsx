@@ -65,9 +65,9 @@ export function App() {
 
   useEffect(() => {
     const threadId = remote.selectedThread?.id;
-    if (threadId && remote.selectedThread?.assistant !== 'antigravity')
+    if (threadId && (remote.selectedThread?.assistant !== 'antigravity' || remote.antigravityAttachments))
       setInboxSelection(current => current && !current.threadId ? { ...current, threadId } : current);
-  }, [remote.selectedThread?.id, remote.selectedThread?.assistant]);
+  }, [remote.selectedThread?.id, remote.selectedThread?.assistant, remote.antigravityAttachments]);
 
   const openNestedThread = useCallback((threadId: string) => {
     const currentThreadId = remote.selectedThreadId;
@@ -287,6 +287,7 @@ export function App() {
           running={remote.running}
           canInterrupt={remote.canInterrupt}
           canSteer={remote.canSteer}
+          antigravityAttachments={remote.antigravityAttachments}
           currentTurnId={remote.selectedTurnId}
           historyHasMore={Boolean(remote.selectedHistory?.hasMore)}
           historyLoading={remote.historyLoading}
@@ -312,7 +313,7 @@ export function App() {
           onDiscardLocalMessage={remote.discardLocalMessage}
         />
       ) : homePage === 'computer' ? (
-        <ComputerScreen config={config}
+        <ComputerScreen config={config} antigravityAvailable={remote.antigravityAvailable}
           hostVersion={remote.hostVersion}
           deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
           onChangeAttachmentCleanup={async (enabled) => {
@@ -361,6 +362,7 @@ export function App() {
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
           initialAssistant={newAssistant} antigravityAvailable={remote.antigravityAvailable}
+          antigravityAttachments={remote.antigravityAttachments}
           projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}
           directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(showDirectory) :
             [...new Set(remote.threads.filter(thread => !thread.projectless).map(thread => thread.cwd).filter(showDirectory))]}
