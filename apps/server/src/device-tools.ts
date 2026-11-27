@@ -10,7 +10,7 @@ import { FileTransferError, sanitizeFileName, type FileTransferManager, type Sto
 
 type Settings = { folder: string; autoOpen: boolean };
 type Receipt = { fileName: string; opened: boolean };
-type NativeReply = { ok: boolean; text?: string; opened?: boolean; muted?: boolean };
+type NativeReply = { ok: boolean; text?: string; opened?: boolean; muted?: boolean; displayOff?: boolean };
 type CodexDesktopState = "unavailable" | "closed" | "starting" | "open";
 type PowerHold = { child: ChildProcessWithoutNullStreams; until: number; tick: NodeJS.Timeout };
 type SettingsDocument = { receiveFolder?: unknown; autoOpen?: unknown; chatAttachmentFolder?: unknown };
@@ -126,6 +126,7 @@ export class DeviceTools {
   private hold: PowerHold | null = null;
   private changingHold = false;
   private audioOperation: Promise<unknown> = Promise.resolve();
+  private displayOperation: Promise<unknown> = Promise.resolve();
   private shutdownPendingUntil = 0;
   private shutdownError?: string;
   private readonly receipts = new Map<string, { operation: Promise<Receipt>; expiresAt: number }>();
@@ -153,6 +154,7 @@ export class DeviceTools {
     const info = {
       supported: this.supported,
       computerControls: this.supported,
+      displayControl: this.supported,
       shutdownPending: Date.now() < this.shutdownPendingUntil,
       shutdownError: this.shutdownError,
       desktopCloseSupported: this.supported,
@@ -218,6 +220,28 @@ export class DeviceTools {
       return { muted: reply.muted };
     });
     this.audioOperation = next.catch(() => undefined);
+    return next;
+  }
+
+  displayPowerStatus() {
+    return this.displayPower();
+  }
+
+  setDisplayOff(off: unknown) {
+    if (typeof off !== "boolean") return invalid("请提供有效的电脑屏幕状态。");
+    return this.displayPower(off);
+  }
+
+  private displayPower(off?: boolean): Promise<{ displayOff: boolean }> {
+    const next = this.displayOperation.then(async () => {
+      const reply = await this.native(off === undefined ? { action: "display-power-read" }
+        : { action: "display-power-write", off }).catch(() => {
+        throw new Error(off === undefined ? "Windows 暂未报告屏幕状态。" : "Windows 暂未确认屏幕切换，请检查电脑后再试。");
+      });
+      if (typeof reply.displayOff !== "boolean") throw new Error("电脑未返回屏幕状态。");
+      return { displayOff: reply.displayOff };
+    });
+    this.displayOperation = next.catch(() => undefined);
     return next;
   }
 

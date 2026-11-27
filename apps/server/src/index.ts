@@ -240,6 +240,10 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, await device.audioMuteStatus());
     return;
   }
+  if (request.method === "GET" && request.url === "/api/device/display/power" && device.supported) {
+    json(response, 200, await device.displayPowerStatus());
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/update/status") {
     json(response, 200, { update: await updates.status() });
     return;
@@ -359,6 +363,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     case "/api/device/audio/mute": {
       const body = await readJsonBody(request, 1024);
       json(response, 200, await device.setAudioMute(body.muted));
+      return;
+    }
+    case "/api/device/display/power": {
+      const body = await readJsonBody(request, 1024);
+      json(response, 200, await device.setDisplayOff(body.displayOff));
       return;
     }
     case "/api/device/power/hold": {

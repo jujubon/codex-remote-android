@@ -14,6 +14,7 @@ ole = c.WinDLL("ole32")
 CF_UNICODETEXT = 13
 CODEX_PACKAGE = "OpenAI.Codex_2p2nqsd0c76g0"
 WINDOW_CALLBACK = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+SUBCLASS_CALLBACK = c.WINFUNCTYPE(c.c_ssize_t, w.HWND, w.UINT, w.WPARAM, w.LPARAM, c.c_size_t, c.c_size_t)
 
 
 def bind(dll, name, result, *arguments):
@@ -52,9 +53,18 @@ open_process = bind(kernel, "OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
 package_family = bind(kernel, "GetPackageFamilyName", w.LONG, w.HANDLE, c.POINTER(w.UINT), w.LPWSTR)
 image_path = bind(kernel, "QueryFullProcessImageNameW", w.BOOL, w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD))
 close_handle = bind(kernel, "CloseHandle", w.BOOL, w.HANDLE)
+common_controls = c.WinDLL("comctl32", use_last_error=True)
+set_window_subclass = bind(common_controls, "SetWindowSubclass", w.BOOL, w.HWND, SUBCLASS_CALLBACK, c.c_size_t, c.c_size_t)
+remove_window_subclass = bind(common_controls, "RemoveWindowSubclass", w.BOOL, w.HWND, SUBCLASS_CALLBACK, c.c_size_t)
+default_subclass_proc = bind(common_controls, "DefSubclassProc", c.c_ssize_t, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
+peek_message = bind(user, "PeekMessageW", w.BOOL, c.POINTER(w.MSG), w.HWND, w.UINT, w.UINT, w.UINT)
+dispatch_message = bind(user, "DispatchMessageW", c.c_ssize_t, c.POINTER(w.MSG))
 
 # Windows Core Audio COM interface identifiers.
 GUID = c.c_ubyte * 16
+DISPLAY_STATE = uuid.UUID("6FE69556-704A-47A0-8F24-C28D936FDA47").bytes_le
+register_power_setting = bind(user, "RegisterPowerSettingNotification", w.HANDLE, w.HANDLE, c.POINTER(GUID), w.DWORD)
+unregister_power_setting = bind(user, "UnregisterPowerSettingNotification", w.BOOL, w.HANDLE)
 MMDEVICE_ENUMERATOR = GUID.from_buffer_copy(uuid.UUID("BCDE0395-E52F-467C-8E3D-C4579291692E").bytes_le)
 IID_DEVICE_ENUMERATOR = GUID.from_buffer_copy(uuid.UUID("A95664D2-9614-4F35-A746-DE8DB63617E6").bytes_le)
 IID_ENDPOINT_VOLUME = GUID.from_buffer_copy(uuid.UUID("5CDF2C82-841E-4546-9722-0CF74078229A").bytes_le)
@@ -117,6 +127,57 @@ def require_desktop_session():
     checked(session_id(os.getpid(), c.byref(session)))
     if not session.value:
         raise RuntimeError("An interactive Windows user session is required.")
+
+
+def display_power(off=None):
+    window = checked(create_window(0, "STATIC", "", 0, 0, 0, 0, 0, None, None, None, None))
+    state = None
+    subscription = None
+    attached = False
+
+    @SUBCLASS_CALLBACK
+    def on_power_message(hwnd, message, parameter, data, _identifier, _reference):
+        nonlocal state
+        if message == 0x0218 and parameter == 0x8013 and data:  # WM_POWERBROADCAST / PBT_POWERSETTINGCHANGE
+            if c.string_at(data, 16) == DISPLAY_STATE and w.DWORD.from_address(data + 16).value == 4:
+                state = w.DWORD.from_address(data + 20).value
+                return 1
+        return default_subclass_proc(hwnd, message, parameter, data)
+
+    def wait_until(predicate, seconds):
+        deadline = time.monotonic() + seconds
+        message = w.MSG()
+        while time.monotonic() < deadline:
+            while peek_message(c.byref(message), None, 0, 0, 1):  # PM_REMOVE also services sent messages.
+                dispatch_message(c.byref(message))
+            if predicate():
+                return True
+            time.sleep(0.025)
+        return False
+
+    try:
+        checked(set_window_subclass(window, on_power_message, 1, 0))
+        attached = True
+        guid = GUID.from_buffer_copy(DISPLAY_STATE)
+        subscription = checked(register_power_setting(window, c.byref(guid), 0))  # DEVICE_NOTIFY_WINDOW_HANDLE
+        if not wait_until(lambda: state in (0, 1, 2), 1.5):
+            raise RuntimeError("Windows did not report the display state.")
+        if off is not None and (state == 0) != off:
+            desired = (0,) if off else (1, 2)
+            checked(screen_message(0xffff, 0x0112, 0xf170, 2 if off else -1))  # SC_MONITORPOWER
+            confirmed = wait_until(lambda: state in desired, 1.25)
+            if not confirmed and not off:
+                checked(execution_state(0x00000002))  # ES_DISPLAY_REQUIRED resets the display idle timer once.
+                confirmed = wait_until(lambda: state in desired, 1.25)
+            if not confirmed:
+                raise RuntimeError("Windows did not confirm the requested display state.")
+        return {"displayOff": state == 0}
+    finally:
+        if subscription:
+            unregister_power_setting(subscription)
+        if attached:
+            remove_window_subclass(window, on_power_message, 1)
+        destroy_window(window)
 
 
 def desktop_windows(target=None):
@@ -222,6 +283,13 @@ def handle(request):
         if type(muted) is not bool:
             raise ValueError("The mute state must be a boolean.")
         send(audio_mute(muted))
+    elif action == "display-power-read":
+        send(display_power())
+    elif action == "display-power-write":
+        off = request["off"]
+        if type(off) is not bool:
+            raise ValueError("The display state must be a boolean.")
+        send(display_power(off))
     elif action == "shutdown":
         shutdown_computer()
         send()

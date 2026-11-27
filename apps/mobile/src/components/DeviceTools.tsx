@@ -6,7 +6,7 @@ import type { RemoteConfig } from '../lib/configStore';
 import type { ConnectionPhase } from '../types/protocol';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { deviceRequest, QUICK_SHARE_KEY, readPhoneClipboard, shareFileToComputer, writePhoneClipboard, type DeviceStatus, type HoldDuration } from '../lib/deviceTools';
-import { ClipboardIcon, CloseIcon, MonitorIcon, UploadIcon } from './Icons';
+import { ClipboardIcon, CloseIcon, MonitorIcon, PowerIcon, ShieldIcon, UploadIcon } from './Icons';
 import { ComputerCardHeading } from './ComputerCardHeading';
 
 type DeviceTool = 'clipboard' | 'screen' | 'share';
@@ -24,9 +24,11 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
   const [savingQuickShare, setSavingQuickShare] = useState(false);
   const [feedback, setFeedback] = useState<{ tool: DeviceTool; text: string; error?: boolean }>();
   const [muted, setMuted] = useState<boolean>();
+  const [displayOff, setDisplayOff] = useState<boolean>();
   const sharePicker = useRef<HTMLInputElement>(null);
   const shutdownDialog = useRef<HTMLDialogElement>(null);
   const computerControls = !runningThreadId && status?.computerControls === true;
+  const displayControl = computerControls && status?.displayControl === true;
 
   useEffect(() => {
     if (runningThreadId || !Capacitor.isNativePlatform()) return;
@@ -34,21 +36,27 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
       .catch(error => setFeedback({ tool: 'share', text: message(error), error: true }));
   }, [runningThreadId]);
 
-  useEffect(() => { setMuted(undefined); }, [config, connected]);
+  useEffect(() => { setMuted(undefined); setDisplayOff(undefined); }, [config, connected]);
   useEffect(() => {
     if (!computerControls || !connected || activeTool === 'screen') return;
     let current = true;
     let timer: ReturnType<typeof setTimeout>;
-    async function refreshMute() {
+    async function refreshControls() {
       if (!document.hidden) {
-        const audio = await deviceRequest<{ muted: boolean }>(config, 'audio/mute').catch(() => undefined);
-        if (current) setMuted(typeof audio?.muted === 'boolean' ? audio.muted : undefined);
+        await Promise.all([
+          deviceRequest<{ muted: boolean }>(config, 'audio/mute').then(audio => {
+            if (current) setMuted(audio.muted);
+          }, () => { if (current) setMuted(undefined); }),
+          displayControl && deviceRequest<{ displayOff: boolean }>(config, 'display/power').then(display => {
+            if (current) setDisplayOff(display.displayOff);
+          }, () => { if (current) setDisplayOff(undefined); }),
+        ]);
       }
-      if (current) timer = setTimeout(() => void refreshMute(), 5000);
+      if (current) timer = setTimeout(() => void refreshControls(), 5000);
     }
-    void refreshMute();
+    void refreshControls();
     return () => { current = false; clearTimeout(timer); };
-  }, [computerControls, connected, config, activeTool]);
+  }, [computerControls, displayControl, connected, config, activeTool]);
 
   const disabled = Boolean(activeTool) || status?.supported === false;
 
@@ -69,6 +77,27 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
       feedback?.tool === tool ? <p className="computer-feedback computer-reveal" data-tone={feedback.error ? 'error' : 'success'}
         role={feedback.error ? 'alert' : 'status'}>{feedback.text}</p> : null;
   }
+
+  const controlsDisabled = disabled || !connected;
+  const lockButton = <button type="button" className="secondary-button computer-lock-button" disabled={controlsDisabled}
+    onClick={() => void run('screen', async () => {
+      await deviceRequest(config, 'power/lock');
+      return 'Windows 已接收锁屏请求。';
+    })}><ShieldIcon aria-hidden="true" />锁定电脑</button>;
+  const muteSwitch = <ComputerControlSwitch label="电脑静音" checked={muted} disabled={controlsDisabled}
+    onToggle={() => void run('screen', async () => {
+      const audio = await deviceRequest<{ muted: boolean }>(config, 'audio/mute', { muted: !muted });
+      setMuted(audio.muted);
+    })} />;
+  const shutdownButton = <button type="button" className="secondary-button computer-shutdown-button"
+    disabled={controlsDisabled || status?.shutdownPending} aria-haspopup="dialog"
+    onClick={() => shutdownDialog.current?.showModal()}>
+    <PowerIcon aria-hidden="true" />{status?.shutdownPending ? '已请求关机' : '关闭电脑'}
+  </button>;
+  const releaseHold = () => void run('screen', async () => {
+    updateStatus(await deviceRequest<DeviceStatus>(config, 'power/release'));
+    return '已取消保持唤醒，电脑恢复原休眠策略。';
+  });
 
   return <div className="device-tools">
       {status?.supported === false && <p role="status">此电脑未提供 Windows 设备工具。</p>}
@@ -94,7 +123,20 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
         {!runningThreadId && <ComputerCardHeading title="电脑控制" icon={<MonitorIcon />}>
           {status?.awakeUntil && <span className="computer-status-pill" data-tone="success">挂机中</span>}
         </ComputerCardHeading>}
-        <div className="device-actions">
+        {displayControl ? <div className="computer-control-grid">
+          <div className="computer-control-row" role="group" aria-label="开关">
+            <ComputerControlSwitch label="熄屏挂机" checked={displayOff} disabled={controlsDisabled}
+              onToggle={() => void run('screen', async () => {
+                const display = await deviceRequest<{ displayOff: boolean }>(config, 'display/power', { displayOff: !displayOff });
+                setDisplayOff(display.displayOff);
+              })} />
+            {muteSwitch}
+          </div>
+          <div className="computer-control-row" role="group" aria-label="电脑操作">
+            {lockButton}
+            {shutdownButton}
+          </div>
+        </div> : <div className="device-actions">
           <label className="device-duration computer-setting-row">保持唤醒
             <select value={minutes} onChange={event => setMinutes(event.target.value === 'task' ? 'task' : Number(event.target.value) as HoldDuration)}>
               <option value={30}>30 分钟</option>
@@ -103,33 +145,18 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
               {runningThreadId && <option value="task">到当前任务结束（最多 2 小时）</option>}
             </select>
           </label>
-          {!runningThreadId && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run('screen', async () => {
-            await deviceRequest(config, 'power/lock');
-            return 'Windows 已接收锁屏请求。';
-          })}>锁定电脑</button>}
-          <button type="button" className="primary-button" disabled={disabled} onClick={() => void run('screen', async () => {
+          {!runningThreadId && lockButton}
+          <button type="button" className="primary-button" disabled={controlsDisabled} onClick={() => void run('screen', async () => {
             updateStatus(await deviceRequest<DeviceStatus>(config, 'power/hold', { minutes, threadId: runningThreadId }));
             return 'Windows 已接收熄屏请求，保持唤醒已启用。';
           })}>熄屏挂机</button>
-          {computerControls && <>
-            <button type="button" className="secondary-button computer-mute-button" aria-pressed={muted === true}
-              disabled={disabled || !connected || muted === undefined}
-              onClick={() => void run('screen', async () => {
-                const audio = await deviceRequest<{ muted: boolean }>(config, 'audio/mute', { muted: !muted });
-                setMuted(audio.muted);
-              })}>电脑静音<span className="computer-mute-toggle" aria-hidden="true" /></button>
-            <button type="button" className="secondary-button computer-shutdown-button"
-              disabled={disabled || !connected || status?.shutdownPending}
-              onClick={() => shutdownDialog.current?.showModal()}>
-              {status?.shutdownPending ? '已请求关机' : '关闭电脑'}
-            </button>
-          </>}
-          {status?.awakeUntil && <button type="button" className="secondary-button device-release" disabled={disabled} onClick={() => void run('screen', async () => {
-            updateStatus(await deviceRequest<DeviceStatus>(config, 'power/release'));
-            return '已取消保持唤醒，电脑恢复原休眠策略。';
-          })}>停止挂机</button>}
-        </div>
-        {status?.awakeUntil && <p className="computer-feedback" data-tone="success">最晚保持至 {new Date(status.awakeUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+          {computerControls && <>{muteSwitch}{shutdownButton}</>}
+          {status?.awakeUntil && <button type="button" className="secondary-button device-release" disabled={controlsDisabled} onClick={releaseHold}>停止挂机</button>}
+        </div>}
+        {status?.awakeUntil && <div className="computer-hold-status">
+          <p className="computer-feedback" data-tone="success">最晚保持至 {new Date(status.awakeUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+          {displayControl && <button type="button" className="secondary-button" disabled={controlsDisabled} onClick={releaseHold}>停止保持唤醒</button>}
+        </div>}
         {computerControls && status?.shutdownError
           ? <p className="computer-feedback" data-tone="error" role="alert">{status.shutdownError}</p>
           : feedbackFor('screen')}
@@ -138,7 +165,7 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
           <div className="session-sheet archive-sheet computer-shutdown-sheet">
             <header className="sheet-title-row"><h2 id="computer-shutdown-title">关闭电脑？</h2></header>
             <p>Windows 将正常关机，手机连接会断开。请先保存工作，下次使用时需要在电脑上开机并登录。</p>
-            <div className="sheet-actions">
+            <div className="sheet-actions balanced-sheet-actions">
               <button type="button" className="secondary-button" autoFocus onClick={() => shutdownDialog.current?.close()}>取消</button>
               <button type="button" className="swipe-delete-confirm" disabled={disabled || !connected} onClick={() => {
                 shutdownDialog.current?.close();
@@ -193,6 +220,18 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
         {feedbackFor('share')}
       </section>}
   </div>;
+}
+
+function ComputerControlSwitch({ label, checked, disabled, onToggle }: {
+  label: string;
+  checked?: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  return <button type="button" className="secondary-button computer-control-switch" role="switch" aria-label={label}
+    aria-checked={checked === true} disabled={disabled || checked === undefined} onClick={onToggle}>
+    <span>{label}</span><span className="computer-control-track" aria-hidden="true" />
+  </button>;
 }
 
 export function DevicePowerDialog({ config, phase, threadId, onClose }: {

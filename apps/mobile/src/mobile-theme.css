@@ -940,12 +940,34 @@
 .computer-scroll .device-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 10px; }
 .computer-scroll .device-actions > button { width: 100%; min-height: 44px; white-space: normal; }
 .computer-scroll .device-actions > label { grid-column: 1 / -1; }
-.computer-mute-button { display: inline-flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 7px; }
-.computer-utility .computer-mute-button[aria-pressed=true] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-soft); }
-.computer-mute-toggle { width: 23px; height: 13px; padding: 2px; border-radius: 999px; background: var(--line-strong); }
-.computer-mute-toggle::before { content: ''; display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--surface); transition: transform var(--motion-fade) var(--ease-out); }
-.computer-mute-button[aria-pressed=true] .computer-mute-toggle { background: var(--accent); }
-.computer-mute-button[aria-pressed=true] .computer-mute-toggle::before { transform: translateX(10px); }
+.computer-control-grid, .computer-control-row { display: grid; gap: 9px; }
+.computer-control-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.computer-control-row > button { min-height: 47px; border-radius: 11px; white-space: normal; }
+.computer-control-switch { display: flex; align-items: center; justify-content: space-between; gap: 5px; text-align: start; }
+.computer-utility .computer-control-switch[aria-checked=true] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-soft); }
+.computer-control-track {
+  flex: 0 0 28px;
+  height: 17px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background-color var(--motion-fade) var(--ease-out);
+}
+.computer-control-track::before {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform var(--motion-fade) var(--ease-spring);
+  content: '';
+}
+.computer-control-switch[aria-checked=true] .computer-control-track { background: var(--accent); }
+.computer-control-switch[aria-checked=true] .computer-control-track::before { transform: translateX(11px); }
+.computer-lock-button, .computer-shutdown-button { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.computer-lock-button svg, .computer-shutdown-button svg { flex: 0 0 16px; width: 16px; height: 16px; }
+.computer-hold-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; }
+.computer-hold-status button { min-height: 44px; }
 .computer-utility .computer-shutdown-button { color: #8b3045; }
 .computer-shutdown-sheet .sheet-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .computer-shutdown-sheet .sheet-actions > button { min-height: 44px; }

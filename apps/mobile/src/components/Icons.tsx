@@ -105,6 +105,10 @@ export function MonitorIcon(props: IconProps) {
   return <IconBase {...props}><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M12 17v3m-4 0h8" /></IconBase>;
 }
 
+export function PowerIcon(props: IconProps) {
+  return <IconBase {...props}><path d="M12 3v9M6.5 6.5a8 8 0 1 0 11 0" /></IconBase>;
+}
+
 export function ClipboardIcon(props: IconProps) {
   return <IconBase {...props}><rect x="8" y="3" width="8" height="4" rx="1.5" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M8 12h8m-8 4h6" /></IconBase>;
 }
