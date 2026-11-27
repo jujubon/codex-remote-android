@@ -9,6 +9,8 @@ import time
 user = c.WinDLL("user32", use_last_error=True)
 kernel = c.WinDLL("kernel32", use_last_error=True)
 CF_UNICODETEXT = 13
+CODEX_PACKAGE = "OpenAI.Codex_2p2nqsd0c76g0"
+WINDOW_CALLBACK = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
 
 def bind(dll, name, result, *arguments):
@@ -37,6 +39,14 @@ execution_state = bind(kernel, "SetThreadExecutionState", w.DWORD, w.DWORD)
 screen_message = bind(user, "SendNotifyMessageW", w.BOOL, w.HWND, w.UINT, w.WPARAM, w.LPARAM)
 lock_screen = bind(user, "LockWorkStation", w.BOOL)
 session_id = bind(kernel, "ProcessIdToSessionId", w.BOOL, w.DWORD, c.POINTER(w.DWORD))
+enum_windows = bind(user, "EnumWindows", w.BOOL, WINDOW_CALLBACK, w.LPARAM)
+window_visible = bind(user, "IsWindowVisible", w.BOOL, w.HWND)
+window_title_length = bind(user, "GetWindowTextLengthW", c.c_int, w.HWND)
+window_owner = bind(user, "GetWindow", w.HWND, w.HWND, w.UINT)
+window_process = bind(user, "GetWindowThreadProcessId", w.DWORD, w.HWND, c.POINTER(w.DWORD))
+open_process = bind(kernel, "OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
+package_family = bind(kernel, "GetPackageFamilyName", w.LONG, w.HANDLE, c.POINTER(w.UINT), w.LPWSTR)
+close_handle = bind(kernel, "CloseHandle", w.BOOL, w.HANDLE)
 
 
 def checked(value):
@@ -50,6 +60,31 @@ def require_desktop_session():
     checked(session_id(os.getpid(), c.byref(session)))
     if not session.value:
         raise RuntimeError("An interactive Windows user session is required.")
+
+
+def codex_window_open():
+    found = False
+
+    @WINDOW_CALLBACK
+    def visit(window, _):
+        nonlocal found
+        if not window_visible(window) or not window_title_length(window) or window_owner(window, 4):  # GW_OWNER
+            return True
+        pid = w.DWORD()
+        window_process(window, c.byref(pid))
+        process = open_process(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not process:
+            return True
+        try:
+            family = c.create_unicode_buffer(128)
+            length = w.UINT(len(family))
+            found = package_family(process, c.byref(length), family) == 0 and family.value == CODEX_PACKAGE
+            return not found
+        finally:
+            close_handle(process)
+
+    enum_windows(visit, 0)
+    return found
 
 
 def clipboard(text=None):
@@ -117,6 +152,11 @@ def handle(request):
         target = request["target"]
         os.startfile(target, cwd=os.path.dirname(target))
         send()
+    elif action == "codex-status" or action == "codex-open":
+        opened = codex_window_open()
+        if not opened and action == "codex-open":
+            os.startfile("shell:AppsFolder\\" + CODEX_PACKAGE + "!App")
+        send({"opened": opened})
     elif action == "hold":
         checked(execution_state(0x80000001))  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
         try:

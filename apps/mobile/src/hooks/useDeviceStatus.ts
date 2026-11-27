@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
-import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
+import { deviceRequest, type CodexDesktopState, type DeviceStatus } from '../lib/deviceTools';
 
 export function useDeviceStatus(config: RemoteConfig, connected: boolean, watchReader = false) {
   const [status, setStatus] = useState<DeviceStatus>();
@@ -8,6 +8,10 @@ export function useDeviceStatus(config: RemoteConfig, connected: boolean, watchR
   const updateStatus = useCallback((next: DeviceStatus) => {
     revision.current++;
     setStatus(previous => ({ ...next, reader: next.reader ?? previous?.reader }));
+  }, []);
+  const updateCodexDesktop = useCallback((codexDesktop: CodexDesktopState) => {
+    revision.current++;
+    setStatus(previous => previous ? { ...previous, codexDesktop } : previous);
   }, []);
   const poll = watchReader || Boolean(status?.awakeUntil);
 
@@ -28,5 +32,5 @@ export function useDeviceStatus(config: RemoteConfig, connected: boolean, watchR
     return () => { active = false; clearTimeout(timer); };
   }, [config, connected, poll]);
 
-  return { status, updateStatus };
+  return { status, updateStatus, updateCodexDesktop };
 }

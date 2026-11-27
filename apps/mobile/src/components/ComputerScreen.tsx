@@ -11,6 +11,7 @@ import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
 import { InboxPanel } from './InboxPanel';
 import { ComputerCardHeading } from './ComputerCardHeading';
 import { AntigravityDesktopCard } from './AntigravityDesktopCard';
+import { CodexDesktopCard } from './CodexDesktopCard';
 
 export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice, antigravityAvailable }: {
   config: RemoteConfig;
@@ -37,7 +38,7 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
     try { if (normalizeLocalUrl(address)) return '局域网直连'; } catch { /* Non-LAN address. */ }
     return /^(http|ws):\/\//i.test(active) ? '直连' : '固定域名';
   }, [active]);
-  const { status, updateStatus } = useDeviceStatus(deviceConfig, connected, true);
+  const { status, updateStatus, updateCodexDesktop } = useDeviceStatus(deviceConfig, connected, true);
 
   return <main className="app-screen computer-screen">
     <header className="top-bar computer-top-bar">
@@ -54,12 +55,14 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
         {detail && !connected && <p className="computer-feedback" role="status">{detail}</p>}
         <ConnectionDiagnostics key={`${phase}:${active}`} config={deviceConfig} sync={checkSync} />
       </section>
+      <CodexDesktopCard key={`codex:${active}`} config={deviceConfig} connected={connected}
+        state={status?.codexDesktop} onState={updateCodexDesktop} />
+      {(antigravityAvailable || status?.antigravityDesktopInstalled) && <AntigravityDesktopCard key={active}
+        config={deviceConfig} connected={connected} installed={status?.antigravityDesktopInstalled} />}
       <PhoneReader config={config} deviceConfig={deviceConfig} desktop={status?.reader} supported={status?.supported} />
       <DeviceTools config={deviceConfig} status={status} updateStatus={updateStatus} />
       <InboxPanel key={active} config={deviceConfig} onUse={onUseInbox}
         deleteAfterTurn={deleteAttachmentsAfterTurn} onChangeAttachmentCleanup={onChangeAttachmentCleanup} />
-      {(antigravityAvailable || status?.antigravityDesktopInstalled) && <AntigravityDesktopCard key={active}
-        config={deviceConfig} connected={connected} installed={status?.antigravityDesktopInstalled} />}
       <UpdatePanel hostVersion={hostVersion} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}

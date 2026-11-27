@@ -15,9 +15,12 @@ export interface DeviceStatus {
   shareError?: string;
   autoOpen: boolean;
   awakeUntil: number | null;
+  codexDesktop?: CodexDesktopState;
   antigravityDesktopInstalled?: boolean;
   reader?: { localActive: boolean; remoteReady: boolean; canOpenLocal?: boolean };
 }
+
+export type CodexDesktopState = 'unavailable' | 'closed' | 'starting' | 'open';
 
 export interface InboxFile {
   id: string;

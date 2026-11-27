@@ -1,10 +1,7 @@
 $ErrorActionPreference = 'Stop'
-$session = (Get-Process -Id $PID).SessionId
 $root = $PSScriptRoot
 $configPath = Join-Path $root 'settings.json'
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$desktopPath = '^' + [regex]::Escape((Join-Path $env:ProgramFiles 'WindowsApps\OpenAI.Codex_')) +
-    '[0-9.]+_(?:x64|arm64|x86)__2p2nqsd0c76g0\\app\\(?:ChatGPT|Codex)\.exe$'
 
 function Write-WatchLog([string]$Message) {
     $file = Join-Path $root 'watch.log'
@@ -39,31 +36,18 @@ $owned = $false
 $hostChild = $null
 $tunnelChild = $null
 $hostKey = $tunnelKey = ''
-$desktopOpen = $false
 $hostRetry = $tunnelRetry = [datetime]::MinValue
 try {
     try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
     if (!$owned) { return }
-    Write-WatchLog 'Waiting for Codex Desktop.'
+    Write-WatchLog 'Starting Codex Remote for the Windows session.'
     while ($true) {
         try {
             $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($config.enabled -eq $false) { break }
-            $desktops = @(Get-Process -Name ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object {
-                $_.SessionId -eq $session -and $_.Path -match $desktopPath
-            })
-            if (!$desktopOpen -and @($desktops | Where-Object MainWindowHandle -NE 0).Count -gt 0) {
-                $desktopOpen = $true
-                Write-WatchLog 'Codex Desktop opened.'
-            }
-            if ($desktopOpen -and $desktops.Count -eq 0) {
-                $desktopOpen = $false
-                Write-WatchLog 'Codex Desktop exited.'
-            }
-
-            $launchTunnel = $desktopOpen -and $config.tunnelExe -and $config.tokenFile -and $config.protocol -in @('http2', 'quic', 'auto')
+            $launchTunnel = $config.tunnelExe -and $config.tokenFile -and $config.protocol -in @('http2', 'quic', 'auto')
             $nextTunnelKey = if ($launchTunnel) { "$($config.tunnelExe)|$($config.tokenFile)|$($config.protocol)" } else { '' }
-            $nextHostKey = if ($desktopOpen) { "$($config.companion)|$launchTunnel" } else { '' }
+            $nextHostKey = "$($config.companion)|$launchTunnel"
             if ($nextTunnelKey -ne $tunnelKey) {
                 Stop-Child $tunnelChild
                 $tunnelChild = $null

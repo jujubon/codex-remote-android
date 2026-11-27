@@ -40,10 +40,13 @@ $runtime = Get-AppxPackage 'OpenAI.CodexPrimaryRuntime*' | Sort-Object Version -
 $nodePath = if ($runtime) { Join-Path $runtime.InstallLocation 'dependencies\node\bin\node.exe' }
 if (!$nodePath -or !(Test-Path -LiteralPath $nodePath)) { $nodePath = (Get-Command node.exe).Source }
 $desktop = Get-AppxPackage 'OpenAI.Codex' | Sort-Object Version -Descending | Select-Object -First 1
+$env:CMR_CODEX_DESKTOP_APP_ID = if ($desktop.PackageFamilyName -eq 'OpenAI.Codex_2p2nqsd0c76g0') {
+    $desktop.PackageFamilyName + '!App'
+} else { '' }
 $desktopBin = if ($desktop) { Join-Path $desktop.InstallLocation 'app\resources\codex.exe' }
 $env:CODEX_BIN = if ($desktopBin -and (Test-Path -LiteralPath $desktopBin)) { $desktopBin } else { (Get-Command codex.exe -ErrorAction SilentlyContinue).Source }
 if (!$env:CODEX_BIN) { $env:CODEX_BIN = "$env:LOCALAPPDATA\Programs\OpenAI\Codex\bin\codex.exe" }
-if (!(Test-Path -LiteralPath $env:CODEX_BIN)) { throw 'Install or open Codex Desktop first.' }
+if (!(Test-Path -LiteralPath $env:CODEX_BIN)) { throw 'Install Codex Desktop first.' }
 $env:CODEX_HOME = Join-Path $env:USERPROFILE '.codex'
 $env:CMR_PYTHON = Join-Path $PSScriptRoot 'python\python.exe'
 if (!(Test-Path -LiteralPath $env:CMR_PYTHON)) { $env:CMR_PYTHON = (Get-Command python.exe).Source }

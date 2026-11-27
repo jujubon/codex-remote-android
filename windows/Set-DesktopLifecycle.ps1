@@ -56,17 +56,21 @@ $launcher = Join-Path $state "CodexRemoteWatch-$($launcherHash.Substring(0, 16))
 if (!(Test-Path -LiteralPath $launcher)) { Copy-Item -LiteralPath $sourceLauncher -Destination $launcher }
 if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash -ne $launcherHash) { throw 'The installed watcher launcher differs from the Windows package.' }
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Watch-CodexDesktop.ps1') -Destination $watchPath -Force
+$sourceWatch = Join-Path $PSScriptRoot 'Watch-CodexDesktop.ps1'
+$scriptChanged = !(Test-Path -LiteralPath $watchPath) -or
+    (Get-FileHash -LiteralPath $sourceWatch).Hash -ne (Get-FileHash -LiteralPath $watchPath).Hash
 $action = New-ScheduledTaskAction -Execute $launcher
+$description = 'Starts Codex Remote in the background at Windows sign-in.'
 $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if (!$task) {
+    if ($scriptChanged) { Copy-Item -LiteralPath $sourceWatch -Destination $watchPath -Force }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userSid
     $principal = New-ScheduledTaskPrincipal -UserId $userSid -LogonType Interactive -RunLevel Limited
     $options = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
-        -Settings $options -Description 'Starts Codex Remote only while Codex Desktop is open.' | Out-Null
-} elseif (@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $launcher -or $task.Actions[0].Arguments) {
+        -Settings $options -Description $description | Out-Null
+} elseif ($scriptChanged -or $task.Description -ne $description -or @($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $launcher -or $task.Actions[0].Arguments) {
     $wasRunning = $task.State -eq 'Running'
     try {
         if ($wasRunning) {
@@ -79,7 +83,10 @@ if (!$task) {
                 Start-Sleep -Milliseconds 300
             }
         }
-        Set-ScheduledTask -TaskName $taskName -Action $action | Out-Null
+        $task.Actions = @($action)
+        $task.Description = $description
+        Set-ScheduledTask -InputObject $task | Out-Null
+        if ($scriptChanged) { Copy-Item -LiteralPath $sourceWatch -Destination $watchPath -Force }
     } catch {
         if ($wasRunning) {
             Save-Settings $config
@@ -96,4 +103,4 @@ Move-LegacyShortcut
 if ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') {
     Start-ScheduledTask -TaskName $taskName
 }
-Write-Host 'Codex Remote will start when Codex Desktop opens. Keep this package in its current location.'
+Write-Host 'Codex Remote will start in the background when you sign in to Windows. Keep this package in its current location.'

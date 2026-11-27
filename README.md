@@ -77,7 +77,7 @@ Android 0.9.2 搭配 Windows 配套服务 0.9.1 使用。从首页底部点「�
 
 ## 后台运行与更新
 
-双击启动器可手动运行服务。要让配套服务随 Codex Desktop 启停，先用所选模式连通一次，再双击同一文件夹里的 `Enable-Autostart.cmd`。登录 Windows 时只启动检测程序。打开 Codex Desktop 后启动配套服务，完全退出桌面后停止服务。已由检测程序管理的 Cloudflare 隧道也会随桌面启停。`Disable-Autostart.cmd` 可关闭此功能。单独安装的 VPN 或隧道仍由各自的设置管理。
+双击启动器可手动运行服务。要从手机启动 Codex Desktop，先用所选连接方式连通一次，再双击同一文件夹里的 `Enable-Autostart.cmd`。登录 Windows 后，配套服务和已配置的 Cloudflare 隧道会在后台运行。电脑保持联网和唤醒时，可在手机「电脑 → Codex Desktop」启动桌面版。`Disable-Autostart.cmd` 可关闭自动启动。单独安装的 VPN 或隧道由各自的设置管理。
 
 更新时，用相同签名的新版 APK 覆盖安装。将 Windows ZIP 完整解压到固定文件夹。如果旧配套服务是从命令窗口手动运行的，先退出旧服务，再双击新版的 `Enable-Autostart.cmd`，或按原模式手动启动。已有 0.9.19 或更新版的桌面启动检测程序会改用新目录，无需重启 Windows。配对信息保存在当前 Windows 用户的 `%LOCALAPPDATA%\CodexMobileRemote`，通常可以继续使用原令牌。
 

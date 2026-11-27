@@ -10,7 +10,8 @@ import { FileTransferError, sanitizeFileName, type FileTransferManager, type Sto
 
 type Settings = { folder: string; autoOpen: boolean };
 type Receipt = { fileName: string; opened: boolean };
-type NativeReply = { ok: boolean; text?: string };
+type NativeReply = { ok: boolean; text?: string; opened?: boolean };
+type CodexDesktopState = "unavailable" | "closed" | "starting" | "open";
 type PowerHold = { child: ChildProcessWithoutNullStreams; until: number; tick: NodeJS.Timeout };
 type SettingsDocument = { receiveFolder?: unknown; autoOpen?: unknown; chatAttachmentFolder?: unknown };
 const CLIPBOARD_BYTES = 64 * 1024;
@@ -118,6 +119,9 @@ export class DeviceTools {
   readonly supported = process.platform === "win32";
   private clipboardOperation: Promise<unknown> = Promise.resolve();
   private antigravityLaunch?: Promise<void>;
+  private codexLaunch?: Promise<CodexDesktopState>;
+  private codexCheck?: Promise<CodexDesktopState>;
+  private codexStartingUntil = 0;
   private hold: PowerHold | null = null;
   private changingHold = false;
   private readonly receipts = new Map<string, { operation: Promise<Receipt>; expiresAt: number }>();
@@ -138,10 +142,15 @@ export class DeviceTools {
   }
 
   async status() {
+    const [antigravity, codexDesktop] = await Promise.all([
+      this.supported ? findAntigravityDesktop() : undefined,
+      this.codexDesktopStatus().catch(() => undefined),
+    ]);
     const info = {
       supported: this.supported,
       awakeUntil: this.hold?.until ?? null,
-      antigravityDesktopInstalled: this.supported && Boolean(await findAntigravityDesktop()),
+      antigravityDesktopInstalled: Boolean(antigravity),
+      codexDesktop,
     };
     try {
       const settings = await this.settings();
@@ -177,6 +186,35 @@ export class DeviceTools {
 
   async lock(): Promise<void> {
     await this.native({ action: "lock" });
+  }
+
+  private get codexDesktopAvailable(): boolean {
+    return this.supported && process.env.CMR_CODEX_DESKTOP_APP_ID === "OpenAI.Codex_2p2nqsd0c76g0!App";
+  }
+
+  private async codexDesktopStatus(): Promise<CodexDesktopState> {
+    if (!this.codexDesktopAvailable) return "unavailable";
+    if (this.codexLaunch) return this.codexLaunch;
+    this.codexCheck ??= this.native({ action: "codex-status" }).then(reply => {
+      if (reply.opened === true) {
+        this.codexStartingUntil = 0;
+        return "open" as const;
+      }
+      return Date.now() < this.codexStartingUntil ? "starting" as const : "closed" as const;
+    }).finally(() => { this.codexCheck = undefined; });
+    return this.codexCheck;
+  }
+
+  async openCodexDesktop(): Promise<CodexDesktopState> {
+    if (!this.codexDesktopAvailable) throw new FileTransferError("INVALID_ARGUMENT", "电脑上未找到可启动的 Codex Desktop。", 409);
+    if (this.codexLaunch) return this.codexLaunch;
+    if (Date.now() < this.codexStartingUntil) return this.codexDesktopStatus();
+    this.codexLaunch = this.native({ action: "codex-open" }).then(reply => {
+      if (reply.opened === true) return "open" as const;
+      this.codexStartingUntil = Date.now() + 20_000;
+      return "starting" as const;
+    }).finally(() => { this.codexLaunch = undefined; });
+    return this.codexLaunch;
   }
 
   openAntigravityDesktop(): Promise<void> {

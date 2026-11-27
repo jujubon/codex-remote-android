@@ -8,6 +8,12 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.43
+
+- 手机「电脑」页可启动 Windows 上的 Codex Desktop，检测到真实窗口后显示「已打开」。Codex 和 Antigravity 的启动入口并排放在连接状态下方的相邻卡片。
+- 更新 Windows 后，运行新版 `Enable-Autostart.cmd`。配套服务和已配置的固定域名隧道在登录 Windows 后常驻后台，Codex 完全退出时仍可接收启动请求。
+- 远程启动需要 Android 和 Windows 配套服务均更新至 0.9.43，并要求电脑已登录 Windows、联网和保持唤醒。
+
 ## 0.9.42
 
 - 「电脑 → Antigravity 桌面对话」新增启动电脑桌面版的按钮。电脑在线时可从手机发起启动，再进入 Google 官方远程控制。
