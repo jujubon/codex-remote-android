@@ -20,6 +20,7 @@ import { AntigravitySessions, findAntigravityCli } from "./antigravity.js";
 import { antigravityUsageReader } from "./antigravity-usage.js";
 import { UsageResets } from "./usage-resets.js";
 import { CompanionUpdates } from "./companion-updates.js";
+import { CockpitAccounts } from "./cockpit-accounts.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -58,6 +59,7 @@ const antigravity = await AntigravitySessions.open(join(dirname(config.promptQue
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const updates = new CompanionUpdates(() => gateway.pauseForHostUpdate(), () => gateway.resumeAfterHostUpdate());
+const cockpit = new CockpitAccounts(bridge, () => gateway.pauseForAccountSwitch(), () => gateway.resumeAfterHostUpdate(), config.codexHome);
 await updates.restoreGuard().catch(error => console.warn("[updates] Could not restore update guard", error));
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
@@ -216,6 +218,20 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 }
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method === "GET" && request.url === "/api/device/cockpit/accounts") {
+    json(response, 200, await cockpit.list());
+    return;
+  }
+  if (request.method === "GET" && request.url === "/api/device/cockpit/status") {
+    json(response, 200, cockpit.status());
+    return;
+  }
+  if (request.method === "POST" && request.url === "/api/device/cockpit/switch") {
+    const { key, confirm } = await readJsonBody(request, 1024);
+    if (confirm !== true) throw new FileTransferError("INVALID_ARGUMENT", "请确认切换 Codex 账号。", 400);
+    json(response, 202, await cockpit.start(key));
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/status") {
     json(response, 200, { ...await device.status(), version: HOST_VERSION, reader: reader.status(), hostUpdateSupported: updates.supported });
     return;

@@ -586,6 +586,15 @@
 .startup-update-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
 .startup-update-buttons button { min-height: 44px; border-radius: 11px; padding-inline: 6px; }
 .session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
+.cockpit-accounts { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+.cockpit-accounts-body { display: grid; gap: 8px; }
+.cockpit-account-list { display: grid; margin: 0; padding: 0; list-style: none; max-height: 38dvh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+.cockpit-account-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
+.cockpit-account-list li + li { border-top: 1px solid var(--line); }
+.cockpit-account-list li > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.cockpit-account-list .secondary-button, .cockpit-refresh { min-height: 44px; }
+.cockpit-refresh { justify-self: end; }
+.cockpit-confirm p { margin: 0; overflow-wrap: anywhere; }
 .usage-resets { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); }
 .usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }
 .usage-reset-row > div { min-width: 0; overflow-wrap: anywhere; }

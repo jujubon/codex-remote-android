@@ -1,20 +1,28 @@
-# Codex Remote for Android
+<p align="center"><img src="apps/mobile/public/logo.svg" width="76" height="76" alt="Codex Remote"></p>
 
-**简体中文** · [English](README.en.md)
+<h1 align="center">Codex Remote for Android</h1>
+<p align="center"><strong>离开电脑，也能继续手头的 Codex 和 Antigravity 任务。</strong></p>
+<p align="center"><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
+<p align="center">
+  <a href="https://github.com/jujubon/codex-remote-android/releases/latest"><img src="https://img.shields.io/github/v/release/jujubon/codex-remote-android?label=Release&color=4e38a4" alt="最新版"></a>
+  <img src="https://img.shields.io/badge/Android-7%2B-387954" alt="Android 7+">
+  <img src="https://img.shields.io/badge/Host-Windows-2869a5" alt="Windows 主机">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-595667" alt="MIT 许可证"></a>
+</p>
 
-**在 Android 上继续 Windows 上的 Codex 和 Antigravity 对话。** 出门后可以看任务进度、回复提问、补发截图，也可以直接发起新任务。助手在电脑上执行，沿用你已经登录的账号。
+<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">下载 APK 和 Windows 配套服务</a></strong> · <a href="#快速开始">快速开始</a> · <a href="#异地连接使用-cloudflare-tunnel">异地连接</a> · <a href="#cockpit-tools-切换-codex-账号">切换账号</a></p>
 
-[下载 APK 和 Windows 配套服务](https://github.com/jujubon/codex-remote-android/releases/latest) · [快速开始](#快速开始) · [异地连接](#异地连接使用-cloudflare-tunnel)
+<p align="center"><img src="docs/images/app-preview.webp" alt="Codex Remote 的 Codex、Antigravity 和电脑三页界面，使用演示数据" width="840"></p>
+
+## 手机上能做什么
+
+在电脑开始的任务，可以从手机看进度、回复提问、补发截图。也可以直接发起新任务。助手在你的 Windows 电脑上执行，沿用已登录的账号。
 
 | 页面 | 你可以在手机上做什么 |
 | --- | --- |
-| **Codex** | 浏览电脑上的项目和对话，发起新任务，查看工具执行过程和剩余额度。在支持的会话里答复提问、处理审批、引导或停止当前轮。 |
+| **Codex** | 浏览项目和对话、发起任务、查看额度。支持的会话可以答复提问、处理审批、引导或停止。已安装兼容版 Cockpit Tools 时，还可以从手机切换 Codex 账号。 |
 | **Antigravity** | 用电脑上已登录的 CLI 新建和继续对话、查看额度。需要接手桌面对话时，从「启动」进入 Google 官方远程面板。 |
 | **电脑** | 自检连接、互传文件和剪贴板、锁屏、熄屏挂机、静音与关机，也可预览收件箱图片、使用手机阅读窗和安装更新。 |
-
-<p align="center">
-  <img src="docs/images/app-preview.webp" alt="Codex Remote 的 Codex 项目、Antigravity 项目和电脑三页界面，使用演示数据" width="840">
-</p>
 
 ## 快速开始
 
@@ -48,6 +56,14 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 - **启动或关闭两位助手的桌面。** 在各自的页面点「启动」。绿点表示窗口已打开，橙点表示正在启停。搜索框旁的「⋯」可管理项目和对话。Antigravity 的「进入桌面对话」需要在桌面设置中启用 Remote Control，并在官方面板使用同一 Google 账号。
 - **发截图和文件。** 从 Android 分享菜单选「发送到电脑」，或在聊天输入框添加多个附件。图片可在手机收件箱预览。文件接收位置和附件清理可分别配置。[文件传输说明](docs/file-transfer.md)
 - **用电脑看手机。** 在「电脑 → 手机投屏」选择本地 Wi-Fi 或跨网方式。本地投屏需配对 scrcpy，跨网共享由 Android 确认。电脑端翻页的权限和步骤见阅读窗说明。[手机阅读窗说明](docs/phone-reader.md)
+
+## Cockpit Tools 切换 Codex 账号
+
+1. 在同一个 Windows 用户下打开 **Cockpit Tools 1.5.3 或更新版本**，启用它的本地 WebSocket 服务，并在 Cockpit 中添加 Codex 账号。[Cockpit Tools 下载](https://github.com/jlcodes99/cockpit-tools/releases/latest)
+2. 双端更新到 **Codex Remote 1.0.4 或更新版本**。在手机「Codex → 额度圆环 → Cockpit Tools → 切换账号」选用目标账号并确认。切换前请结束正在运行的 Codex 任务。
+3. Windows 配套服务调用 Cockpit 的本机接口，并重新载入手机使用的 Codex 连接。若 Codex Desktop 仍显示旧账号，关闭并重新打开桌面版。相同邮箱的多个工作区需要在电脑上核对。
+
+账号凭据由 Cockpit 在电脑上管理。手机只收到脱敏标签、套餐和切换状态。配套服务仅连接本机的 Cockpit 自动化接口，Cockpit 的本地 WebSocket 端口应留在本机。
 
 ## 后台运行与更新
 

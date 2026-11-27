@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 import { posix, win32 } from "node:path";
 
 interface JsonRpcResponse {
@@ -43,6 +44,7 @@ export class AppServerBridge extends EventEmitter {
   private stopping = false;
   private initialized = false;
   private startPromise: Promise<void> | null = null;
+  private restartPromise?: Promise<void>;
   private readonly requestTimeoutMs: number;
   private readonly restartDelayMs: number;
 
@@ -81,11 +83,13 @@ export class AppServerBridge extends EventEmitter {
     this.initialized = false;
 
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    lines.on("line", (line) => this.handleLine(line));
+    lines.on("line", (line) => { if (this.child === child) this.handleLine(line); });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => this.emit("diagnostic", String(chunk)));
-    child.once("error", (error) => this.handleExit(error));
-    child.once("exit", (code, signal) => this.handleExit(new Error(`codex app-server exited code=${code} signal=${signal}`)));
+    child.once("error", (error) => { if (this.child === child) this.handleExit(error); });
+    child.once("exit", (code, signal) => {
+      if (this.child === child) this.handleExit(new Error(`codex app-server exited code=${code} signal=${signal}`));
+    });
 
     await new Promise<void>((resolve, reject) => {
       const onSpawn = () => { cleanup(); resolve(); };
@@ -134,7 +138,24 @@ export class AppServerBridge extends EventEmitter {
     this.rejectPending(new Error("app-server stopped"));
   }
 
-  async request(method: string, params: unknown = {}): Promise<unknown> {
+  restart(): Promise<void> {
+    this.restartPromise ??= (async () => {
+      await this.startPromise?.catch(() => undefined);
+      const previous = this.child;
+      await this.stop();
+      this.emit("offline", new Error("正在重新载入 Codex 登录状态。"));
+      if (previous && previous.exitCode === null && previous.signalCode === null) {
+        const deadline = Date.now() + 5000;
+        while (previous.exitCode === null && previous.signalCode === null && Date.now() < deadline) await delay(50);
+        if (previous.exitCode === null && previous.signalCode === null) throw new Error("Codex app-server did not stop.");
+      }
+      await this.start();
+    })().finally(() => { this.restartPromise = undefined; });
+    return this.restartPromise;
+  }
+
+  async request(method: string, params: unknown = {}, timeoutMs = this.requestTimeoutMs): Promise<unknown> {
+    if (method !== "initialize" && this.restartPromise) await this.restartPromise;
     if (method !== "initialize" && !this.ready) await this.start();
     if (!this.child) throw new Error("codex app-server is not running");
     const id = this.nextId++;
@@ -143,7 +164,7 @@ export class AppServerBridge extends EventEmitter {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`app-server request timed out: ${method}`));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.write(message);

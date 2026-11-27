@@ -1,20 +1,28 @@
-# Codex Remote for Android
+<p align="center"><img src="apps/mobile/public/logo.svg" width="76" height="76" alt="Codex Remote"></p>
 
-[简体中文](README.md) · **English**
+<h1 align="center">Codex Remote for Android</h1>
+<p align="center"><strong>Keep working with Codex and Antigravity when you're away from your PC.</strong></p>
+<p align="center"><a href="README.md">简体中文</a> · <strong>English</strong></p>
+<p align="center">
+  <a href="https://github.com/jujubon/codex-remote-android/releases/latest"><img src="https://img.shields.io/github/v/release/jujubon/codex-remote-android?label=Release&color=4e38a4" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/Android-7%2B-387954" alt="Android 7+">
+  <img src="https://img.shields.io/badge/Host-Windows-2869a5" alt="Windows host">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-595667" alt="MIT license"></a>
+</p>
 
-**Continue your Windows Codex and Antigravity sessions from Android.** Check on a task, answer a question, attach a screenshot, or start something new while you're away from your desk. Your assistants run on your PC using the accounts already signed in there.
+<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">Download the Android APK and Windows companion</a></strong> · <a href="#quick-start">Quick start</a> · <a href="#connect-remotely-with-cloudflare-tunnel">Connect remotely</a> · <a href="#switch-codex-accounts-with-cockpit-tools">Switch accounts</a></p>
 
-[Download the Android APK and Windows companion](https://github.com/jujubon/codex-remote-android/releases/latest) · [Quick start](#quick-start) · [Connect remotely](#connect-remotely-with-cloudflare-tunnel)
+<p align="center"><img src="docs/images/app-preview.webp" alt="The Codex, Antigravity, and Computer tabs, shown with sample data" width="840"></p>
+
+## What you can do from your phone
+
+Check a task's progress, answer a question, attach a screenshot, or start something new. Your assistants run on your Windows PC using the accounts already signed in there.
 
 | Tab | What you can do from your phone |
 | --- | --- |
-| **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a running turn, or stop it. |
+| **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a turn, or stop it. Switch Codex accounts from your phone with a compatible version of Cockpit Tools. |
 | **Antigravity** | Start and resume chats through the signed-in Windows CLI and check usage. Open the official Google remote panel from the desktop controls for desktop conversations. |
 | **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
-
-<p align="center">
-  <img src="docs/images/app-preview.webp" alt="The Codex, Antigravity, and Computer tabs, shown with sample data" width="840">
-</p>
 
 ## Quick start
 
@@ -48,6 +56,14 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 - **Launch or close a desktop app.** Tap **Launch** (`启动`) in the relevant assistant tab. Green means the window is open and amber means it is opening or closing. The **⋯** next to search opens project and conversation management. For the Antigravity desktop panel, enable Remote Control on the PC and sign in to the panel with the same Google account.
 - **Send screenshots and files.** Use the Android share sheet to send a file to your PC or attach multiple files to a chat. Preview pictures in the phone inbox. Storage locations and attachment cleanup are configurable. [File transfers (Chinese)](docs/file-transfer.md)
 - **See your phone on your PC.** Open phone mirroring from the Computer tab. Local mirroring uses scrcpy and wireless debugging. Android asks for permission when you start cross-network screen sharing. [Phone mirroring setup (Chinese)](docs/phone-reader.md)
+
+## Switch Codex accounts with Cockpit Tools
+
+1. Open **Cockpit Tools 1.5.3 or later** under the same Windows user as the companion. Enable its local WebSocket service and add your Codex accounts in Cockpit. [Get Cockpit Tools](https://github.com/jlcodes99/cockpit-tools/releases/latest)
+2. Update Android and the Windows companion to **Codex Remote 1.0.4 or later**. In the **Codex** tab, open the usage ring, choose **Switch accounts** (`切换账号`) under **Cockpit Tools**, select an account, and confirm. Finish running Codex tasks before switching.
+3. The Windows companion calls Cockpit's local automation interface and reloads the Codex connection used by the phone. If Codex Desktop still shows the old account, close and reopen it. Workspaces that share an email address need to be checked on the PC.
+
+Cockpit manages account credentials on Windows. The phone receives masked labels, plans, and switch status. The companion connects to Cockpit over loopback. Keep Cockpit's WebSocket port local.
 
 ## Background operation and updates
 

@@ -2,6 +2,7 @@ import type { AccountUsage } from '../types/protocol';
 import type { RemoteConfig } from '../lib/configStore';
 import { ChevronDownIcon } from './Icons';
 import { UsageResetCards } from './UsageResetCards';
+import { CockpitAccountSwitch } from './CockpitAccountSwitch';
 
 function windowName(minutes: number | null) {
   if (!minutes) return '额度窗口';
@@ -27,6 +28,7 @@ export function AccountUsagePanel({ usage, status, refresh, expanded = false, as
       ? <UsageResetCards resets={usage.resetCredits} config={resetConfig} refresh={onReset ?? refresh} />
       : usage && <p className="usage-reset-unavailable">当前额度接口未返回重置卡信息。</p>)}
     {usage && <small>上次读取于 {new Date(usage.checkedAt).toLocaleString()}</small>}
+    {expanded && resetConfig && <CockpitAccountSwitch key={resetConfig.serverUrl} config={resetConfig} onVerified={onReset ?? refresh} />}
   </>;
   return expanded ? <section className="account-usage account-usage-expanded">{content}</section> :
     <details className="account-usage" onToggle={event => { if (event.currentTarget.open) refresh(); }}>

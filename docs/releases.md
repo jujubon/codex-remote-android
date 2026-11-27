@@ -8,6 +8,11 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 1.0.4
+
+- Codex 首页额度面板可以调用 Cockpit Tools 的本机接口切换账号。双端需使用 Codex Remote 1.0.4，Windows 需运行兼容版 Cockpit Tools。
+- 重整中英文 README 的下载入口、界面预览和使用说明。
+
 ## 1.0.3
 
 - 「电脑屏幕」更名为「电脑控制」，保留锁屏和熄屏挂机，新增默认音频输出静音开关与需确认的关机。使用新操作需要 Windows 配套服务 1.0.3。

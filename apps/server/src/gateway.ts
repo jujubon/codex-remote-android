@@ -622,7 +622,7 @@ export class MobileGateway {
       "prompt.queue.resume", "prompt.queue.promote"].includes(message.type);
     if (startsWork) this.taskRequests++;
     try {
-      if (startsWork && this.hostUpdating) throw new GatewayRequestError("host_updating", "电脑配套服务正在更新，请重新连接后再发送。");
+      if (startsWork && this.hostUpdating) throw new GatewayRequestError("host_updating", "电脑正在更新服务或切换账号，请稍后再发送。");
       switch (message.type) {
         case "ping":
           this.send(socket, { type: "pong", id: message.id });
@@ -1182,10 +1182,16 @@ export class MobileGateway {
   }
 
   pauseForHostUpdate(): boolean {
-    if (this.taskRequests || this.queueDrains.size || this.mobileOperations.size ||
+    if (this.hostUpdating || this.taskRequests || this.queueDrains.size || this.mobileOperations.size ||
         this.appServerCurrentTurnIds.size || this.antigravity?.hasActiveTurns) return false;
     this.hostUpdating = true;
     return true;
+  }
+
+  pauseForAccountSwitch(): boolean {
+    if (this.nativeDesktopTurns.size || this.approvals.size ||
+      [...this.desktopThreads.values()].some(conversationIsActive)) return false;
+    return this.pauseForHostUpdate();
   }
 
   resumeAfterHostUpdate(): void {
