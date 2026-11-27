@@ -179,9 +179,9 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   return (
     <div className="composer-shell">
-      {running && (
-        <div className={waitForIdle ? "composer-running-controls composer-running-controls-text" : "composer-running-controls"}>
-          {!waitForIdle && <div className="delivery-mode-picker" role="group" aria-label="运行中消息发送方式">
+      {running && !waitForIdle && (
+        <div className="composer-running-controls">
+          <div className="delivery-mode-picker" role="group" aria-label="运行中消息发送方式">
             <button
               type="button"
               className={deliveryMode === 'steer' ? 'is-selected' : ''}
@@ -200,8 +200,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
             >
               <strong>排队下一轮</strong>
             </button>
-          </div>}
-          <button className="interrupt-button" type="button" onClick={onInterrupt} disabled={!canInterrupt || sending}>
+          </div>
+          <button className="interrupt-button" type="button" onClick={onInterrupt} disabled={!connected || !canInterrupt || sending}>
             <StopIcon /> <span>停止</span>
           </button>
         </div>
@@ -276,15 +276,24 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           rows={1}
           disabled={!connected || sending}
         />
-        <button
+        {waitingForTurn ? <button
+          className="send-button send-mode-stop"
+          type="button"
+          disabled={!connected || !canInterrupt || sending}
+          aria-label="停止"
+          title="停止当前回复"
+          onClick={onInterrupt}
+        >
+          <StopIcon fill="currentColor" />
+        </button> : <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
-          disabled={!connected || waitingForTurn || modelSwitchPending || sending || !draftReady || (!content.trim() && !hasAttachments)}
+          disabled={!connected || modelSwitchPending || sending || !draftReady || (!content.trim() && !hasAttachments)}
           aria-label={sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >
           <SendIcon />
-        </button>
+        </button>}
       </form>
     </div>
   );

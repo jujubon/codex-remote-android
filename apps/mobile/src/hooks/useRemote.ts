@@ -2977,12 +2977,13 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       setLastError('尚未收到当前 turnId，暂时无法中断');
       return;
     }
-    socketRef.current?.send({
+    const sent = socketRef.current?.send({
       type: 'turn.interrupt',
       requestId: createRequestId('interrupt'),
       threadId,
       turnId,
     });
+    if (!sent) setLastError('连接已断开，重新连接后再停止。');
   }, [turnIds]);
 
   const resolveApproval = useCallback((approvalId: string, decision: ApprovalDecision) => {

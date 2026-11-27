@@ -350,8 +350,6 @@
 .composer.composer-text-only.composer-multiline { grid-template-areas: "message message" ". send"; }
 .composer.composer-text-only textarea { padding-inline: 10px; }
 .composer.composer-text-only .composer-measure { inset-inline-start: 14px; inset-inline-end: calc(4px + var(--composer-control) + var(--composer-gap) + 10px); }
-.composer-running-controls-text { justify-content: flex-end; }
-.composer-running-controls-text .interrupt-button { min-height: 44px; }
 .composer:focus-within { border-color: #9580d8; box-shadow: 0 0 0 2px var(--accent-soft); }
 .composer textarea, .composer-measure { min-width: 0; font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; }
 .composer textarea { grid-area: message; min-height: var(--composer-control); max-height: var(--composer-control); padding: 12px 2px; }
@@ -367,6 +365,9 @@
 .composer .attach-button, .composer .send-button { display: grid; place-items: center; width: var(--composer-control); min-width: var(--composer-control); height: var(--composer-control); padding: 0; border-radius: 14px; }
 .composer .attach-button { grid-area: attach; background: var(--accent-soft); color: var(--accent); }
 .composer .send-button { grid-area: send; }
+.composer .send-mode-stop { background: #faecef; color: #a12f48; }
+.composer .send-mode-stop:not(:disabled):active { background: #f5dce4; }
+.composer .send-mode-stop svg { width: 20px; height: 20px; }
 .quota-status { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .quota-status .secondary-button { min-height: 34px; padding-inline: 10px; }
 .conversation-attention {
