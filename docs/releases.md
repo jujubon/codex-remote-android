@@ -8,6 +8,12 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.39
+
+- 新聊天可以选 Codex 或 Antigravity，项目列表可以按助手筛选。
+- 配套服务通过 Google 官方 Antigravity CLI 运行手机发起的对话，支持文字流式回复、续聊和停止。电脑需要先安装并登录 `agy`，然后重新启动配套服务。
+- Antigravity 桌面已有对话、实时审批和附件发送暂未接入。Antigravity 功能需要 Android 与 Windows 配套服务均更新至 0.9.39。
+
 ## 0.9.38
 
 - Windows 登录后的监视任务改为无控制台启动，打开 Codex Desktop 时才启动配套服务和隧道。

@@ -30,6 +30,7 @@ import type {
   ThreadState,
   PermissionMode,
   ThreadSummary,
+  Assistant,
   WireApprovalRequest,
 } from '../types/protocol';
 import { createRequestId } from '../types/protocol';
@@ -167,6 +168,7 @@ function normalizeSummary(thread: ThreadSummary): RemoteThread {
   const sourceMetadata = subagentMetadataFromSource(thread.source);
   return {
     id: thread.id,
+    ...(thread.assistant === 'antigravity' ? { assistant: 'antigravity' } : {}),
     title: visibleUserText(thread.name || thread.preview || '未命名任务'),
     preview: visibleUserText(thread.preview),
     cwd: thread.cwd,
@@ -1045,6 +1047,7 @@ export function normalizeThreadPayload(payload: unknown): {
   return {
     thread: {
       id,
+      ...(threadData.assistant === 'antigravity' ? { assistant: 'antigravity' } : {}),
       title: stringValue(threadData.name, threadData.title, threadData.preview) ?? '未命名任务',
       preview: stringValue(threadData.preview) ?? '',
       cwd: stringValue(threadData.cwd) ?? '',
@@ -1258,6 +1261,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const mobileManagedSupportedRef = useRef(false);
   const [desktopIpcReady, setDesktopIpcReady] = useState<boolean>();
   const [hostVersion, setHostVersion] = useState('');
+  const [antigravityAvailable, setAntigravityAvailable] = useState(false);
   const attachmentCleanupRef = useRef(false);
   const [desktopProjectMenus, setDesktopProjectMenus] = useState(false);
   const [desktopProjects, setDesktopProjects] = useState<{ path: string; name: string }[]>([]);
@@ -2054,6 +2058,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       if (typeof message.syncCursor === 'number' && message.syncCursor <= syncCursorRef.current) return;
       switch (message.type) {
         case 'welcome': {
+          setAntigravityAvailable(message.antigravityAvailable === true);
           attachmentCleanupRef.current = message.attachmentCleanup === true;
           setHostVersion(message.version);
           setArchiveSupported(message.archiveManagement === true);
@@ -2680,7 +2685,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     if (override && override.expiresAt > Date.now()) setSelectedPermissionMode(override.mode);
     else setSelectedPermissionMode(thread?.permissionMode ?? 'auto');
     showPermissionModeStatus('');
-    if (thread?.cwd) socketRef.current?.send({ type: 'skills.list', requestId: createRequestId('skills'), cwd: thread.cwd });
+    if (thread?.cwd && thread.assistant !== 'antigravity') socketRef.current?.send({ type: 'skills.list', requestId: createRequestId('skills'), cwd: thread.cwd });
   }, [setSelectedPermissionMode, showPermissionModeStatus, threads]);
 
   const loadOlderHistory = useCallback(() => {
@@ -2705,6 +2710,11 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     const threadId = selectedThreadRef.current;
     const text = content.trim();
     if (!threadId || (!text && files.length === 0 && !inboxId)) return false;
+    const antigravity = threadsRef.current.find(thread => thread.id === threadId)?.assistant === 'antigravity';
+    if (antigravity && (files.length || inboxId || deliveryMode !== 'auto')) {
+      setLastError('Antigravity 当前支持普通文字发送。');
+      return false;
+    }
     if (modelRequest.current?.threadId === threadId) {
       setLastError('正在确认模型设置，请稍后再发送。');
       return false;
@@ -2726,7 +2736,8 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       setMessagesByThread((current) => ({ ...current, [threadId]: [...messagesForThread(threadId, current[threadId] ?? []), localMessage] }));
     };
 
-    const downloadMatch = text.match(/^\/download\s+(.+)$/i);
+    const command = antigravity ? '' : text;
+    const downloadMatch = command.match(/^\/download\s+(.+)$/i);
     if (downloadMatch) {
       if (!config) return false;
       try {
@@ -2739,7 +2750,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       }
     }
 
-    if (text === '/compact') {
+    if (command === '/compact') {
       const requestId = createRequestId('compact');
       pendingCompactionRequestsRef.current.set(requestId, threadId);
       updateCompactionStatus(threadId, { phase: 'requested', message: '正在请求上下文压缩', automatic: false });
@@ -2750,7 +2761,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       }
       return Boolean(sent);
     }
-    if (text === '/status') {
+    if (command === '/status') {
       const thread = threads.find((candidate) => candidate.id === threadId);
       const elapsed = thread?.currentTurnStartedAt ? Math.max(0, Date.now() - thread.currentTurnStartedAt) : undefined;
       appendLocalSystemMessage('会话状态', [
@@ -2762,7 +2773,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       ].filter(Boolean).join('\n'));
       return true;
     }
-    if (text === '/help') {
+    if (command === '/help') {
       appendLocalSystemMessage('手机命令', [
         '/status — 状态、目录、模型、计时和 Token',
         '/compact — 压缩当前上下文',
@@ -2776,16 +2787,16 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       ].join('\n'));
       return true;
     }
-    if (text === '/models') {
+    if (command === '/models') {
       appendLocalSystemMessage('可用模型', models.filter((model) => !model.hidden).map((model) => `${model.model}${model.isDefault ? '（默认）' : ''} — ${model.displayName}`).join('\n') || '主机未返回模型列表');
       return true;
     }
-    if (text === '/skills') {
+    if (command === '/skills') {
       appendLocalSystemMessage('目录技能', skills.filter((skill) => skill.enabled).map((skill) => `${skill.name} — ${skill.shortDescription || skill.description}`).join('\n') || '当前目录没有启用的技能');
       return true;
     }
 
-    const modelMatch = text.match(/^\/model(?::|\s+)([^\s]+)$/i);
+    const modelMatch = command.match(/^\/model(?::|\s+)([^\s]+)$/i);
     if (modelMatch) {
       const requested = modelMatch[1] ?? '';
       const model = models.find((candidate) => candidate.model.toLowerCase() === requested.toLowerCase() || candidate.id.toLowerCase() === requested.toLowerCase());
@@ -2797,7 +2808,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       return changeModelSettings(model.model, effort || undefined);
     }
 
-    const effortMatch = text.match(/^\/effort(?::|\s+)([^\s]+)$/i);
+    const effortMatch = command.match(/^\/effort(?::|\s+)([^\s]+)$/i);
     if (effortMatch) {
       const requested = effortMatch[1] ?? '';
       const activeModel = models.find((candidate) => candidate.model === selectedModel || candidate.id === selectedModel);
@@ -2811,7 +2822,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
 
     let prompt = text;
     let skill: SkillOption | undefined;
-    const skillMatch = text.match(/^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/i);
+    const skillMatch = command.match(/^\/skill:([^\s]+)(?:\s+([\s\S]*))?$/i);
     if (skillMatch) {
       skill = skills.find((candidate) => candidate.name.toLowerCase() === skillMatch[1]?.toLowerCase());
       if (!skill) {
@@ -2861,11 +2872,11 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       clientUserMessageId,
       deliveryMode,
       ...(expectedTurnId ? { expectedTurnId } : {}),
-      ...(!desktopOnly && selectedModel ? { model: selectedModel } : {}),
-      ...(!desktopOnly && selectedEffort ? { effort: selectedEffort } : {}),
+      ...(!antigravity && !desktopOnly && selectedModel ? { model: selectedModel } : {}),
+      ...(!antigravity && !desktopOnly && selectedEffort ? { effort: selectedEffort } : {}),
       ...(skill ? { skill: { name: skill.name, path: skill.path } } : {}),
       ...(attachments.length ? { attachments } : {}),
-      ...(!desktopOnly ? { summary: 'concise', permissionMode: selectedPermissionMode } : {}),
+      ...(!antigravity && !desktopOnly ? { summary: 'concise', permissionMode: selectedPermissionMode } : {}),
     });
     if (!sent) {
       setLastError('当前未连接，消息没有发送');
@@ -2960,7 +2971,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     if (!sent) setLastError('连接已断开，待办仍保留。');
   }, [approvals]);
 
-  const startThread = useCallback((cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string) => {
+  const startThread = useCallback((cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant: Assistant = 'codex') => {
     const normalizedCwd = cwd.trim();
     if (!destination && !isAbsoluteHostPath(normalizedCwd)) {
       setLastError('工作目录必须是电脑上的绝对路径');
@@ -2972,7 +2983,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       type: 'thread.start',
       prompt,
       requestId,
-      ...(mobileManagedSupportedRef.current ? { mobileManaged: true } : {}),
+      ...(assistant === 'antigravity' ? { assistant } : mobileManagedSupportedRef.current ? { mobileManaged: true } : {}),
       ...(destination ? { destination, projectName } : { cwd: normalizedCwd }),
       ...(model?.trim() ? { model: model.trim() } : {}),
       ...(modelProvider?.trim() ? { modelProvider: modelProvider.trim() } : {}),
@@ -3125,13 +3136,14 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     [selectedThreadId, threads],
   );
   const selectedApprovals = useMemo(
-    () => approvals.filter((approval) => !approval.threadId || approval.threadId === selectedThreadId),
-    [approvals, selectedThreadId],
+    () => selectedThread?.assistant === 'antigravity' ? [] : approvals.filter((approval) => !approval.threadId || approval.threadId === selectedThreadId),
+    [approvals, selectedThreadId, selectedThread?.assistant],
   );
   const running = selectedThread?.state === 'running' || selectedThread?.state === 'waiting_input' || selectedThread?.state === 'waiting_approval';
-  const canSteer = selectedThread?.mobileManaged ? selectedThread.mobileRuntimeActive === true && codexReady
+  const isAntigravity = selectedThread?.assistant === 'antigravity';
+  const canSteer = isAntigravity ? false : selectedThread?.mobileManaged ? selectedThread.mobileRuntimeActive === true && codexReady
     : !(desktopOnly && desktopIpcReady === false);
-  const canInterrupt = canSteer && Boolean(selectedThreadId && turnIds[selectedThreadId]);
+  const canInterrupt = (canSteer || isAntigravity) && Boolean(selectedThreadId && turnIds[selectedThreadId]);
 
   const threadAttention = useMemo(() => Object.fromEntries(threads.flatMap(thread => {
     const target = attentionForThread(thread, approvals, promptQueueByThread[thread.id] ?? [],
@@ -3149,6 +3161,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     threadAttention,
     codexReady,
     desktopOnly,
+    antigravityAvailable,
     canSteer,
     archiveSupported, archiveRequest,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,

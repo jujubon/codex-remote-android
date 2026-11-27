@@ -1,25 +1,30 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { ModelOption } from '../types/protocol';
+import type { Assistant, ModelOption } from '../types/protocol';
 import { isAbsoluteHostPath } from '../lib/hostPath';
 import { ChevronDownIcon, CloseIcon } from './Icons';
 
 interface NewThreadSheetProps {
   initialDirectory?: string;
   desktopOnly: boolean;
+  antigravityAvailable?: boolean;
+  initialAssistant?: Assistant;
   projectMenus: boolean;
   projectStatus: string;
   directories: string[];
   models: ModelOption[];
   defaultModel: string;
   onClose: () => void;
-  onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string) => boolean;
+  onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant?: Assistant) => boolean;
 }
 
-export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
+export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvailable, initialAssistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [prompt, setPrompt] = useState('');
+  const [assistant, setAssistant] = useState<Assistant>(antigravityAvailable && initialAssistant === 'antigravity' ? 'antigravity' : 'codex');
+  const usingAntigravity = assistant === 'antigravity';
+  const hasProjectModes = projectMenus || usingAntigravity;
   const [cwd, setCwd] = useState(initialDirectory ?? '');
-  const [mode, setMode] = useState<'existing' | 'projectless' | 'newProject'>(projectMenus && !initialDirectory ? 'projectless' : 'existing');
+  const [mode, setMode] = useState<'existing' | 'projectless' | 'newProject'>(hasProjectModes && !initialDirectory ? 'projectless' : 'existing');
   const [projectName, setProjectName] = useState('');
   const sameDirectory = (path: string) => path.toLowerCase().replaceAll('\\', '/') === cwd.toLowerCase().replaceAll('\\', '/');
   const selectedDirectory = directories.find(sameDirectory);
@@ -37,9 +42,10 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
       setError('请输入电脑上的绝对路径');
       return;
     }
-    if (desktopOnly && !prompt.trim()) { setError('请输入首条任务'); return; }
+    if ((desktopOnly || usingAntigravity) && !prompt.trim()) { setError('请输入首条任务'); return; }
     if (mode === 'newProject' && !projectName.trim()) { setError('请输入项目名称'); return; }
-    if (onStart(selectedDirectory ?? cwd, model || undefined, modelProvider || undefined, prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined)) dialog.current?.close();
+    if (onStart(selectedDirectory ?? cwd, usingAntigravity ? undefined : model || undefined, usingAntigravity ? undefined : modelProvider || undefined,
+      prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined, assistant)) dialog.current?.close();
     else setError('任务创建请求未发送，请确认连接状态');
   }
 
@@ -53,15 +59,22 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
           <button className="icon-button nav-icon-button" type="button" onClick={() => dialog.current?.close()} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
-          {desktopOnly && <label><span>首条消息</span><textarea required placeholder="给 Codex 发消息…" rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
-          {projectMenus && <label><span>项目（可选）</span><select value={mode} onChange={event => {
+          {antigravityAvailable && <label><span>助手</span><select value={assistant} onChange={event => {
+            const next = event.target.value as Assistant;
+            setAssistant(next);
+            if (next === 'antigravity' && (mode === 'newProject' || !cwd)) setMode('projectless');
+            if (next === 'codex' && !projectMenus) setMode('existing');
+            setError('');
+          }}><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select></label>}
+          {(desktopOnly || usingAntigravity) && <label><span>首条消息</span><textarea required placeholder={`给 ${usingAntigravity ? 'Antigravity' : 'Codex'} 发消息…`} rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
+          {hasProjectModes && <label><span>项目（可选）</span><select value={mode} onChange={event => {
             setMode(event.target.value as typeof mode); setError('');
           }}>
             <option value="projectless">直接新聊天（无项目）</option>
             <option value="existing">在已有项目中聊天</option>
-            <option value="newProject">新建项目并聊天</option>
+            {projectMenus && !usingAntigravity && <option value="newProject">新建项目并聊天</option>}
           </select></label>}
-          {desktopOnly && !projectMenus && <small>更新 Windows 配套程序后，即可直接聊天或新建项目。</small>}
+          {desktopOnly && !hasProjectModes && <small>更新 Windows 配套程序后，即可直接聊天或新建项目。</small>}
           {mode === 'existing' && <label>
             <span>电脑工作目录</span>
             {(directories.length > 0 || projectMenus) && <select aria-label="选择已有项目" value={selectedDirectory ?? ''} onChange={(event) => setCwd(event.target.value)}>
@@ -75,11 +88,11 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, projectMenus, pr
             <input value={projectName} onChange={event => setProjectName(event.target.value)} maxLength={100} required />
             <small>保存到电脑个人文件夹的 CodexProjects 目录下。</small>
           </label>}
-          {!desktopOnly && <button className="advanced-toggle" type="button" aria-expanded={showAdvanced} aria-controls="new-thread-model-settings"
+          {!desktopOnly && !usingAntigravity && <button className="advanced-toggle" type="button" aria-expanded={showAdvanced} aria-controls="new-thread-model-settings"
             onClick={() => setShowAdvanced((value) => !value)}>
             <span>模型高级设置</span><ChevronDownIcon />
           </button>}
-          {!desktopOnly && (
+          {!desktopOnly && !usingAntigravity && (
             <div className="advanced-fields computer-reveal" id="new-thread-model-settings" hidden={!showAdvanced}>
               <label>
                 <span>模型（可选）</span>

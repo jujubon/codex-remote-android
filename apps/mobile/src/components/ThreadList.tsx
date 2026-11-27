@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { threadStateLabel } from '../hooks/useRemote';
-import type { ConnectionPhase, RemoteThread } from '../types/protocol';
+import type { Assistant, ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
 import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, GaugeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
@@ -128,9 +128,11 @@ export interface ThreadListPosition {
   query: string;
   filter: string;
   scrollTop: number;
+  assistant?: Assistant | 'all';
 }
 
 interface ThreadListProps {
+  antigravityAvailable?: boolean;
   position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
   quota?: React.ReactNode;
@@ -145,7 +147,7 @@ interface ThreadListProps {
   phase: ConnectionPhase;
   phaseDetail: string;
   onSelect: (threadId: string, target?: AttentionTarget) => void;
-  onCreate: (cwd?: string) => void;
+  onCreate: (cwd?: string, assistant?: Assistant) => void;
   notice?: React.ReactNode;
   onSettings: () => void;
   onReconnect: () => void;
@@ -231,6 +233,7 @@ function ThreadRow({
           )}
           {thread.preview && thread.preview.trim() !== thread.title?.trim() && <span className="thread-preview">{thread.preview}</span>}
           <span className="thread-meta">
+            <span className="thread-assistant" data-assistant={thread.assistant ?? 'codex'}>{thread.assistant === 'antigravity' ? 'Antigravity' : 'Codex'}</span>
             {!['idle', 'not_loaded'].includes(thread.state) && <span className={`state-label state-label-${thread.state}`}>{threadStateLabel(thread.state)}</span>}
             {attention && <span className="duration-label">
               {attention.kind === 'queue' ? '队列待处理' : attention.kind === 'input' ? '等待回复' : '审批待处理'} · {attention.handling === 'phone' ? '手机可处理' : attention.handling === 'desktop' ? '到电脑处理' : '打开查看'}
@@ -309,7 +312,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ position, antigravityAvailable, onArchives, onArchive, quota, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -319,6 +322,9 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
   const [swipe, setSwipe] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [filter, setFilter] = useState(position.current.filter);
+  const [assistantFilter, setAssistantFilter] = useState(position.current.assistant ?? 'all');
+  const multiAssistant = antigravityAvailable || threads.some(thread => thread.assistant === 'antigravity');
+  const defaultAssistant = assistantFilter === 'antigravity' && antigravityAvailable ? 'antigravity' : undefined;
 
   useLayoutEffect(() => {
     if (listRef.current) listRef.current.scrollTop = position.current.scrollTop;
@@ -359,6 +365,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
   const filtered = useMemo(() => {
     const term = query.trim().toLocaleLowerCase();
     return threads.filter(thread => {
+      if (multiAssistant && assistantFilter !== 'all' && (thread.assistant ?? 'codex') !== assistantFilter) return false;
       if (!visibleInHistory(thread, visibility)) return false;
       if (hiddenThreads.isHidden(thread.id)) return false;
       if (!thread.projectless && thread.cwd && hidden.isHidden(thread.cwd)) return false;
@@ -366,7 +373,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
       if (filter === '待处理' && !attention[thread.id]) return false;
       return !term || [thread.title, thread.cwd, thread.preview, thread.agentNickname].some(value => value?.toLocaleLowerCase().includes(term));
     });
-  }, [threads, query, filter, hidden, hiddenThreads, visibility, attention]);
+  }, [threads, query, filter, hidden, hiddenThreads, visibility, attention, multiAssistant, assistantFilter]);
   const groups = useMemo(() => groupThreadsByCwd(filtered, removed.isHidden), [filtered, removed]);
   const titles = useMemo(() => new Map(threads.map(thread => [thread.id, thread.title])), [threads]);
   const flatList = filter !== '全部项目' || Boolean(query.trim());
@@ -380,12 +387,12 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
     const id = `thread:${thread.id}`;
     return <SwipeActions id={id} open={swipe === id} onChange={setSwipe} actions={[
       { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hiddenThreads.setHidden(thread.id, true) },
-      ...(onArchive ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
+      ...(onArchive && thread.assistant !== 'antigravity' ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
     ]}>{card}</SwipeActions>;
   };
 
   return (
-    <main className="app-screen thread-screen" onPointerDownCapture={event => {
+    <main className={`app-screen thread-screen${multiAssistant ? ' multi-assistant' : ''}`} onPointerDownCapture={event => {
       if (swipe && (!(event.target instanceof Element) || event.target.closest<HTMLElement>('[data-swipe-id]')?.dataset.swipeId !== swipe)) setSwipe(null);
     }}>
       <header className="top-bar thread-top-bar">
@@ -399,7 +406,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
         </div>
         <div className="top-actions">
           <button className="icon-button nav-icon-button" type="button" onClick={onSettings} aria-label="连接设置"><SettingsIcon /></button>
-          <button className="new-thread-button" type="button" onClick={() => onCreate()} disabled={phase !== 'connected'}>
+          <button className="new-thread-button" type="button" onClick={() => onCreate(undefined, defaultAssistant)} disabled={phase !== 'connected'}>
             <PlusIcon /> <span>新聊天</span>
           </button>
         </div>
@@ -418,7 +425,15 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
           <button key={label} type="button" aria-pressed={label === filter} onClick={() => { if (label !== filter) updateFilter(label); }}>{label}</button>
         )}</nav>
         <div className="project-list-toolbar">
-          <span>{flatList ? `${filtered.length} 个对话` : `${groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目 · ${filtered.length} 个对话`}</span>
+          <div className="project-counts">
+            {multiAssistant && <select className="assistant-filter" aria-label="按助手筛选" value={assistantFilter} onChange={event => {
+              const value = event.target.value as Assistant | 'all';
+              position.current.assistant = value;
+              setAssistantFilter(value);
+              updateFilter(filter);
+            }}><option value="all">全部助手</option><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select>}
+            <span>{flatList ? `${filtered.length} 个对话` : `${groups.filter(group => group.cwd !== NO_PROJECT).length} 个项目 · ${filtered.length} 个对话`}</span>
+          </div>
           <div className="project-list-actions">
             {quota && <button type="button" className="nav-icon-button quota-button" aria-label="查看 Codex 额度" aria-haspopup="dialog"
               onClick={() => { quotaRef.current?.showModal(); onOpenQuota?.(); }}><GaugeIcon /></button>}
@@ -494,7 +509,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
             <p>{phase === 'connected' ? '创建任务，或等待电脑端的任务同步到这里。' : '连接就绪后，历史任务会自动显示。'}</p>
           </div>
         ) : !filtered.length ? (
-          <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在「管理 → 对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { updateQuery(''); updateFilter('全部项目'); }}>查看全部项目</button></div>
+          <div className="empty-state"><h2>没有匹配的对话</h2>{visibility !== 'all' && <p>可在「管理 → 对话显示」中查看隐藏的记录。</p>}<button className="secondary-button" onClick={() => { position.current.assistant = 'all'; setAssistantFilter('all'); updateQuery(''); updateFilter('全部项目'); }}>查看全部项目</button></div>
         ) : flatList ? recent.map(thread => (
           <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd || removed.isHidden(thread.cwd)) ? NO_PROJECT : projectName(thread.cwd)}</small>
             <ThreadRow thread={thread} attention={filter === '待处理' ? attention[thread.id] : undefined}
@@ -533,7 +548,7 @@ export function ThreadList({ position, onArchives, onArchive, quota, onOpenQuota
                     <ChevronDownIcon className="project-chevron" />
                   </span>
                 </button>
-                <button className="project-new nav-icon-button" type="button" aria-label={`在 ${projectName(cwd)} 新建对话`} disabled={phase !== 'connected'} onClick={() => onCreate(cwd === NO_PROJECT ? undefined : cwd)}><PlusIcon /></button>
+                <button className="project-new nav-icon-button" type="button" aria-label={`在 ${projectName(cwd)} 新建对话`} disabled={phase !== 'connected'} onClick={() => onCreate(cwd === NO_PROJECT ? undefined : cwd, defaultAssistant)}><PlusIcon /></button>
                 {cwd !== NO_PROJECT && <button className="project-hide nav-icon-button" type="button" data-swipe-toggle aria-label={`${projectName(cwd)} 的项目菜单`} aria-expanded={swipe === id} onClick={() => setSwipe(swipe === id ? null : id)}><MoreIcon /></button>}
               </header>
               <ProjectThreads collapsed={collapsed}>

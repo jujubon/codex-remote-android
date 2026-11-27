@@ -24,6 +24,7 @@ import { initializeNotifications } from './lib/notifications';
 import { loadInboxImage, type InboxFile } from './lib/deviceTools';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
+import type { Assistant } from './types/protocol';
 
 export function popThreadBackStack(stack: string[]): { previousThreadId: string | null; remaining: string[] } {
   if (stack.length === 0) return { previousThreadId: null, remaining: [] };
@@ -39,6 +40,7 @@ export function App() {
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
+  const [newAssistant, setNewAssistant] = useState<Assistant>();
   const [backgroundError, setBackgroundError] = useState('');
   const [inboxSelection, setInboxSelection] = useState<{ file: InboxFile; threadId?: string }>();
   const [attention, setAttention] = useState<{ threadId: string; target: AttentionTarget }>();
@@ -63,8 +65,9 @@ export function App() {
 
   useEffect(() => {
     const threadId = remote.selectedThread?.id;
-    if (threadId) setInboxSelection(current => current && !current.threadId ? { ...current, threadId } : current);
-  }, [remote.selectedThread?.id]);
+    if (threadId && remote.selectedThread?.assistant !== 'antigravity')
+      setInboxSelection(current => current && !current.threadId ? { ...current, threadId } : current);
+  }, [remote.selectedThread?.id, remote.selectedThread?.assistant]);
 
   const openNestedThread = useCallback((threadId: string) => {
     const currentThreadId = remote.selectedThreadId;
@@ -261,7 +264,7 @@ export function App() {
           attention={attention?.threadId === remote.selectedThread.id ? attention.target : undefined}
           attentionStatus={remote.threadAttention[remote.selectedThread.id]}
           onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
-          onArchive={remote.archiveSupported ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
+          onArchive={remote.archiveSupported && remote.selectedThread.assistant !== 'antigravity' ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
           onRefreshUsage={remote.refreshUsage}
           notice={notice}
@@ -330,6 +333,7 @@ export function App() {
           notice={notice} />
       ) : (
         <ThreadList
+          antigravityAvailable={remote.antigravityAvailable}
           attention={remote.threadAttention}
           position={threadListPosition}
           onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
@@ -343,7 +347,7 @@ export function App() {
           phase={remote.phase}
           phaseDetail={phaseDetail}
           onSelect={openRootThread}
-          onCreate={cwd => { setNewDirectory(cwd); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
+          onCreate={(cwd, assistant) => { setNewDirectory(cwd); setNewAssistant(assistant); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
           footer={homeNav}
           notice={notice}
           onSettings={() => setShowSettings(true)}
@@ -356,6 +360,7 @@ export function App() {
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
+          initialAssistant={newAssistant} antigravityAvailable={remote.antigravityAvailable}
           projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}
           directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(showDirectory) :
             [...new Set(remote.threads.filter(thread => !thread.projectless).map(thread => thread.cwd).filter(showDirectory))]}

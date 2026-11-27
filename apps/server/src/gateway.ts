@@ -34,6 +34,7 @@ import { GitDiffError, readGitDiff, type GitDiffSnapshot } from "./git-diff.js";
 import { PromptQueueStore, type StoredPromptQueueItem } from "./prompt-queue.js";
 import { SyncJournal, ThreadIndexStore } from "./sync-state.js";
 import { isUsageLimitError, USAGE_LIMIT_MESSAGE } from "./usage-limit.js";
+import { isAntigravityThread, type AntigravitySessions } from "./antigravity.js";
 
 const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024;
 
@@ -156,6 +157,7 @@ export class MobileGateway {
     private readonly files?: FileTransferManager,
     private readonly promptQueue?: PromptQueueStore,
     private readonly runDesktopAction = desktopAction,
+    private readonly antigravity?: AntigravitySessions,
   ) {
     this.projectMembershipPath = join(config.codexHome, ".codex-global-state.json");
     this.wss = new WebSocketServer({
@@ -410,6 +412,7 @@ export class MobileGateway {
     socket: WebSocket,
     threadId: string,
   ): Promise<void> {
+    if (isAntigravityThread(threadId)) return;
     if (!this.desktopIpc?.ready) return;
     try {
       const thread = await this.desktopIpc.openConversation(
@@ -500,6 +503,7 @@ export class MobileGateway {
   }
 
   close(): void {
+    this.antigravity?.close();
     if (this.config.desktopOnly) unwatchFile(this.projectMembershipPath, this.onProjectMembershipChange);
     for (const timer of this.nativeDesktopTurns.values()) if (timer) clearTimeout(timer);
     this.nativeDesktopTurns.clear();
@@ -539,6 +543,7 @@ export class MobileGateway {
       mobileManagedThreads: this.config.desktopOnly,
       archiveManagement: true,
       attachmentCleanup: Boolean(this.files),
+      antigravityAvailable: this.antigravity?.available,
       version: HOST_VERSION,
       serverId: this.config.serverId,
       codexReady: this.bridge.ready,
@@ -678,6 +683,7 @@ export class MobileGateway {
         }
         case "archive.set": {
           const id = requiredString(message.threadId, "threadId");
+          if (isAntigravityThread(id)) throw new Error("这段 Antigravity 对话暂不支持归档。");
           if (typeof message.archived !== "boolean") throw new Error("无效的归档操作。");
           if (this.changingArchive.has(id)) throw new Error("电脑正在处理这段对话的归档操作。");
           this.changingArchive.add(id);
@@ -702,6 +708,10 @@ export class MobileGateway {
         case "thread.open": {
           const threadId = requiredString(message.threadId, "threadId");
           this.socketThreads.get(socket)?.add(threadId);
+          if (isAntigravityThread(threadId)) {
+            this.openAntigravityThread(socket, threadId, message.requestId, message.historyLimit);
+            break;
+          }
           try {
             await this.openThreadPage(socket, threadId, message.requestId, message.historyLimit, message.knownTurnIds);
           } catch (error) {
@@ -717,6 +727,11 @@ export class MobileGateway {
         case "thread.history": {
           const threadId = requiredString(message.threadId, "threadId");
           this.socketThreads.get(socket)?.add(threadId);
+          if (isAntigravityThread(threadId)) {
+            const page = this.antigravitySessionStore().page(threadId, boundedHistoryLimit(message.limit), message.cursor);
+            this.send(socket, { type: "thread.history", threadId, requestId: message.requestId, ...page });
+            break;
+          }
           await this.sendThreadHistoryPage(
             socket,
             threadId,
@@ -735,6 +750,20 @@ export class MobileGateway {
           break;
         }
         case "thread.start": {
+          if (message.assistant === "antigravity") {
+            const store = this.antigravitySessionStore();
+            if (!store.available) throw new Error("电脑未安装 Antigravity CLI（agy）。");
+            const text = requiredString(message.prompt, "首条消息");
+            if (text.length > 20_000) throw new Error("首条消息过长。");
+            if (message.destination === "newProject") throw new Error("请选择已有项目或使用无项目对话。");
+            const { cwd } = await this.mobileWorkspace(message);
+            const created = await store.create(cwd, message.destination === "projectless", text, this.antigravityCallbacks);
+            this.socketThreads.get(socket)?.add(created.id);
+            this.openAntigravityThread(socket, created.id, message.requestId);
+            this.publishAntigravityTurn(created.id, created.turn);
+            break;
+          }
+          if (message.assistant !== undefined && message.assistant !== "codex") throw new Error("未知的 AI 助手。");
           if (this.config.desktopOnly && message.mobileManaged === true) {
             await this.startMobileThread(socket, message);
             break;
@@ -778,6 +807,7 @@ export class MobileGateway {
         }
         case "thread.compact": {
           const threadId = requiredString(message.threadId, "threadId");
+          if (isAntigravityThread(threadId)) throw new Error("请在电脑端管理 Antigravity 的上下文。");
           if (await this.isMobileThread(threadId)) {
             await this.withMobileThread(threadId, async () => {
               await this.loadMobileThread(threadId);
@@ -799,6 +829,7 @@ export class MobileGateway {
         }
         case "thread.settings": {
           const threadId = requiredString(message.threadId, "threadId");
+          if (isAntigravityThread(threadId)) throw new Error("请在电脑端配置 Antigravity 的模型和权限。");
           const mobile = await this.isMobileThread(threadId);
           const modelOnly = (message.model || message.effort)
             && !message.permissionMode && !message.collaborationMode && !message.summary;
@@ -928,6 +959,17 @@ export class MobileGateway {
             throw new Error("对话已归档或正在更改归档状态，请刷新后再发送。");
           const threadId = requiredString(message.threadId, "threadId");
           const text = requiredString(message.text, "text");
+          if (isAntigravityThread(threadId)) {
+            if (message.attachments?.length || (message.deliveryMode && message.deliveryMode !== "auto"))
+              throw new Error("Antigravity 当前支持普通文字发送。");
+            const store = this.antigravitySessionStore();
+            const turn = await store.start(threadId, text, this.antigravityCallbacks, message.clientUserMessageId);
+            this.socketThreads.get(socket)?.add(threadId);
+            this.send(socket, { type: "turn.started", requestId: message.requestId, threadId, turn });
+            if (turn.status === "inProgress") this.publishAntigravityTurn(threadId, turn);
+            else this.openAntigravityThread(socket, threadId);
+            break;
+          }
           if (message.deliveryMode != null && !["auto", "steer", "queue"].includes(message.deliveryMode))
             throw new Error("无效的消息发送方式。");
           const mobile = await this.isMobileThread(threadId);
@@ -1057,6 +1099,10 @@ export class MobileGateway {
         case "turn.interrupt": {
           const threadId = requiredString(message.threadId, "threadId");
           const turnId = requiredString(message.turnId, "turnId");
+          if (isAntigravityThread(threadId)) {
+            this.antigravitySessionStore().stop(threadId, turnId);
+            break;
+          }
           if (await this.isMobileThread(threadId)) {
             if (this.appServerCurrentTurnIds.get(threadId) !== turnId)
               throw new GatewayRequestError("no_active_turn", "手机服务当前没有运行这一轮。");
@@ -1248,6 +1294,36 @@ export class MobileGateway {
     if (!(await stat(cwd)).isDirectory()) throw new Error("电脑工作目录不存在。");
     return { cwd };
   }
+
+  private antigravitySessionStore() {
+    if (!this.antigravity) throw new Error("电脑上的 Antigravity 会话存储暂不可用。");
+    return this.antigravity;
+  }
+
+  private openAntigravityThread(socket: WebSocket, id: string, requestId?: string, limit?: number) {
+    const store = this.antigravitySessionStore();
+    const page = store.page(id, boundedHistoryLimit(limit));
+    this.send(socket, { type: "thread", requestId, thread: { ...store.summary(id), turns: page.turns }, history: page.history });
+  }
+
+  private publishAntigravityTurn(threadId: string, turn: { id: string; items: unknown[] }) {
+    this.upsertThreadSummary(this.antigravitySessionStore().summary(threadId));
+    this.broadcastThread(threadId, { type: "event", method: "turn/started", params: { threadId, turn } });
+    this.broadcastThread(threadId, { type: "event", method: "item/completed", params: { threadId, turnId: turn.id, item: turn.items[0] } });
+  }
+
+  private readonly antigravityCallbacks = (threadId: string, turnId: string) => ({
+    delta: (itemId: string, delta: string) => this.broadcastThread(threadId, {
+      type: "event", method: "item/agentMessage/delta", params: { threadId, turnId, itemId, delta },
+    }),
+    completed: (turn: { id: string; items: unknown[] }) => {
+      this.upsertThreadSummary(this.antigravitySessionStore().summary(threadId));
+      for (const item of turn.items.slice(1)) {
+        this.broadcastThread(threadId, { type: "event", method: "item/completed", params: { threadId, turnId, item } });
+      }
+      this.broadcastThread(threadId, { type: "event", method: "turn/completed", params: { threadId, turn } });
+    },
+  });
 
   private async startMobileThread(socket: WebSocket, message: Extract<ClientMessage, { type: "thread.start" }>): Promise<void> {
     const prompt = requiredString(message.prompt, "首条任务");
@@ -1634,6 +1710,7 @@ export class MobileGateway {
   }
 
   currentTurnForPowerHold(threadId: string): string | undefined {
+    if (isAntigravityThread(threadId)) return this.antigravity?.currentTurn(threadId);
     const desktopTurn = this.desktopIpc?.hasOwner(threadId)
       ? activeConversationTurnId(this.desktopIpc.getConversation(threadId))
       : null;
@@ -1641,6 +1718,7 @@ export class MobileGateway {
   }
 
   turnFinishedForPowerHold(threadId: string, turnId: string): boolean {
+    if (isAntigravityThread(threadId)) return this.antigravity?.currentTurn(threadId) !== turnId;
     if (this.appServerCompletedTurnIds.get(threadId) === turnId) return true;
     const conversation = this.desktopIpc?.getConversation(threadId);
     return Array.isArray(conversation?.turns) && conversation.turns.some(value => {
@@ -1857,6 +1935,7 @@ export class MobileGateway {
 
   private withMembership(threads: ThreadSummary[]): ThreadSummary[] {
     return threads.map(thread => {
+      if (thread.assistant === "antigravity") return thread;
       if (this.mobileThreads.has(thread.id) && !thread.mobileManaged) thread = { ...thread, mobileManaged: true };
       if (this.mobileProjectlessIds.has(thread.id) || this.projectlessIds.has(thread.id)) return { ...thread, projectless: true };
       return this.membershipKnown ? { ...thread, projectless: false } : thread;
@@ -1880,6 +1959,7 @@ export class MobileGateway {
       this.projectlessIds = next;
       this.membershipKnown = true;
       for (const thread of this.threadIndex.snapshot()) {
+        if (thread.assistant === "antigravity") continue;
         const projectless = next.has(thread.id) || this.mobileProjectlessIds.has(thread.id);
         if (thread.projectless === projectless) continue;
         const change = this.threadIndex.patch(thread.id, { projectless });
@@ -1935,6 +2015,7 @@ export class MobileGateway {
         const summary = toThreadSummary(desktopThread);
         if (summary.id) byId.set(summary.id, summary);
       }
+      for (const thread of this.antigravity?.list() ?? []) byId.set(thread.id, thread);
       await this.refreshProjectMembership();
       this.threadIndex.replace(this.withMembership([...byId.values()].filter(thread => !this.archivedIds.has(thread.id))).map((thread) => ({
         ...thread,

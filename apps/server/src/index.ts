@@ -16,6 +16,7 @@ import { FileInbox } from "./file-inbox.js";
 import { LAN_PORT, listenForLanDiscovery, trustedLanAddress } from "./lan-discovery.js";
 import { MobileGateway } from "./gateway.js";
 import { PromptQueueStore } from "./prompt-queue.js";
+import { AntigravitySessions, findAntigravityCli } from "./antigravity.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -47,7 +48,9 @@ if (allowedRoots.includes(uploadDirectory)) await mkdir(uploadDirectory, { recur
 const files = await FileTransferManager.create({ allowedRoots, uploadDirectory });
 const inbox = new FileInbox(join(dirname(config.promptQueueFile), "file-inbox.json"), files);
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
-const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue);
+const antigravity = await AntigravitySessions.open(join(dirname(config.promptQueueFile), "antigravity-threads.json"), await findAntigravityCli())
+  .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
+const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
   deviceSettingsPath,

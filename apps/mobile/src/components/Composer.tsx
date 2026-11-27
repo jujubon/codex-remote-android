@@ -25,6 +25,8 @@ interface CommandOption {
 }
 
 interface ComposerProps {
+  assistantName?: string;
+  textOnly?: boolean;
   draftKey: string;
   connected: boolean;
   running: boolean;
@@ -39,7 +41,7 @@ interface ComposerProps {
   onInterrupt: () => void;
 }
 
-export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, models, skills, inboxFile: selectedInboxFile, loadInboxPreview, onClearInboxFile }: ComposerProps) {
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, models, skills, inboxFile: selectedInboxFile, loadInboxPreview, onClearInboxFile, assistantName = 'Codex', textOnly = false }: ComposerProps) {
   const [content, setContent] = useState(() => readComposerDraft(draftKey));
   const [attachmentDraft, setAttachmentDraft] = useState(emptyAttachmentDraft);
   const [draftReady, setDraftReady] = useState(false);
@@ -128,7 +130,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
     ).slice(0, 8);
   }, [commandOptions, content]);
 
-  const deliveryMode = effectiveDeliveryMode(running, selectedDeliveryMode, canSteer);
+  const deliveryMode = textOnly ? 'auto' : effectiveDeliveryMode(running, selectedDeliveryMode, canSteer);
+  const waitingForTurn = textOnly && running;
 
   function changeContent(value: string) {
     setContent(value);
@@ -137,7 +140,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!connected || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
+    if (!connected || waitingForTurn || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
     sendingRef.current = true;
     setSending(true);
     try {
@@ -169,14 +172,14 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
   const placeholder = sending
     ? '正在发送…'
     : !connected ? '等待重新连接…'
-      : '给 Codex 发消息…';
+      : `给 ${assistantName} 发消息…`;
   const sendLabel = deliveryMode === 'queue' ? '排队' : deliveryMode === 'steer' ? '引导' : '发送';
 
   return (
     <div className="composer-shell">
       {running && (
-        <div className="composer-running-controls">
-          <div className="delivery-mode-picker" role="group" aria-label="运行中消息发送方式">
+        <div className={textOnly ? "composer-running-controls composer-running-controls-text" : "composer-running-controls"}>
+          {!textOnly && <div className="delivery-mode-picker" role="group" aria-label="运行中消息发送方式">
             <button
               type="button"
               className={deliveryMode === 'steer' ? 'is-selected' : ''}
@@ -195,14 +198,14 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
             >
               <strong>排队下一轮</strong>
             </button>
-          </div>
+          </div>}
           <button className="interrupt-button" type="button" onClick={onInterrupt} disabled={!canInterrupt || sending}>
             <StopIcon /> <span>停止</span>
           </button>
         </div>
       )}
       {draftError && <p className="attachment-draft-status" role="status">{draftError}</p>}
-      {suggestions.length > 0 && (
+      {!textOnly && suggestions.length > 0 && (
         <div className="command-palette" role="listbox" aria-label="斜杠命令">
           {suggestions.map((option) => (
             <button key={option.value} type="button" onClick={() => chooseCommand(option.value)}>
@@ -236,7 +239,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         </div>
       )}
       {preview && <AttachmentDraftPreview draft={preview} onClose={() => setPreview(null)} />}
-      <form className={`composer${multiline ? ' composer-multiline' : ''}`} onSubmit={(event) => void submit(event)}>
+      <form className={`composer${multiline ? ' composer-multiline' : ''}${textOnly ? ' composer-text-only' : ''}`} onSubmit={(event) => void submit(event)}>
         <div ref={measureRef} className="composer-measure" aria-hidden="true">{content}{'\u200b'}</div>
         <input
           ref={fileInputRef}
@@ -250,7 +253,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           }}
           disabled={!connected || sending || !draftReady}
         />
-        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending || !draftReady} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>
+        {!textOnly && <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending || !draftReady} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>}
         <textarea
           ref={textareaRef}
           value={content}
@@ -274,7 +277,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
-          disabled={!connected || sending || !draftReady || (!content.trim() && !hasAttachments)}
+          disabled={!connected || waitingForTurn || sending || !draftReady || (!content.trim() && !hasAttachments)}
           aria-label={sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >

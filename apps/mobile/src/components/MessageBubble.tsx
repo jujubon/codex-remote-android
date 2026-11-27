@@ -109,6 +109,7 @@ function AttachmentGallery({ message, onLoad, onDownload }: {
 }
 
 interface MessageBubbleProps {
+  assistantName?: string;
   onDiscardLocalMessage?: (threadId: string, messageId: string) => void;
   message: RemoteMessage;
   agentTargets?: Array<{ id: string; label: string; state: string }>;
@@ -149,6 +150,7 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
     && sameAttachments(left.attachments, right.attachments)
   );
   return messageEqual && sameAgentTargets(previous.agentTargets, next.agentTargets)
+    && previous.assistantName === next.assistantName
     && left.deliveryAcknowledged === right.deliveryAcknowledged
     && previous.onDiscardLocalMessage === next.onDiscardLocalMessage
     && previous.onOpenAgent === next.onOpenAgent
@@ -156,7 +158,7 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
     && previous.onDownloadAttachment === next.onDownloadAttachment;
 }
 
-export const MessageBubble = memo(function MessageBubble({ message, agentTargets = [], onOpenAgent, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, agentTargets = [], onOpenAgent, onLoadAttachment, onDownloadAttachment, onDiscardLocalMessage, assistantName = 'Codex' }: MessageBubbleProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const isUser = message.role === 'user';
@@ -167,7 +169,7 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
     || normalizedType.includes('collabagent')
     || normalizedName.includes('subagent');
   const isProgress = message.role === 'assistant' && message.assistantPhase === 'commentary';
-  const author = isProgress ? '进度说明' : isUser ? '你' : isTool ? message.toolName || '工具' : message.role === 'system' ? message.toolName || '系统' : 'Codex';
+  const author = isProgress ? '进度说明' : isUser ? '你' : isTool ? message.toolName || '工具' : message.role === 'system' ? message.toolName || '系统' : assistantName;
   const duration = formatDuration(message.durationMs);
   const isDiff = message.toolName === '本轮 Diff' || /^diff --git /m.test(message.content);
   const inspectable = message.collapsible || isTool || isSubagent;

@@ -380,6 +380,8 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   const [frozenEntryEnd, setFrozenEntryEnd] = useState<number | null>(null);
   const [expandedToolGroupIds, setExpandedToolGroupIds] = useState<Set<string>>(() => new Set());
 
+  const antigravity = thread.assistant === 'antigravity';
+  const assistantName = antigravity ? 'Antigravity' : 'Codex';
   const visibleMessages = useMemo(() => {
     const visible = messages.filter(message => (message.status === 'failed' || !isContextMessage(message))
       && (!thread.mobileManaged || selectedAgentId || !isAsyncQuestionTranscript(message)));
@@ -604,13 +606,13 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
             <span className="session-project">
               {thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}
             </span>
-          <button className="session-summary" type="button" aria-label="模型、权限与额度" aria-haspopup="dialog" onClick={() => {
+          <button className="session-summary" type="button" aria-label={antigravity ? 'Antigravity 对话设置' : '模型、权限与额度'} aria-haspopup="dialog" onClick={() => {
               setSettingsOpen(true);
               settingsRef.current?.showModal();
             }}>
-              <b>{activeModel?.displayName || selectedModel || '模型未读取'}</b>
+              <b>{antigravity ? assistantName : activeModel?.displayName || selectedModel || '模型未读取'}</b>
               <ChevronDownIcon className="session-chevron" />
-              {selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
+              {!antigravity && selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
             </button>
           </div>
         </div>
@@ -724,7 +726,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
               </div>
             )}
             {renderedWindow.entries.map((entry) => entry.type === 'message' ? (
-              <MessageBubble key={entry.message.id} message={entry.message} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} onDiscardLocalMessage={onDiscardLocalMessage} />
+              <MessageBubble key={entry.message.id} message={entry.message} assistantName={assistantName} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} onDiscardLocalMessage={onDiscardLocalMessage} />
             ) : (
               <details
                 className={`tool-call-group${entry.type === 'process' ? ' turn-process' : ''}${entry.messages.some((message) => message.status === 'streaming') ? ' is-streaming' : ''}`}
@@ -771,7 +773,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
         )}
       </div>
 
-      <TransientActivity running={running} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
+      <TransientActivity running={running} assistantName={assistantName} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
       <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <PromptQueuePanel items={promptQueue} attention={attention?.kind === 'queue' ? attention : undefined}
@@ -783,7 +785,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           <header className="sheet-title-row"><h2 id="session-options">对话设置</h2>
             <button type="button" className="icon-button nav-icon-button" aria-label="关闭对话设置" onClick={() => settingsRef.current?.close()}><CloseIcon /></button>
           </header>
-      <section className="session-toolbar" aria-label="任务设置">
+      {!antigravity && <section className="session-toolbar" aria-label="任务设置">
         <label>
           <span>模型</span>
           <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={phase !== 'connected' || modelPending}>
@@ -811,10 +813,10 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           </select>
         </label>
         {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
-      </section>
+      </section>}
           {thread.mobileManaged && <p className="session-settings-note">模型与思考强度在手机发起的下一轮生效。</p>}
           {thread.mobileSendOnly && <p className="session-settings-note">模型与思考强度仅用于手机普通发送。</p>}
-          {accountPanel}
+          {antigravity ? <p className="session-settings-note">使用电脑上 Antigravity CLI 的模型和权限设置。</p> : accountPanel}
           <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
           {notice}
         </div>}
@@ -866,7 +868,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           ))}
         </section>
       )}
-      <Composer draftKey={draftKey} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+      <Composer draftKey={draftKey} assistantName={assistantName} textOnly={antigravity} inboxFile={antigravity ? undefined : inboxFile} loadInboxPreview={loadInboxPreview} onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt} canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

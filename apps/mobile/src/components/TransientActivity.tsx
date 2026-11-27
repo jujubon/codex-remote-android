@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ElapsedTime } from './ElapsedTime';
 
 interface TransientActivityProps {
+  assistantName?: string;
   running: boolean;
   content?: string;
   summaryId?: string;
@@ -17,7 +18,7 @@ function compact(content: string): string {
     .trim();
 }
 
-export function TransientActivity({ running, content = '', summaryId, startedAt }: TransientActivityProps) {
+export function TransientActivity({ running, content = '', summaryId, startedAt, assistantName = 'Codex' }: TransientActivityProps) {
   const summary = compact(content);
   const slot = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -44,7 +45,7 @@ export function TransientActivity({ running, content = '', summaryId, startedAt 
         <div className="activity-status">
           <span className="activity-wave" aria-hidden="true"><i /><i /><i /></span>
           <span key={summary ? summaryId ?? 'summary' : 'thinking'} className="activity-copy" aria-live="polite">
-            {summary || 'Codex 正在思考'}
+            {summary || `${assistantName} 正在思考`}
           </span>
           <ElapsedTime startedAt={startedAt} />
         </div>
