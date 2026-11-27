@@ -65,6 +65,13 @@ export function App() {
   const remote = useRemote(config ?? null, deleteAttachmentsAfterTurn === true);
   const antigravityUsage = useAntigravityUsage(config, remote.connectionUrl, remote.phase === 'connected');
   const pageThreads = useMemo(() => remote.threads.filter(thread => (thread.assistant ?? 'codex') === homePage), [remote.threads, homePage]);
+  useEffect(() => {
+    if (remote.phase !== 'connected' || homePage === 'computer') return;
+    const usage = homePage === 'codex' ? remote.usage : antigravityUsage.usage;
+    if (usage && Date.now() - usage.checkedAt < 60_000) return;
+    if (homePage === 'codex') remote.refreshUsage();
+    else void antigravityUsage.refresh();
+  }, [config, homePage, remote.phase]);
   const listHost = remote.serverId ?? config?.serverUrl ?? '';
   const activeAssistant = homePage === 'computer' ? lastAssistantPage.current : homePage;
   const projectHost = activeAssistant === 'antigravity' ? `antigravity:${listHost}` : listHost;
@@ -175,8 +182,8 @@ export function App() {
     let listener: { remove: () => Promise<void> } | null = null;
     let disposed = false;
     void CapacitorApp.addListener('backButton', () => {
-      const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
-      if (dialog) dialog.close();
+      const dialog = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open]')).at(-1);
+      if (dialog) { if (!dialog.hasAttribute('data-confirming')) dialog.close(); }
       else if (showNewThread) setShowNewThread(false);
       else if (showSettings) setShowSettings(false);
       else if (remote.selectedThreadId) navigateBack();
@@ -236,8 +243,14 @@ export function App() {
 
   const activeUsage = activeAssistant === 'antigravity'
     ? { ...antigravityUsage, assistantName: 'Antigravity' }
-    : { usage: remote.usage, status: remote.usageStatus, refresh: remote.refreshUsage };
+    : { usage: remote.usage, status: remote.usageStatus, refresh: () => remote.refreshUsage(),
+      resetConfig: config ? { ...config, serverUrl: remote.connectionUrl || config.serverUrl } : undefined,
+      onReset: () => remote.refreshUsage(true) };
   const accountPanel = <AccountUsagePanel {...activeUsage} />;
+  const quotaWindows = activeUsage.usage?.windows.filter(window => Number.isFinite(window.remainingPercent));
+  const quotaPercent = quotaWindows?.length
+    ? Math.round(Math.min(100, Math.max(0, Math.min(...quotaWindows.map(window => window.remainingPercent)))))
+    : undefined;
 
   if (!config || showSettings) {
     return (
@@ -374,6 +387,7 @@ export function App() {
           position={homePage === 'codex' ? codexPosition : antigravityPosition}
           onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
           quota={<AccountUsagePanel {...activeUsage} expanded />}
+          quotaPercent={quotaPercent}
           onOpenQuota={activeUsage.refresh}
           onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}

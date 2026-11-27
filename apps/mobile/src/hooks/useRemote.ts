@@ -1289,8 +1289,9 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   }, []);
   const [modelPending, setModelPending] = useState(false);
   const modelRequest = useRef<{ id: string; threadId: string; model?: string; effort?: string } | null>(null);
-  const refreshUsage = useCallback(() => {
-    if (!config || usageRequest.current) return;
+  const refreshUsage = useCallback((force = false) => {
+    if (!config || (usageRequest.current && force !== true)) return;
+    if (usageRequest.current) cancelUsageRequest();
     const requestId = createRequestId('usage');
     usageRequest.current = requestId;
     setUsageStatus('正在读取额度…');

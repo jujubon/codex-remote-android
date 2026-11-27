@@ -529,8 +529,50 @@
 .project-list-actions { display: flex; align-items: center; gap: 6px; }
 .project-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; min-width: 0; }
 .project-list-actions .quota-button { color: var(--accent); }
+.quota-ring {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) var(--quota-fill), var(--line-strong) var(--quota-fill));
+}
+.quota-ring > span {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: .58rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.quota-ring[data-known=false] { background: var(--line-strong); }
+.quota-ring[data-known=false] > span { color: var(--muted); }
 .project-list-actions .antigravity-desktop-link { white-space: nowrap; }
 .session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
+.usage-resets { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); }
+.usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }
+.usage-reset-row > div { min-width: 0; overflow-wrap: anywhere; }
+.usage-reset-row strong, .usage-reset-row small, .usage-reset-confirmation small { display: block; }
+.usage-reset-row button { flex: none; }
+.usage-reset-dialog {
+  width: min(380px, calc(100% - 36px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.usage-reset-dialog::backdrop { background: rgb(22 24 21 / 38%); }
+.usage-reset-confirmation { display: grid; gap: 12px; padding: 18px; }
+.usage-reset-confirmation h2 { margin: 0; font-size: 1rem; }
+.usage-reset-confirmation p, .usage-resets p { margin: 0; color: var(--muted); font-size: .875rem; }
+.usage-resets p { margin-top: 8px; }
+.usage-reset-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .session-sheet .git-diff-panel { margin: 0; background: transparent; }
 .session-sheet .git-diff-panel > details > summary { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; min-height: 46px; }
 .session-sheet .git-diff-title strong, .session-sheet .git-diff-content > header strong { font-size: .875rem; }

@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { threadStateLabel } from '../hooks/useRemote';
 import type { Assistant, ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, GaugeIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
@@ -137,6 +137,7 @@ interface ThreadListProps {
   position: RefObject<ThreadListPosition>;
   onArchives?: () => void;
   quota?: React.ReactNode;
+  quotaPercent?: number;
   onOpenQuota?: () => void;
   onArchive?: (thread: RemoteThread) => void;
   hidden: ReturnType<typeof useHiddenProjects>;
@@ -312,7 +313,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, quota, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -428,8 +429,12 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
           </div>
           <div className="project-list-actions">
             {desktopAction}
-            {quota && <button type="button" className="nav-icon-button quota-button" aria-label={`查看 ${quotaTitle}`} aria-haspopup="dialog"
-              onClick={() => { quotaRef.current?.showModal(); onOpenQuota?.(); }}><GaugeIcon /></button>}
+            {quota && <button type="button" className="nav-icon-button quota-button" aria-label={`查看 ${quotaTitle}${quotaPercent === undefined ? '' : `，最低剩余 ${quotaPercent}%`}`}
+              aria-haspopup="dialog" onClick={() => { quotaRef.current?.showModal(); onOpenQuota?.(); }}>
+              <span className="quota-ring" data-known={quotaPercent !== undefined} aria-hidden="true" style={{ '--quota-fill': `${quotaPercent ?? 0}%` } as CSSProperties}>
+                <span>{quotaPercent === undefined ? '–' : `${quotaPercent}%`}</span>
+              </span>
+            </button>}
             <button type="button" className="manage-button" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}>管理</button>
           </div>
         </div>

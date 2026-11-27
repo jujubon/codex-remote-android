@@ -18,6 +18,7 @@ import { MobileGateway } from "./gateway.js";
 import { PromptQueueStore } from "./prompt-queue.js";
 import { AntigravitySessions, findAntigravityCli } from "./antigravity.js";
 import { antigravityUsageReader } from "./antigravity-usage.js";
+import { UsageResets } from "./usage-resets.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -30,6 +31,7 @@ const desktopIpc = new DesktopIpcBridge(
   config.desktopIpc,
   config.desktopIpcEndpoint,
 );
+const usageResets = new UsageResets(bridge);
 const promptQueue = await PromptQueueStore.create(config.promptQueueFile);
 const deviceSettingsPath = join(dirname(config.promptQueueFile), "device-tools.json");
 const attachmentFolder = process.env.CMR_UPLOAD_DIRECTORY ? undefined : await readChatAttachmentFolder(deviceSettingsPath);
@@ -217,6 +219,16 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
   }
   if (request.method === "GET" && request.url === "/api/device/usage") {
     json(response, 200, await gateway.readAccountUsage());
+    return;
+  }
+  if (request.method === "POST" && request.url === "/api/device/usage/reset/prepare") {
+    const body = await readJsonBody(request, 1024);
+    json(response, 200, await usageResets.prepare(body.creditId));
+    return;
+  }
+  if (request.method === "POST" && request.url === "/api/device/usage/reset/confirm") {
+    const body = await readJsonBody(request, 1024);
+    json(response, 200, { outcome: await usageResets.confirm(body.token) });
     return;
   }
   if (request.method === "GET" && request.url === "/api/device/antigravity/usage") {

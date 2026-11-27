@@ -35,6 +35,7 @@ import { GitDiffError, readGitDiff, type GitDiffSnapshot } from "./git-diff.js";
 import { PromptQueueStore, type StoredPromptQueueItem } from "./prompt-queue.js";
 import { SyncJournal, ThreadIndexStore } from "./sync-state.js";
 import { isUsageLimitError, USAGE_LIMIT_MESSAGE } from "./usage-limit.js";
+import { availableUsageResets } from "./usage-resets.js";
 import { isAntigravityApproval, isAntigravityThread, type AntigravitySessions } from "./antigravity.js";
 
 const MAX_WS_BUFFERED_BYTES = 8 * 1024 * 1024;
@@ -3161,7 +3162,8 @@ export function accountUsage(raw: unknown): AccountUsage {
       });
     }
   }
-  return { plan: typeof primary?.planType === "string" ? primary.planType : null, checkedAt: Date.now(), windows };
+  const resetCredits = availableUsageResets(raw);
+  return { plan: typeof primary?.planType === "string" ? primary.planType : null, checkedAt: Date.now(), windows, ...(resetCredits ? { resetCredits } : {}) };
 }
 
 function approvalResult(

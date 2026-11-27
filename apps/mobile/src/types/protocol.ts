@@ -16,7 +16,16 @@ export interface AccountUsage {
   plan: string | null;
   checkedAt: number;
   windows: { group: string; minutes: number | null; remainingPercent: number; resetsAt: number | null }[];
+  resetCredits?: { availableCount: number; cards: UsageResetCard[] };
 }
+
+export interface UsageResetCard {
+  id: string;
+  title: string | null;
+  expiresAt: number | null;
+}
+
+export type UsageResetOutcome = "reset" | "alreadyRedeemed" | "nothingToReset" | "noCredit";
 
 export interface ThreadSummary {
   assistant?: Assistant;
