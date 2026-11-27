@@ -3,7 +3,7 @@ import { threadStateLabel } from '../hooks/useRemote';
 import type { Assistant, ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EditIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
 import { closeDialogForHandoff } from '../lib/dialogMotion';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
@@ -141,6 +141,7 @@ interface ThreadListProps {
   quotaPercent?: number;
   onOpenQuota?: () => void;
   onArchive?: (thread: RemoteThread) => void;
+  onRename?: (thread: RemoteThread) => void;
   onDelete?: (thread: RemoteThread) => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   hiddenThreads: ReturnType<typeof useHiddenProjects>;
@@ -315,7 +316,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, onRename, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -390,7 +391,11 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
       { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hiddenThreads.setHidden(thread.id, true) },
       ...(onArchive && thread.assistant !== 'antigravity' ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
       ...(onDelete && thread.assistant === 'antigravity' ? [{ label: '删除', tone: 'delete' as const, icon: <TrashIcon />, onSelect: () => onDelete(thread) }] : []),
-    ]}>{card}</SwipeActions>;
+    ]}>{onRename ? <div className="thread-row-with-rename">
+      {card}
+      <button className="nav-icon-button thread-rename" type="button" aria-label={`重命名 ${thread.title}`} aria-haspopup="dialog"
+        onClick={() => onRename(thread)}><EditIcon /></button>
+    </div> : card}</SwipeActions>;
   };
 
   return (

@@ -110,6 +110,15 @@ def run(request):
             return tools.archive_thread(request['threadId'], identity, uuid.uuid4().hex)
         except (OSError, ValueError, TimeoutError, DesktopControlError):
             return {'state': 'rejected', 'reply': '对话仍被 Codex 占用，暂时无法通过桌面归档。请稍后重试。'}
+    if request['action'] == 'native-rename':
+        try:
+            tools, identity = current_desktop_tools(('read_thread', 'set_thread_title'))
+        except (OSError, ValueError, TimeoutError, DesktopControlError):
+            return {'state': 'rejected', 'code': 'desktop_rename_unavailable', 'reply': '桌面改名接口暂不可用。'}
+        result = tools.rename(request['threadId'], request['title'], identity, uuid.uuid4().hex)
+        if result.get('state') == 'confirmed':
+            return {**result, 'thread_id': request['threadId']}
+        return {'state': result.get('state', 'unknown'), 'reply': '桌面未确认新标题，请刷新对话后核对。'}
     if request['action'] in ('native-send', 'native-read', 'native-model-check'):
         try:
             tools, identity = current_desktop_tools()

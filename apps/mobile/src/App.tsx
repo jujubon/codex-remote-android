@@ -11,6 +11,7 @@ import { DevicePowerDialog } from './components/DeviceTools';
 import { HomeNav, type HomePage } from './components/HomeNav';
 import { CloseIcon } from './components/Icons';
 import { NewThreadSheet } from './components/NewThreadSheet';
+import { RenameThreadDialog, type RenameThreadTarget } from './components/RenameThreadDialog';
 import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
@@ -31,7 +32,7 @@ import { useStartupUpdate } from './hooks/useStartupUpdate';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 import type { Assistant } from './types/protocol';
-import type { StartupUpdate } from './lib/updates';
+import { compareReleaseVersions, type StartupUpdate } from './lib/updates';
 
 const assistantPageKey = 'codex-mobile.assistant-page.v1';
 function savedAssistantPage(): Assistant {
@@ -58,6 +59,7 @@ export function App() {
   const lastAssistantPage = useRef<Assistant>(homePage === 'antigravity' ? 'antigravity' : 'codex');
   const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RenameThreadTarget>();
   const [deleteAntigravityTarget, setDeleteAntigravityTarget] = useState<AntigravityDeleteTarget>();
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
@@ -405,6 +407,7 @@ export function App() {
           quotaPercent={quotaPercent}
           onOpenQuota={activeUsage.refresh}
           onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
+          onRename={(compareReleaseVersions(remote.hostVersion, '1.0.8') ?? -1) >= 0 ? setRenameTarget : undefined}
           onDelete={homePage === 'antigravity' ? thread => setDeleteAntigravityTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}
           hiddenThreads={hiddenThreads}
@@ -421,7 +424,7 @@ export function App() {
         />
       )}
 
-      {startupUpdate && !startupUpdateHandled && !remote.selectedThreadId && !showNewThread && !archiveTarget && !deleteAntigravityTarget &&
+      {startupUpdate && !startupUpdateHandled && !remote.selectedThreadId && !showNewThread && !archiveTarget && !renameTarget && !deleteAntigravityTarget &&
         <StartupUpdateDialog update={startupUpdate} onLater={() => setStartupUpdateHandled(true)} onUpdate={update => {
           setStartupUpdateHandled(true);
           setRequestedUpdate(update);
@@ -430,6 +433,8 @@ export function App() {
       {taskPowerThreadId && taskPowerThreadId === remote.selectedThreadId &&
         <DevicePowerDialog config={config} phase={remote.phase} threadId={taskPowerThreadId} onClose={() => setTaskPowerThreadId(null)} />}
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
+      {renameTarget && <RenameThreadDialog target={renameTarget} connected={remote.phase === 'connected'}
+        onRename={remote.renameThread} onClose={() => setRenameTarget(undefined)} />}
       {deleteAntigravityTarget && <AntigravityDeleteDialog target={deleteAntigravityTarget}
         disabled={remote.phase !== 'connected' || remote.threads.some(thread => thread.id === deleteAntigravityTarget.id &&
           ['running', 'waiting_approval', 'waiting_input'].includes(thread.state))}

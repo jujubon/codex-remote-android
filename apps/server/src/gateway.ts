@@ -116,11 +116,46 @@ export class MobileGateway {
     this.updateThreadIndexFromNotification("thread/deleted", { threadId });
     this.broadcast({ type: "event", method: "antigravity/threadDeleted", params: { threadId } });
   }
+
+  async renameThread(threadId: string, title: string) {
+    if (this.hostUpdating) throw new Error("电脑配套服务正在更新，请稍后再保存标题。");
+    if (this.renamingThreads.has(threadId)) throw new Error("正在保存这段对话的标题，请稍候。");
+    this.renamingThreads.add(threadId);
+    try {
+      if (isAntigravityThread(threadId)) {
+        const updated = await this.antigravitySessionStore().renameConversation(threadId, title);
+        this.upsertThreadSummary(updated);
+        return { threadId, title: updated.name, scope: "companion" as const };
+      }
+
+      if (this.config.desktopOnly) {
+        try {
+          const result = await this.runDesktopAction({ action: "native-rename", threadId, title });
+          if (result.thread_id !== threadId || result.title !== title)
+            throw new Error("桌面回读未确认改名，请刷新对话核对结果。");
+          this.publishThreadName(threadId, title);
+          return { threadId, title, scope: "desktop" as const };
+        } catch (error) {
+          if (!(error instanceof DesktopActionError) || error.outcomeUnknown || error.code !== "desktop_rename_unavailable") throw error;
+        }
+      }
+
+      const read = async () => asRecord(asRecord(await this.bridge.request("thread/read", { threadId, includeTurns: false }, 6500))?.thread);
+      if ((await read())?.id !== threadId) throw new Error("电脑未确认这段对话，请刷新后重试。");
+      await this.bridge.request("thread/name/set", { threadId, name: title }, 6500);
+      const after = await read();
+      if (after?.id !== threadId || after.name !== title) throw new Error("电脑未确认新标题，请刷新对话核对结果。");
+      this.publishThreadName(threadId, title);
+      return { threadId, title, scope: "desktop" as const };
+    } finally { this.renamingThreads.delete(threadId); }
+  }
+
   private readonly wss: WebSocketServer;
   private readonly approvals = new Map<number | string, RpcEnvelope>();
   private readonly desktopApprovalKeys = new Set<number | string>();
   private readonly archivedIds = new Set<string>();
   private readonly changingArchive = new Set<string>();
+  private readonly renamingThreads = new Set<string>();
   private readonly turnDiffs = new Map<string, string>();
   private readonly desktopThreads = new Map<string, Record<string, unknown>>();
   private readonly threadCwds = new Map<string, string>();
@@ -1190,7 +1225,7 @@ export class MobileGateway {
   }
 
   pauseForHostUpdate(): boolean {
-    if (this.hostUpdating || this.taskRequests || this.queueDrains.size || this.mobileOperations.size ||
+    if (this.hostUpdating || this.taskRequests || this.queueDrains.size || this.mobileOperations.size || this.renamingThreads.size ||
         this.appServerCurrentTurnIds.size || this.antigravity?.hasActiveTurns) return false;
     this.hostUpdating = true;
     return true;
@@ -2175,6 +2210,14 @@ export class MobileGateway {
     });
   }
 
+  private publishThreadName(threadId: string, name: string | null): void {
+    const desktop = this.desktopThreads.get(threadId);
+    if (desktop) this.desktopThreads.set(threadId, { ...desktop, name, title: name });
+    const change = this.threadIndex.patch(threadId, { name });
+    if (change) this.broadcast({ type: "threads.delta", baseVersion: change.version - 1, version: change.version,
+      upserts: this.withMembership(change.upserts), removedIds: [] });
+  }
+
   private async publishStartedThread(params: Record<string, unknown>): Promise<void> {
     const thread = asRecord(params.thread);
     if (!thread || typeof thread.id !== "string") return;
@@ -2202,6 +2245,10 @@ export class MobileGateway {
     }
     const threadId = typeof params.threadId === "string" ? params.threadId : undefined;
     if (!threadId) return;
+    if (method === "thread/name/updated") {
+      this.publishThreadName(threadId, typeof params.threadName === "string" ? params.threadName : null);
+      return;
+    }
     if (method === "thread/archived") {
       this.markArchived(threadId);
       return;

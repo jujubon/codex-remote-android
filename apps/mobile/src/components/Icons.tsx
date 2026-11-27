@@ -109,6 +109,10 @@ export function PowerIcon(props: IconProps) {
   return <IconBase {...props}><path d="M12 3v9M6.5 6.5a8 8 0 1 0 11 0" /></IconBase>;
 }
 
+export function EditIcon(props: IconProps) {
+  return <IconBase {...props}><path d="m14 5 5 5M4 20l4.8-1 11-11a2 2 0 0 0-2.8-2.8l-11 11L4 20Z" /></IconBase>;
+}
+
 export function ClipboardIcon(props: IconProps) {
   return <IconBase {...props}><rect x="8" y="3" width="8" height="4" rx="1.5" /><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M8 12h8m-8 4h6" /></IconBase>;
 }

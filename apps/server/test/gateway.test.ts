@@ -220,6 +220,52 @@ describe("Desktop attachment extraction", () => {
 });
 
 describe("MobileGateway", () => {
+  it("publishes a Desktop-confirmed title and follows subsequent title events", async () => {
+    const actions: Parameters<typeof desktopAction>[0][] = [];
+    const { bridge, gateway, port } = await start(undefined, undefined, { desktopOnly: true }, async action => {
+      actions.push(action);
+      return { thread_id: action.threadId, title: "新标题 📝" };
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, ["codex-mobile-v1", `token.${Buffer.from(token).toString("base64url")}`],
+      { origin: "capacitor://localhost" });
+    const messages: Array<{ type: string; upserts?: Array<{ id: string; name: string }> }> = [];
+    ws.on("message", data => messages.push(JSON.parse(data.toString())));
+    await new Promise<void>((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
+    ws.send(JSON.stringify({ type: "threads.sync" }));
+    await waitFor(() => messages.some(message => message.type === "threads.snapshot"));
+    expect(await gateway.renameThread("thread-1", "新标题 📝")).toEqual({
+      threadId: "thread-1", title: "新标题 📝", scope: "desktop",
+    });
+    expect(actions).toEqual([{ action: "native-rename", threadId: "thread-1", title: "新标题 📝" }]);
+    await waitFor(() => messages.some(message => message.upserts?.some(row => row.id === "thread-1" && row.name === "新标题 📝")));
+    bridge.emit("notification", { method: "thread/name/updated", params: { threadId: "thread-1", threadName: "电脑端标题" } });
+    await waitFor(() => messages.some(message => message.upserts?.some(row => row.id === "thread-1" && row.name === "电脑端标题")));
+    ws.close();
+  });
+
+  it("checks the persisted title after the app-server fallback and avoids a second write on an uncertain native result", async () => {
+    let uncertain = false;
+    const { bridge, gateway } = await start(undefined, undefined, { desktopOnly: true }, async () => {
+      if (uncertain) throw new DesktopActionError("未知回执", true);
+      throw new DesktopActionError("接口不可用", false, "desktop_rename_unavailable");
+    });
+    let saved = "Original";
+    const fallback = bridge.request.bind(bridge);
+    bridge.request = async (method, params) => {
+      if (method === "thread/read") return { thread: { id: "thread-1", name: saved } };
+      if (method === "thread/name/set") {
+        expect(params).toEqual({ threadId: "thread-1", name: "修改后的标题" });
+        saved = (params as { name: string }).name;
+        return {};
+      }
+      return fallback(method, params);
+    };
+    expect(await gateway.renameThread("thread-1", "修改后的标题")).toMatchObject({ title: "修改后的标题", scope: "desktop" });
+    uncertain = true;
+    await expect(gateway.renameThread("thread-1", "不应该重试写入")).rejects.toThrow("未知回执");
+    expect(saved).toBe("修改后的标题");
+  });
+
   it("uses the confirmed Desktop archive for an idle conversation held by another writer", async () => {
     const actions: Parameters<typeof desktopAction>[0][] = [];
     const { bridge, port } = await start(undefined, undefined, { desktopOnly: true }, async action => {

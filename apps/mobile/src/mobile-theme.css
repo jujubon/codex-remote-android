@@ -266,6 +266,15 @@
 .thread-title-row .thread-time { font-size: 10px; }
 .thread-preview { margin: 4px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .thread-meta:not(:empty) { margin-top: 6px; }
+.thread-row-with-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  padding-inline-end: 4px;
+}
+.thread-row-with-rename .thread-card { min-width: 0; border-bottom: 0; }
+.thread-rename.nav-icon-button { color: var(--muted); }
+.thread-rename.nav-icon-button svg { width: 17px; height: 17px; }
 
 .conversation-top-bar { grid-template-columns: 44px minmax(0,1fr) auto; gap: 8px; }
 .conversation-top-bar .nav-icon-button {
@@ -754,7 +763,13 @@
 .archive-message { margin: 0; color: var(--muted); font-size: .8125rem; text-align: center; }
 .archive-more { justify-self: center; padding-inline: 18px; }
 
-.conversation-actions-dialog, .archive-confirm-dialog, .cache-confirm-dialog { width: min(100%, 470px); }
+.conversation-actions-dialog, .archive-confirm-dialog, .cache-confirm-dialog, .rename-thread-dialog { width: min(100%, 470px); }
+.rename-thread-form { display: grid; gap: 10px; padding-top: 12px; }
+.rename-thread-form label { display: grid; gap: 6px; font-size: .8125rem; font-weight: 650; }
+.rename-thread-form input { min-height: 46px; padding: 10px 12px; border-radius: 12px; font-size: .9375rem; }
+.rename-thread-detail { display: flex; justify-content: space-between; gap: 6px; color: var(--muted); font-size: .75rem; }
+.rename-thread-detail > span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+.rename-thread-detail [data-invalid] { color: var(--red); }
 .action-sheet-heading { min-width: 0; }
 .action-sheet-heading p {
   margin: 4px 0 0;

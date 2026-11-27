@@ -93,7 +93,7 @@ export class AntigravitySessions {
   private readonly deleting = new Map<string, Promise<void>>();
   private readonly active = new Map<string, { id: string; abort: AbortController }>();
   private readonly permissions = new Map<string, PendingPermission>();
-  private readonly changingModel = new Set<string>();
+  private readonly editing = new Set<string>();
   private cachedModels?: { options: ModelOption[]; expires: number };
   private readingModels?: Promise<ModelOption[]>;
   private writes = Promise.resolve();
@@ -145,13 +145,23 @@ export class AntigravitySessions {
   async updateModel(id: string, requested: string) {
     const thread = this.getThread(id);
     if (this.active.has(id)) throw new Error("请等本轮结束后切换模型。");
-    if (this.deleting.has(id) || this.changingModel.has(id)) throw new Error("正在更新这段对话，请稍后再试。");
-    this.changingModel.add(id);
+    if (this.deleting.has(id) || this.editing.has(id)) throw new Error("正在更新这段对话，请稍后再试。");
+    this.editing.add(id);
     try {
       const model = requested === "" ? undefined : await this.validateModel(requested);
-      await this.save({ modelUpdate: { thread, model } });
+      await this.save({ threadUpdate: { thread, changes: { model } } });
       return { model: model ?? null, effort: null };
-    } finally { this.changingModel.delete(id); }
+    } finally { this.editing.delete(id); }
+  }
+
+  async renameConversation(id: string, title: string) {
+    const thread = this.getThread(id);
+    if (this.deleting.has(id) || this.editing.has(id)) throw new Error("正在更新这段对话，请稍后再试。");
+    this.editing.add(id);
+    try {
+      if (thread.title !== title) await this.save({ threadUpdate: { thread, changes: { title } } });
+      return this.summary(id);
+    } finally { this.editing.delete(id); }
   }
 
   resolveApproval(id: string, decision: ApprovalDecision) {
@@ -194,7 +204,7 @@ export class AntigravitySessions {
   async deleteConversation(id: string): Promise<void> {
     const pending = this.deleting.get(id);
     if (pending) return pending;
-    if (this.changingModel.has(id)) throw new Error("模型正在保存，请稍后删除对话。");
+    if (this.editing.has(id)) throw new Error("对话设置正在保存，请稍后删除对话。");
     if (this.active.has(id)) throw new Error("请先结束或停止当前 Antigravity 任务，再删除对话。");
     if (!this.threads.has(id)) return;
     const operation = this.save({ removeId: id }).finally(() => { this.deleting.delete(id); });
@@ -234,7 +244,7 @@ export class AntigravitySessions {
       return canonicalTurn(received);
     }
     if (this.active.has(id)) throw new Error("Antigravity 正在执行，请等本轮结束。");
-    if (this.changingModel.has(id)) throw new Error("正在保存模型，请稍后再发送。");
+    if (this.editing.has(id)) throw new Error("正在保存对话设置，请稍后再发送。");
     if (!thread.sessionId && thread.turns.some(turn => turn.status === "completed"))
       throw new Error("Antigravity 没有返回可续聊的会话编号，请新建对话。");
     const turn: Turn = { id: randomUUID(), text, clientUserMessageId, response: "", startedAt: Date.now(),
@@ -256,17 +266,19 @@ export class AntigravitySessions {
 
   close() { for (const { abort } of this.active.values()) abort.abort(); }
 
-  private save({ removeId, modelUpdate }: { removeId?: string; modelUpdate?: { thread: Conversation; model?: string } } = {}) {
+  private save({ removeId, threadUpdate }: { removeId?: string; threadUpdate?: {
+    thread: Conversation; changes: Partial<Pick<Conversation, "model" | "title">>;
+  } } = {}) {
     const next = this.writes.then(async () => {
       const values = [...this.threads.values()].filter(thread => thread.turns.length && thread.id !== removeId)
-        .map(thread => JSON.stringify(modelUpdate?.thread === thread ? { ...thread, model: modelUpdate.model } : thread));
+        .map(thread => JSON.stringify(threadUpdate?.thread === thread ? { ...thread, ...threadUpdate.changes } : thread));
       const temporary = `${this.filename}.${randomUUID()}.tmp`;
       await mkdir(dirname(this.filename), { recursive: true });
       try {
         await writeFile(temporary, `[${values.join(",")}]`, { mode: 0o600 });
         await rename(temporary, this.filename);
         if (removeId) this.threads.delete(removeId);
-        if (modelUpdate) modelUpdate.thread.model = modelUpdate.model;
+        if (threadUpdate) Object.assign(threadUpdate.thread, threadUpdate.changes);
       } finally { await rm(temporary, { force: true }); }
     });
     this.writes = next.catch(() => undefined);

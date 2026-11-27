@@ -22,6 +22,16 @@ async function fixture() {
   return { folder, filename, ids: threads.map(row => row.id) };
 }
 
+it("persists an Antigravity title without replacing the conversation or its history", async () => {
+  const { filename, ids: [id] } = await fixture();
+  const sessions = await AntigravitySessions.open(filename);
+  const history = sessions.page(id!, 20);
+  expect(await sessions.renameConversation(id!, "持久化标题 📝")).toMatchObject({ id, name: "持久化标题 📝" });
+  const reopened = await AntigravitySessions.open(filename);
+  expect(reopened.summary(id!).name).toBe("持久化标题 📝");
+  expect(reopened.page(id!, 20)).toEqual(history);
+});
+
 describe("Antigravity app conversation removal", () => {
   it("serializes concurrent deletions and preserves unrelated conversations after restart", async () => {
     const { filename, ids } = await fixture();

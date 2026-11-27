@@ -1685,6 +1685,16 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     forgetAntigravityThread(threadId);
   }, [config, forgetAntigravityThread]);
 
+  const renameThread = useCallback(async (threadId: string, title: string) => {
+    if (!config || phase !== 'connected') throw new Error('电脑未连接。');
+    const result = await deviceRequest<{ threadId: string; title: string; scope: 'desktop' | 'companion' }>(
+      { ...config, serverUrl: socketRef.current?.serverUrl ?? config.serverUrl }, 'thread/rename', { threadId, title });
+    const expectedScope = threadId.startsWith('antigravity:') ? 'companion' : 'desktop';
+    if (result.threadId !== threadId || result.title !== title || result.scope !== expectedScope)
+      throw new Error('电脑未确认改名，请刷新列表核对。');
+    replaceThreadsAndSyncAttention(threadsRef.current.map(thread => thread.id === threadId ? { ...thread, title: result.title } : thread));
+  }, [config, phase, replaceThreadsAndSyncAttention]);
+
   const flushPendingMessageDeltas = useCallback(() => {
     if (pendingMessageDeltaTimerRef.current != null) {
       window.clearTimeout(pendingMessageDeltaTimerRef.current);
@@ -3205,7 +3215,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     antigravityAvailable,
     antigravityAttachments,
     canSteer,
-    archiveSupported, archiveRequest, deleteAntigravityThread,
+    archiveSupported, archiveRequest, deleteAntigravityThread, renameThread,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,
     usage, usageStatus, refreshUsage, modelPending,
     queueReceipt,

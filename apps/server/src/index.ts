@@ -285,6 +285,16 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, { threadId });
     return;
   }
+  if (request.method === "POST" && request.url === "/api/device/thread/rename") {
+    const { threadId, title: rawTitle } = await readJsonBody(request, 2048);
+    if (typeof threadId !== "string" || !/^(?:antigravity:)?[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}$/.test(threadId))
+      throw new FileTransferError("INVALID_ARGUMENT", "无效的对话编号。", 400);
+    const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+    if (!title || [...title].length > 120 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Cs}]/u.test(title))
+      throw new FileTransferError("INVALID_ARGUMENT", "标题须为 1 至 120 个字符的单行文字。", 400);
+    json(response, 200, await gateway.renameThread(threadId, title));
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/inbox") {
     json(response, 200, { files: await inbox.list((await device.settings()).folder) });
     return;
