@@ -5,6 +5,7 @@ import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
 import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
+import { closeDialogForHandoff } from '../lib/dialogMotion';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
 
@@ -464,7 +465,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
           </header>
           <div className="management-body">
             {onArchives && <button type="button" className="management-row management-card" onClick={() => {
-              manageRef.current?.close();
+              closeDialogForHandoff(manageRef.current);
               onArchives();
             }}><span className="management-icon"><ArchiveIcon /></span><strong>已归档对话</strong><ChevronRightIcon /></button>}
             <fieldset className="management-filter">

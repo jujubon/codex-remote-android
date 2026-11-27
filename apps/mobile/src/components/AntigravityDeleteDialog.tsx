@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 
 export interface AntigravityDeleteTarget {
   id: string;
@@ -33,7 +34,7 @@ export function AntigravityDeleteDialog({ target, disabled, onDelete, onClose }:
     }
   }
 
-  return <dialog className="session-dialog" ref={dialog} aria-labelledby="delete-antigravity-title" onClose={onClose}
+  return <dialog className="session-dialog" ref={dialog} aria-labelledby="delete-antigravity-title" onClose={event => afterDialogClose(event, onClose)}
     data-confirming={busy || undefined} onCancel={event => { if (deleting.current) event.preventDefault(); }}>
     <div className="session-sheet archive-sheet">
       <header className="sheet-title-row"><h2 id="delete-antigravity-title">删除 Antigravity 对话</h2></header>

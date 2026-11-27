@@ -8,6 +8,11 @@ export const acpObject = (value: unknown): ObjectMap | undefined =>
 
 type Permission = (params: ObjectMap, respond: (optionId?: string) => void) => void;
 
+export function antigravityCliEnvironment() {
+  return Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => !/^(?:CMR_|CODEX_|OPENAI_|CF_TUNNEL_)/i.test(key)));
+}
+
 export class AntigravityAcp {
   private readonly pending = new Map<number, { finish: (error: Error | null, result?: unknown) => void }>();
   private sequence = 0;
@@ -15,9 +20,7 @@ export class AntigravityAcp {
   private readonly child;
 
   constructor(executable: string, cwd: string, onUpdate: (params: ObjectMap) => void, onPermission: Permission) {
-    const env = Object.fromEntries(Object.entries(process.env)
-      .filter(([key]) => !/^(?:CMR_|CODEX_|OPENAI_|CF_TUNNEL_)/i.test(key)));
-    this.child = spawn(executable, ["acp"], { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    this.child = spawn(executable, ["acp"], { cwd, env: antigravityCliEnvironment(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     this.child.stderr.resume();
     this.child.stdin.on("error", () => this.fail());

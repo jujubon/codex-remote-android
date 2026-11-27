@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { DEFAULT_SERVER_URL, normalizeServerUrl, saveRemoteConfig, storageDescription, type RemoteConfig } from '../lib/configStore';
-import { EyeIcon, ShieldIcon } from './Icons';
+import { CloseIcon, EyeIcon, ShieldIcon, UpdateIcon } from './Icons';
 
 interface SetupScreenProps {
   initialConfig?: RemoteConfig | null;
@@ -18,6 +18,20 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const refreshDialog = useRef<HTMLDialogElement>(null);
+
+  async function refreshCache() {
+    if (!onFullRefresh || refreshing) return;
+    refreshDialog.current?.close();
+    setRefreshing(true);
+    setError('');
+    try {
+      await onFullRefresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '全量刷新失败');
+      setRefreshing(false);
+    }
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -50,8 +64,8 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
 
         <div className="setup-heading">
           <p className="eyebrow">连接设置</p>
-          <h1>连接到电脑上的 Codex</h1>
-          <p className="setup-intro">端点与 API Key 保留在主机端，手机仅保存连接信息。</p>
+          <h1>连接电脑</h1>
+          <p className="setup-intro">填写 Windows 配套服务的地址和令牌，连接 Codex、Antigravity 和电脑工具。</p>
         </div>
 
         <form onSubmit={handleSubmit} className="setup-form">
@@ -66,7 +80,7 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
               inputMode="url"
               required
             />
-            <small>支持可信私有局域网、Tailscale、localhost；公网请使用 HTTPS/WSS。</small>
+            <small>同网可使用可信局域网地址。跨网请输入 HTTPS/WSS 地址。</small>
           </label>
 
           <label>
@@ -108,17 +122,8 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
                 className="secondary-button"
                 type="button"
                 disabled={refreshing}
-                onClick={async () => {
-                  if (!window.confirm('将清空本机所有任务缓存并从 Host 全量重新下载。连接地址和配对令牌会保留。是否继续？')) return;
-                  setRefreshing(true);
-                  setError('');
-                  try {
-                    await onFullRefresh();
-                  } catch (reason) {
-                    setError(reason instanceof Error ? reason.message : '全量刷新失败');
-                    setRefreshing(false);
-                  }
-                }}
+                aria-haspopup="dialog"
+                onClick={() => refreshDialog.current?.showModal()}
               >
                 {refreshing ? '正在全量刷新…' : '清空缓存并全量刷新'}
               </button>
@@ -135,6 +140,23 @@ export function SetupScreen({ initialConfig, onSaved, onCancel, onForget, onFull
           <p>{storageDescription()}</p>
         </div>
       </section>
+      {onFullRefresh && <dialog className="session-dialog cache-confirm-dialog" ref={refreshDialog} aria-labelledby="cache-confirm-title"
+        onClick={event => { if (event.target === event.currentTarget) refreshDialog.current?.close(); }}>
+        <div className="session-sheet">
+          <header className="sheet-title-row">
+            <div className="archive-title">
+              <span className="management-icon" aria-hidden="true"><UpdateIcon /></span>
+              <h2 id="cache-confirm-title">清空缓存并刷新</h2>
+            </div>
+            <button className="nav-icon-button" type="button" aria-label="关闭" onClick={() => refreshDialog.current?.close()}><CloseIcon /></button>
+          </header>
+          <p className="cache-confirm-note">清空这部手机的任务缓存，再从电脑同步最新列表。连接地址和配对令牌会保留。</p>
+          <div className="sheet-actions balanced-sheet-actions">
+            <button className="secondary-button" type="button" onClick={() => refreshDialog.current?.close()}>取消</button>
+            <button className="primary-button" type="button" onClick={() => void refreshCache()}>清空并刷新</button>
+          </div>
+        </div>
+      </dialog>}
     </main>
   );
 }

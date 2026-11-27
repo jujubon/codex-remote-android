@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, loadInboxImage, type InboxFile } from '../lib/deviceTools';
 import { ArchiveIcon, ChevronDownIcon, CloseIcon, EyeIcon, MoreIcon, TrashIcon } from './Icons';
@@ -66,7 +67,7 @@ function ImagePreview({ config, file, initialUrl, onClose, onUse }: {
   const remote = useInboxImage(config, file.id, false, !initialUrl || attempt > 0, attempt);
   const url = attempt === 0 ? initialUrl || remote.url : remote.url;
   useEffect(() => { dialog.current?.showModal(); }, []);
-  return <dialog ref={dialog} className="inbox-preview" onClose={onClose} aria-label="图片预览">
+  return <dialog ref={dialog} className="inbox-preview" onClose={event => afterDialogClose(event, onClose)} aria-label="图片预览">
     <div className="inbox-preview-controls">
       <strong>图片预览</strong>
       <button type="button" className="nav-icon-button" onClick={() => dialog.current?.close()} aria-label="关闭预览"><CloseIcon /></button>
@@ -217,7 +218,7 @@ export function InboxPanel({ config, onUse, deleteAfterTurn, onChangeAttachmentC
       </>}
     </div>
     <dialog className="session-dialog" ref={deleteDialog} aria-labelledby={deleteTitleId} data-confirming={deleting || undefined}
-      onCancel={event => { if (deleting) event.preventDefault(); }} onClose={() => setDeleteTarget(undefined)}>
+      onCancel={event => { if (deleting) event.preventDefault(); }} onClose={event => afterDialogClose(event, () => setDeleteTarget(undefined))}>
       {deleteTarget && <div className="session-sheet archive-sheet inbox-delete-sheet">
         <header className="sheet-title-row"><h2 id={deleteTitleId}>{deleteTarget === 'clear' ? '清空手机收件箱？' : '删除电脑上的文件？'}</h2>
           <button className="nav-icon-button" type="button" aria-label="取消删除" disabled={deleting}

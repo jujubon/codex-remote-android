@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 import type { StartupUpdate } from '../lib/updates';
 import { UpdateIcon } from './Icons';
 
@@ -24,7 +25,7 @@ export function StartupUpdateDialog({ update, onUpdate, onLater }: {
   }, []);
 
   return <dialog ref={dialog} className="session-dialog startup-update-dialog"
-    aria-labelledby="startup-update-title" aria-describedby="startup-update-detail" onClose={onLater}>
+    aria-labelledby="startup-update-title" aria-describedby="startup-update-detail" onClose={event => afterDialogClose(event, onLater)}>
     <div className="startup-update-sheet">
       <span className="startup-update-icon"><UpdateIcon aria-hidden="true" /></span>
       <h2 id="startup-update-title">发现新版本 {update.release.version}</h2>

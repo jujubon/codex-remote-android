@@ -267,6 +267,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, await readAntigravityUsage());
     return;
   }
+  if ((request.method === "GET" || request.method === "POST") && request.url === "/api/device/antigravity/models") {
+    if (!antigravity) throw new FileTransferError("INVALID_ARGUMENT", "Antigravity 暂不可用。", 409);
+    json(response, 200, { models: await antigravity.listModels(request.method === "POST") });
+    return;
+  }
   if (request.method === "POST" && request.url === "/api/device/antigravity/thread/delete") {
     const { threadId } = await readJsonBody(request, 1024);
     if (typeof threadId !== "string" || !/^antigravity:[a-f0-9-]{36}$/i.test(threadId)) {

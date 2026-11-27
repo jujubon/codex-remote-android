@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 import { CloseIcon } from './Icons';
 
 const previewBytes = 64 * 1024;
@@ -57,7 +58,7 @@ export function AttachmentDraftPreview({ draft, onClose }: { draft: AttachmentDr
   const unavailable = () => setPreview({ kind: 'error' });
   const size = draft.size < 1024 ? `${draft.size} B` : draft.size < 1024 ** 2
     ? `${(draft.size / 1024).toFixed(1)} KB` : `${(draft.size / 1024 ** 2).toFixed(1)} MB`;
-  return <dialog ref={dialog} className="inbox-preview attachment-draft-preview" onClose={onClose}
+  return <dialog ref={dialog} className="inbox-preview attachment-draft-preview" onClose={event => afterDialogClose(event, onClose)}
     onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }} aria-label="附件预览">
     <div className="inbox-preview-controls">
       <strong title={draft.name}>{draft.name}</strong>

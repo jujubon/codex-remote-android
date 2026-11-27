@@ -3,11 +3,15 @@ import type { Assistant, ModelOption } from '../types/protocol';
 import { isAbsoluteHostPath } from '../lib/hostPath';
 import { ChevronDownIcon, CloseIcon } from './Icons';
 import { AttachmentDraftPreview } from './AttachmentDraftPreview';
+import { AntigravityModelPicker } from './AntigravityModelPicker';
+import type { AntigravityModelCatalog } from '../hooks/useAntigravityModels';
+import { afterDialogClose } from '../lib/dialogMotion';
 
 interface NewThreadSheetProps {
   initialDirectory?: string;
   desktopOnly: boolean;
   antigravityAttachments?: boolean;
+  antigravityModels: AntigravityModelCatalog;
   assistant: Assistant;
   projectMenus: boolean;
   projectStatus: string;
@@ -18,7 +22,7 @@ interface NewThreadSheetProps {
   onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant?: Assistant, files?: File[]) => Promise<boolean> | boolean;
 }
 
-export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttachments, assistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
+export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttachments, antigravityModels, assistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [prompt, setPrompt] = useState('');
   const usingAntigravity = assistant === 'antigravity';
@@ -29,7 +33,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttac
   const sameDirectory = (path: string) => path.toLowerCase().replaceAll('\\', '/') === cwd.toLowerCase().replaceAll('\\', '/');
   const selectedDirectory = directories.find(sameDirectory);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [model, setModel] = useState(defaultModel);
+  const [model, setModel] = useState(usingAntigravity ? '' : defaultModel);
   const [modelProvider, setModelProvider] = useState('');
   const [error, setError] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -55,7 +59,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttac
     setSending(true);
     setError('');
     try {
-      if (await onStart(selectedDirectory ?? cwd, usingAntigravity ? undefined : model || undefined, usingAntigravity ? undefined : modelProvider || undefined,
+      if (await onStart(selectedDirectory ?? cwd, model || undefined, usingAntigravity ? undefined : modelProvider || undefined,
         prompt.trim(), mode === 'existing' ? undefined : mode, mode === 'newProject' ? projectName.trim() : undefined, assistant, attachments)) dialog.current?.close();
       else setError('未能确认新聊天，消息和附件已保留。');
     } catch (reason) {
@@ -67,7 +71,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttac
   }
 
   return <>
-    <dialog className="session-dialog new-thread-dialog" ref={dialog} aria-labelledby="new-thread-title" onClose={onClose}
+    <dialog className="session-dialog new-thread-dialog" ref={dialog} aria-labelledby="new-thread-title" onClose={event => afterDialogClose(event, onClose)}
       onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
       <div className="session-sheet">
         <div className="sheet-handle" />
@@ -97,6 +101,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttac
               </div>)}
             </div>}
           </div>}
+          {usingAntigravity && <AntigravityModelPicker catalog={antigravityModels} value={model} onChange={setModel} disabled={sending} newThread />}
           {hasProjectModes && <label><span>项目（可选）</span><select value={mode} onChange={event => {
             setMode(event.target.value as typeof mode); setError('');
           }}>
@@ -135,7 +140,7 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttac
             </div>
           )}
           {error && <div className="form-error" role="alert">{error}</div>}
-          <div className="sheet-actions">
+          <div className="sheet-actions balanced-sheet-actions">
             <button className="secondary-button" type="button" onClick={() => dialog.current?.close()}>取消</button>
             <button className="primary-button" type="submit" disabled={sending}>{sending ? '正在创建…' : '开始聊天'}</button>
           </div>

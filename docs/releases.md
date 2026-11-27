@@ -8,6 +8,11 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 1.0.5
+
+- Antigravity CLI 新聊天支持选模型，已有对话可在对话设置中更换模型，下一轮生效。模型列表由电脑上已登录的 CLI 提供。
+- 重做 Codex 对话操作和归档确认，统一三页切换、按钮按压、弹窗、展开和侧滑的反馈，并适配系统减少动态效果设置。
+
 ## 1.0.4
 
 - Codex 首页额度面板可以调用 Cockpit Tools 的本机接口切换账号。双端需使用 Codex Remote 1.0.4，Windows 需运行兼容版 Cockpit Tools。

@@ -26,6 +26,7 @@ import { loadInboxImage, type InboxFile } from './lib/deviceTools';
 import { AssistantDesktopAction } from './components/AssistantDesktopAction';
 import { StartupUpdateDialog } from './components/StartupUpdateDialog';
 import { useAntigravityUsage } from './hooks/useAntigravityUsage';
+import { useAntigravityModels } from './hooks/useAntigravityModels';
 import { useStartupUpdate } from './hooks/useStartupUpdate';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
@@ -71,6 +72,11 @@ export function App() {
   const remote = useRemote(config ?? null, deleteAttachmentsAfterTurn === true);
   const startupUpdate = useStartupUpdate(Boolean(config), remote.hostVersion);
   const antigravityUsage = useAntigravityUsage(config, remote.connectionUrl, remote.phase === 'connected');
+  const antigravityModels = useAntigravityModels(config, remote.connectionUrl, remote.phase === 'connected');
+  const needsAntigravityModels = remote.selectedThread?.assistant === 'antigravity' || (showNewThread && newAssistant === 'antigravity');
+  useEffect(() => {
+    if (needsAntigravityModels) void antigravityModels.refresh();
+  }, [needsAntigravityModels, antigravityModels.refresh]);
   const pageThreads = useMemo(() => remote.threads.filter(thread => (thread.assistant ?? 'codex') === homePage), [remote.threads, homePage]);
   useEffect(() => {
     if (remote.phase !== 'connected' || homePage === 'computer') return;
@@ -328,7 +334,7 @@ export function App() {
           gitDiff={remote.selectedGitDiff}
           models={remote.models}
           skills={remote.skills}
-          selectedModel={remote.selectedModel}
+          selectedModel={remote.selectedThread.assistant === 'antigravity' ? remote.selectedThread.model ?? '' : remote.selectedModel}
           modelPending={remote.modelPending}
           selectedEffort={remote.selectedEffort}
           selectedPermissionMode={remote.selectedPermissionMode}
@@ -339,6 +345,7 @@ export function App() {
           canInterrupt={remote.canInterrupt}
           canSteer={remote.canSteer}
           antigravityAttachments={remote.antigravityAttachments}
+          antigravityModels={antigravityModels}
           currentTurnId={remote.selectedTurnId}
           historyHasMore={Boolean(remote.selectedHistory?.hasMore)}
           historyLoading={remote.historyLoading}
@@ -437,6 +444,7 @@ export function App() {
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
           assistant={newAssistant}
           antigravityAttachments={remote.antigravityAttachments}
+          antigravityModels={antigravityModels}
           projectMenus={newAssistant === 'codex' && remote.desktopProjectMenus} projectStatus={remote.projectStatus}
           directories={[...new Set([
             ...remote.desktopProjects.map(project => project.path),

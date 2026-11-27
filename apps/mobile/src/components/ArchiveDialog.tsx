@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ArchiveRequest, ArchiveResult, ThreadSummary } from '../types/protocol';
 import { ArchiveIcon, ChatIcon, CloseIcon } from './Icons';
+import { afterDialogClose } from '../lib/dialogMotion';
 
 export type ArchiveTarget = 'list' | { id: string; title: string };
 
@@ -62,12 +63,12 @@ export function ArchiveDialog({ target, connected, request, onClose }: {
     } finally { setChanging(undefined); }
   }
 
-  return <dialog className={`session-dialog${target === 'list' ? ' management-dialog archive-browser' : ''}`} ref={dialog} onClose={onClose} aria-labelledby="archive-heading"
+  return <dialog className={`session-dialog${target === 'list' ? ' management-dialog archive-browser' : ' archive-confirm-dialog'}`} ref={dialog} onClose={event => afterDialogClose(event, onClose)} aria-labelledby="archive-heading"
     onClick={event => { if (event.currentTarget === event.target) dialog.current?.close(); }}>
     <div className={`session-sheet ${target === 'list' ? 'list-management' : 'archive-sheet'}`}>
       <header className="sheet-title-row">
         <div className="archive-title">
-          {target === 'list' && <span className="management-icon" aria-hidden="true"><ArchiveIcon /></span>}
+          <span className="management-icon" aria-hidden="true"><ArchiveIcon /></span>
           <h2 id="archive-heading">{target === 'list' ? '已归档对话' : '归档对话'}</h2>
         </div>
         <button type="button" className="icon-button nav-icon-button" aria-label="关闭" onClick={() => dialog.current?.close()}><CloseIcon /></button>
@@ -98,12 +99,19 @@ export function ArchiveDialog({ target, connected, request, onClose }: {
         {error && <p className="computer-feedback" data-tone="error" role="alert">{error}</p>}
         {error && connected && <button type="button" className="secondary-button archive-more" disabled={Boolean(changing)} onClick={() => setPageRequest({ after: pageRequest.after })}>重新读取</button>}
         {cursor && !loading && !error && <button type="button" className="secondary-button archive-more" disabled={!connected || Boolean(changing)} onClick={() => setPageRequest({ after: cursor })}>加载更多</button>}
-      </div> : <>
-        <p>将「{target.title}」移到电脑的已归档对话？之后可从手机首页「管理 → 已归档对话」恢复。</p>
-        <button type="button" className="primary-button" disabled={Boolean(changing) || !connected} onClick={() => void change(target.id, true)}>{changing ? '正在归档…' : '确认归档'}</button>
-        {!connected && <p role="status">电脑未连接。</p>}
-        {error && <p role="alert">{error}</p>}
-      </>}
+      </div> : <div className="archive-confirm-body" aria-busy={Boolean(changing)}>
+        <div className="archive-target">
+          <span className="archive-target-icon" aria-hidden="true"><ChatIcon /></span>
+          <strong>{target.title}</strong>
+        </div>
+        <p className="archive-recovery-note">归档后可在 Codex 首页「管理 → 已归档对话」恢复。</p>
+        {!connected && <p className="computer-feedback" role="status">电脑未连接。</p>}
+        {error && <p className="computer-feedback" data-tone="error" role="alert">{error}</p>}
+        <div className="sheet-actions balanced-sheet-actions">
+          <button type="button" className="secondary-button" onClick={() => dialog.current?.close()}>取消</button>
+          <button type="button" className="primary-button" disabled={Boolean(changing) || !connected} onClick={() => void change(target.id, true)}>{changing ? '正在归档…' : '确认归档'}</button>
+        </div>
+      </div>}
     </div>
   </dialog>;
 }

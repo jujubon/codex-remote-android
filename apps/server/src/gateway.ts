@@ -775,7 +775,7 @@ export class MobileGateway {
             if (message.destination === "newProject") throw new Error("请选择已有项目或使用无项目对话。");
             const { cwd } = await this.mobileWorkspace(message);
             await this.withAntigravityUploads(message.attachments, async files => {
-              const created = await store.create(cwd, message.destination === "projectless", text, this.antigravityCallbacks, files);
+              const created = await store.create(cwd, message.destination === "projectless", text, this.antigravityCallbacks, files, message.model);
               this.socketThreads.get(socket)?.add(created.id);
               this.openAntigravityThread(socket, created.id, message.requestId);
               this.publishAntigravityTurn(created.id, created.turn);
@@ -849,7 +849,15 @@ export class MobileGateway {
         }
         case "thread.settings": {
           const threadId = requiredString(message.threadId, "threadId");
-          if (isAntigravityThread(threadId)) throw new Error("请在电脑端配置 Antigravity 的模型和权限。");
+          if (isAntigravityThread(threadId)) {
+            if (typeof message.model !== "string" || message.effort || message.permissionMode || message.summary || message.collaborationMode)
+              throw new Error("此处可修改 Antigravity 对话的模型。");
+            const store = this.antigravitySessionStore();
+            const settings = await store.updateModel(threadId, message.model);
+            this.upsertThreadSummary(store.summary(threadId));
+            this.send(socket, { type: "thread.settings.updated", requestId: message.requestId, threadId, settings });
+            break;
+          }
           const mobile = await this.isMobileThread(threadId);
           const modelOnly = (message.model || message.effort)
             && !message.permissionMode && !message.collaborationMode && !message.summary;

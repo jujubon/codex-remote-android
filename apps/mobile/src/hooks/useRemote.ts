@@ -210,7 +210,7 @@ export function mergeThreadSummaries(current: RemoteThread[], incoming: ThreadSu
       currentTurnStartedAt: previous?.currentTurnStartedAt,
       lastTurnDurationMs: previous?.lastTurnDurationMs,
       tokenUsage: previous?.tokenUsage,
-      model: previous?.model ?? summary.model,
+      model: summary.assistant === 'antigravity' ? summary.model : previous?.model ?? summary.model,
       effort: previous?.model ? previous.effort : summary.effort,
       permissionMode: previous?.permissionMode,
     };
@@ -1318,7 +1318,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   }, [config, cancelUsageRequest]);
   const changeModelSettings = useCallback((model?: string, effort?: string) => {
     const threadId = selectedThreadRef.current;
-    if (!threadId || modelRequest.current || (!model && !effort)) return false;
+    if (!threadId || modelRequest.current || (model === undefined && !effort)) return false;
     const id = createRequestId('model-settings');
     if (!socketRef.current?.send({ type: 'thread.settings', requestId: id, threadId, model, effort })) return false;
     modelRequest.current = { id, threadId, model, effort };
@@ -3029,6 +3029,10 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   }, [uploadAttachments, waitForSendReceipt]);
 
   const selectModel = useCallback((modelId: string) => {
+    if (selectedThreadRef.current?.startsWith('antigravity:')) {
+      changeModelSettings(modelId);
+      return;
+    }
     const model = models.find(option => option.model === modelId);
     if (model) changeModelSettings(model.model, model.defaultReasoningEffort || undefined);
   }, [models, changeModelSettings]);

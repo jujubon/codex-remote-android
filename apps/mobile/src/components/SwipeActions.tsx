@@ -29,9 +29,9 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const foreground = useRef<HTMLDivElement>(null);
   const gesture = useRef<SwipeGesture | null>(null);
   const preventClick = useRef(false);
-  const [offset, setOffset] = useState<number | null>(null);
   const [direction, setDirection] = useState<-1 | 1>(-1);
   const isForeground = (target: EventTarget | null, root: HTMLElement) =>
     target instanceof Element && target.closest('[data-swipe-id]') === root && !target.closest('.swipe-options');
@@ -62,13 +62,15 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
       if (!pointer.start) pointer.direction = dx > 0 ? 1 : -1;
       setDirection(pointer.direction);
       preventClick.current = true;
+      event.currentTarget.dataset.swipeDragging = 'true';
       event.currentTarget.setPointerCapture(pointer.id);
     }
     const elapsed = event.timeStamp - pointer.lastAt;
-    if (elapsed > 0) pointer.velocity = (event.clientX - pointer.lastX) / elapsed;
+    if (elapsed > 0) pointer.velocity = elapsed > 90 ? 0 : .35 * pointer.velocity + .65 * (event.clientX - pointer.lastX) / elapsed;
     pointer.lastX = event.clientX;
     pointer.lastAt = event.timeStamp;
-    setOffset(pointer.direction * Math.max(0, Math.min(pointer.width, pointer.start + pointer.direction * dx)));
+    const offset = pointer.direction * Math.max(0, Math.min(pointer.width, pointer.start + pointer.direction * dx));
+    if (foreground.current) foreground.current.style.transform = `translate3d(${offset}px, 0, 0)`;
   }
 
   function finish(event: PointerEvent<HTMLDivElement>, cancelled = false) {
@@ -82,13 +84,14 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
       const reveal = flick ? pointer.velocity * pointer.direction > 0 : pointer.start + pointer.direction * dx > pointer.width / 2;
       onChange(reveal ? id : null);
     }
-    setOffset(null);
+    delete event.currentTarget.dataset.swipeDragging;
+    foreground.current?.style.removeProperty('transform');
   }
 
   return (
     <div className={`swipe-shell${project ? ' project-swipe' : ''}`} data-swipe-id={id}
       data-swipe-side={direction === 1 ? 'left' : 'right'}
-      data-swipe-open={open || undefined} data-swipe-dragging={offset != null || undefined}
+      data-swipe-open={open || undefined}
       onPointerDown={start} onPointerMove={move} onPointerUp={finish}
       onPointerCancel={event => finish(event, true)}
       onLostPointerCapture={event => { if (event.target === event.currentTarget) finish(event, true); }}
@@ -127,7 +130,7 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
           <span className="swipe-action-label">{action.icon}<span>{action.label}</span></span>
         </button>)}
       </div>
-      <div className="swipe-content" style={offset == null ? undefined : { transform: `translate3d(${offset}px, 0, 0)` }}>
+      <div className="swipe-content" ref={foreground}>
         {children}
       </div>
     </div>

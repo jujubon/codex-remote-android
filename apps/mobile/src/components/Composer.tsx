@@ -27,6 +27,7 @@ interface CommandOption {
 interface ComposerProps {
   assistantName?: string;
   waitForIdle?: boolean;
+  modelSwitchPending?: boolean;
   allowAttachments?: boolean;
   draftKey: string;
   connected: boolean;
@@ -42,7 +43,7 @@ interface ComposerProps {
   onInterrupt: () => void;
 }
 
-export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, models, skills, inboxFile: selectedInboxFile, loadInboxPreview, onClearInboxFile, assistantName = 'Codex', waitForIdle = false, allowAttachments = true }: ComposerProps) {
+export function Composer({ draftKey, connected, running, onSend, onInterrupt, canInterrupt, canSteer = true, models, skills, inboxFile: selectedInboxFile, loadInboxPreview, onClearInboxFile, assistantName = 'Codex', waitForIdle = false, modelSwitchPending = false, allowAttachments = true }: ComposerProps) {
   const [content, setContent] = useState(() => readComposerDraft(draftKey));
   const [attachmentDraft, setAttachmentDraft] = useState(emptyAttachmentDraft);
   const [draftReady, setDraftReady] = useState(false);
@@ -141,7 +142,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!connected || waitingForTurn || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
+    if (!connected || waitingForTurn || modelSwitchPending || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
     sendingRef.current = true;
     setSending(true);
     try {
@@ -172,7 +173,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   const placeholder = sending
     ? '正在发送…'
-    : !connected ? '等待重新连接…'
+    : !connected ? '等待重新连接…' : modelSwitchPending ? '正在保存模型…'
       : `给 ${assistantName} 发消息…`;
   const sendLabel = deliveryMode === 'queue' ? '排队' : deliveryMode === 'steer' ? '引导' : '发送';
 
@@ -278,7 +279,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
-          disabled={!connected || waitingForTurn || sending || !draftReady || (!content.trim() && !hasAttachments)}
+          disabled={!connected || waitingForTurn || modelSwitchPending || sending || !draftReady || (!content.trim() && !hasAttachments)}
           aria-label={sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >

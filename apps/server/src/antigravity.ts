@@ -1,15 +1,20 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ApprovalDecision, ApprovalRequest, ThreadSummary } from "@codex-mobile/protocol";
-import { acpObject, AntigravityAcp } from "./antigravity-acp.js";
+import { promisify } from "node:util";
+import type { ApprovalDecision, ApprovalRequest, ModelOption, ThreadSummary } from "@codex-mobile/protocol";
+import { acpObject, antigravityCliEnvironment, AntigravityAcp } from "./antigravity-acp.js";
 import type { StoredUpload } from "./file-transfer.js";
 
 const IMAGE_TYPE = /^image\/(?:png|jpeg|gif|webp)$/i;
 const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const MAX_INLINE_TEXT_BYTES = 512 * 1024;
 const APPROVAL_PREFIX = "antigravity-approval:";
+const runCli = promisify(execFile);
+const MODEL_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 
 interface Turn {
   id: string;
@@ -29,6 +34,7 @@ interface Conversation {
   projectless: boolean;
   title: string;
   sessionId?: string;
+  model?: string;
   turns: Turn[];
 }
 
@@ -87,6 +93,9 @@ export class AntigravitySessions {
   private readonly deleting = new Map<string, Promise<void>>();
   private readonly active = new Map<string, { id: string; abort: AbortController }>();
   private readonly permissions = new Map<string, PendingPermission>();
+  private readonly changingModel = new Set<string>();
+  private cachedModels?: { options: ModelOption[]; expires: number };
+  private readingModels?: Promise<ModelOption[]>;
   private writes = Promise.resolve();
 
   private constructor(private readonly filename: string, private readonly executable?: string) {}
@@ -110,6 +119,40 @@ export class AntigravitySessions {
   currentTurn(id: string) { return this.active.get(id)?.id; }
   get hasActiveTurns() { return this.active.size > 0; }
   approvals() { return [...this.permissions.values()].map(permission => permission.approval); }
+
+  listModels(refresh = false): Promise<ModelOption[]> {
+    if (!this.executable) return Promise.reject(new Error("电脑未安装 Antigravity CLI（agy）。"));
+    if (!refresh && this.cachedModels && Date.now() < this.cachedModels.expires) return Promise.resolve(this.cachedModels.options);
+    this.readingModels ??= runCli(this.executable, ["models"], {
+      cwd: homedir(), env: antigravityCliEnvironment(), windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024,
+    }).then(({ stdout }) => {
+      const options = parseAntigravityModels(stdout);
+      if (!options.length) throw new Error("Antigravity CLI 未返回模型。请在电脑上确认 agy 已登录。");
+      this.cachedModels = { options, expires: Date.now() + 300_000 };
+      return options;
+    }, () => {
+      throw new Error("暂时无法读取模型。请在电脑上确认 agy 已登录且可以联网。");
+    }).finally(() => { this.readingModels = undefined; });
+    return this.readingModels;
+  }
+
+  private async validateModel(model: string) {
+    if (typeof model !== "string" || !MODEL_ID.test(model) || !(await this.listModels()).some(option => option.model === model))
+      throw new Error("这个模型当前不可用，请刷新 Antigravity 模型列表。");
+    return model;
+  }
+
+  async updateModel(id: string, requested: string) {
+    const thread = this.getThread(id);
+    if (this.active.has(id)) throw new Error("请等本轮结束后切换模型。");
+    if (this.deleting.has(id) || this.changingModel.has(id)) throw new Error("正在更新这段对话，请稍后再试。");
+    this.changingModel.add(id);
+    try {
+      const model = requested === "" ? undefined : await this.validateModel(requested);
+      await this.save({ modelUpdate: { thread, model } });
+      return { model: model ?? null, effort: null };
+    } finally { this.changingModel.delete(id); }
+  }
 
   resolveApproval(id: string, decision: ApprovalDecision) {
     const pending = this.permissions.get(id);
@@ -138,7 +181,7 @@ export class AntigravitySessions {
     const last = thread.turns.at(-1);
     return {
       id, name: thread.title, cwd: thread.cwd, projectless: thread.projectless, assistant: "antigravity",
-      preview: last?.text ?? thread.title, modelProvider: "antigravity", updatedAt: last?.completedAt ?? last?.startedAt ?? Date.now(),
+      preview: last?.text ?? thread.title, model: thread.model ?? null, modelProvider: "antigravity", updatedAt: last?.completedAt ?? last?.startedAt ?? Date.now(),
       status: this.active.has(id) ? {
         type: "active", activeFlags: this.approvals().some(approval => approval.threadId === id) ? ["waitingOnApproval"] : [],
       } : { type: "idle" },
@@ -151,9 +194,10 @@ export class AntigravitySessions {
   async deleteConversation(id: string): Promise<void> {
     const pending = this.deleting.get(id);
     if (pending) return pending;
+    if (this.changingModel.has(id)) throw new Error("模型正在保存，请稍后删除对话。");
     if (this.active.has(id)) throw new Error("请先结束或停止当前 Antigravity 任务，再删除对话。");
     if (!this.threads.has(id)) return;
-    const operation = this.save(id).finally(() => { this.deleting.delete(id); });
+    const operation = this.save({ removeId: id }).finally(() => { this.deleting.delete(id); });
     this.deleting.set(id, operation);
     return operation;
   }
@@ -167,9 +211,10 @@ export class AntigravitySessions {
     return { turns, history: { hasMore: start > 0, nextCursor: start > 0 ? turns[0]!.id : null, backwardsCursor: null } };
   }
 
-  async create(cwd: string, projectless: boolean, text: string, callbacks: (id: string, turnId: string) => Callbacks, attachments?: StoredUpload[]) {
+  async create(cwd: string, projectless: boolean, text: string, callbacks: (id: string, turnId: string) => Callbacks, attachments?: StoredUpload[], model?: string) {
     const id = `antigravity:${randomUUID()}`;
-    this.threads.set(id, { id, cwd, projectless, title: text.replace(/\s+/g, " ").slice(0, 100), turns: [] });
+    const selected = model === undefined ? undefined : await this.validateModel(model);
+    this.threads.set(id, { id, cwd, projectless, model: selected, title: text.replace(/\s+/g, " ").slice(0, 100), turns: [] });
     try { return { id, turn: await this.start(id, text, callbacks, undefined, attachments) }; }
     catch (error) { this.threads.delete(id); throw error; }
   }
@@ -189,6 +234,7 @@ export class AntigravitySessions {
       return canonicalTurn(received);
     }
     if (this.active.has(id)) throw new Error("Antigravity 正在执行，请等本轮结束。");
+    if (this.changingModel.has(id)) throw new Error("正在保存模型，请稍后再发送。");
     if (!thread.sessionId && thread.turns.some(turn => turn.status === "completed"))
       throw new Error("Antigravity 没有返回可续聊的会话编号，请新建对话。");
     const turn: Turn = { id: randomUUID(), text, clientUserMessageId, response: "", startedAt: Date.now(),
@@ -210,17 +256,17 @@ export class AntigravitySessions {
 
   close() { for (const { abort } of this.active.values()) abort.abort(); }
 
-  private save(removeId?: string) {
-    const snapshot = [...this.threads.values()].filter(thread => thread.turns.length)
-      .map(thread => ({ id: thread.id, value: JSON.stringify(thread) }));
+  private save({ removeId, modelUpdate }: { removeId?: string; modelUpdate?: { thread: Conversation; model?: string } } = {}) {
     const next = this.writes.then(async () => {
-      const values = snapshot.filter(thread => thread.id !== removeId && this.threads.has(thread.id)).map(thread => thread.value);
+      const values = [...this.threads.values()].filter(thread => thread.turns.length && thread.id !== removeId)
+        .map(thread => JSON.stringify(modelUpdate?.thread === thread ? { ...thread, model: modelUpdate.model } : thread));
       const temporary = `${this.filename}.${randomUUID()}.tmp`;
       await mkdir(dirname(this.filename), { recursive: true });
       try {
         await writeFile(temporary, `[${values.join(",")}]`, { mode: 0o600 });
         await rename(temporary, this.filename);
         if (removeId) this.threads.delete(removeId);
+        if (modelUpdate) modelUpdate.thread.model = modelUpdate.model;
       } finally { await rm(temporary, { force: true }); }
     });
     this.writes = next.catch(() => undefined);
@@ -311,6 +357,14 @@ export class AntigravitySessions {
       const modes = acpObject(session.modes);
       if (typeof modes?.currentModeId === "string" && modes.currentModeId !== "default")
         await acp.request("session/set_mode", { sessionId, modeId: "default" });
+      if (thread.model) {
+        const models = acpObject(session.models);
+        if (!Array.isArray(models?.availableModels) ||
+            !models.availableModels.some(value => acpObject(value)?.modelId === thread.model)) {
+          throw new Error("已选模型在这个 Antigravity 会话中不可用，请选用其他模型。");
+        }
+        if (models.currentModelId !== thread.model) await acp.request("session/set_model", { sessionId, modelId: thread.model });
+      }
       const prompt = [{ type: "text", text: turn.text }, ...await Promise.all((turn.attachments ?? []).map(file =>
         attachmentBlock(file, acpObject(agent?.promptCapabilities))))];
       signal.throwIfAborted();
@@ -343,6 +397,17 @@ export class AntigravitySessions {
       callbacks.completed(canonicalTurn(turn));
     }
   }
+}
+
+export function parseAntigravityModels(output: string): ModelOption[] {
+  const options = new Map<string, ModelOption>();
+  for (const line of output.split(/\r?\n/)) {
+    const [id, name] = line.trim().split("\t", 2);
+    if (!id || !MODEL_ID.test(id) || !name?.trim() || options.has(id)) continue;
+    options.set(id, { id, model: id, displayName: name.trim().slice(0, 160), description: "", hidden: false,
+      isDefault: false, defaultReasoningEffort: null, supportedReasoningEfforts: [] });
+  }
+  return [...options.values()].slice(0, 100);
 }
 
 async function attachmentBlock(file: StoredUpload, capabilities?: Record<string, unknown>): Promise<Record<string, unknown>> {

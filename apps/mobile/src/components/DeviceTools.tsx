@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import type { RemoteConfig } from '../lib/configStore';
@@ -204,7 +205,7 @@ export function DevicePowerDialog({ config, phase, threadId, onClose }: {
   const { status, updateStatus } = useDeviceStatus(config, phase === 'connected');
   useEffect(() => { if (!dialog.current?.open) dialog.current?.showModal(); }, []);
 
-  return <dialog className="session-dialog" ref={dialog} onClose={onClose} aria-labelledby="device-power-title">
+  return <dialog className="session-dialog" ref={dialog} onClose={event => afterDialogClose(event, onClose)} aria-labelledby="device-power-title">
     <div className="session-sheet device-power-sheet">
       <header className="sheet-title-row">
         <h2 id="device-power-title">熄屏挂机</h2>

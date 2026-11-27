@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import { afterDialogClose } from '../lib/dialogMotion';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
 import type { AccountUsage, UsageResetCard, UsageResetOutcome } from '../types/protocol';
@@ -81,7 +82,10 @@ export function UsageResetCards({ resets, config, refresh }: {
     {count > 0 && !cards.length && <p>电脑暂未提供卡片详情，请刷新额度。</p>}
     {receipt && <p role="status">{receipt}</p>}
     <dialog ref={dialog} className="usage-reset-dialog" aria-labelledby={dialogTitle} data-confirming={stage === 'confirming' || undefined}
-      onCancel={event => { if (sending.current) event.preventDefault(); }} onClose={() => { attempt.current++; setStage(undefined); setToken(''); }}>
+      onCancel={event => { if (sending.current) event.preventDefault(); }} onClose={event => {
+        attempt.current++;
+        afterDialogClose(event, () => { setStage(undefined); setToken(''); });
+      }}>
       <div className="usage-reset-confirmation">
         <h2 id={dialogTitle}>使用这张重置卡？</h2>
         {selected && <div><strong>{cardName(selected)}</strong>{selected.expiresAt && <small>{expiration(selected)}</small>}</div>}
