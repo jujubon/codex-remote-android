@@ -3,6 +3,7 @@ import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
+import { AntigravityDeleteDialog, type AntigravityDeleteTarget } from './components/AntigravityDeleteDialog';
 import { ConversationScreen } from './components/ConversationScreen';
 import { ComputerScreen } from './components/ComputerScreen';
 import { stopCrossNetworkReader } from './components/CrossNetworkReader';
@@ -14,8 +15,8 @@ import { SetupScreen } from './components/SetupScreen';
 import { ThreadList, type ThreadListPosition } from './components/ThreadList';
 import { AccountUsagePanel } from './components/AccountUsagePanel';
 import { useHiddenProjects, useHiddenThreads, useRemovedProjects } from './lib/hiddenProjects';
-import { composerDraftKey, forgetComposerDrafts } from './lib/composerDraft';
-import { forgetAttachmentDrafts } from './lib/attachmentDrafts';
+import { composerDraftKey, forgetComposerDrafts, saveComposerDraft } from './lib/composerDraft';
+import { emptyAttachmentDraft, forgetAttachmentDrafts, saveAttachmentDraft } from './lib/attachmentDrafts';
 import { loadAttachmentCleanupPreference, saveAttachmentCleanupPreference } from './lib/attachmentPreferences';
 import { cacheScope } from './lib/remoteCache';
 import { useRemote } from './hooks/useRemote';
@@ -51,6 +52,7 @@ export function App() {
   const lastAssistantPage = useRef<Assistant>(homePage === 'antigravity' ? 'antigravity' : 'codex');
   const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
+  const [deleteAntigravityTarget, setDeleteAntigravityTarget] = useState<AntigravityDeleteTarget>();
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
   const [newAssistant, setNewAssistant] = useState<Assistant>('codex');
@@ -390,6 +392,7 @@ export function App() {
           quotaPercent={quotaPercent}
           onOpenQuota={activeUsage.refresh}
           onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
+          onDelete={homePage === 'antigravity' ? thread => setDeleteAntigravityTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}
           hiddenThreads={hiddenThreads}
           removed={removed}
@@ -408,6 +411,16 @@ export function App() {
       {taskPowerThreadId && taskPowerThreadId === remote.selectedThreadId &&
         <DevicePowerDialog config={config} phase={remote.phase} threadId={taskPowerThreadId} onClose={() => setTaskPowerThreadId(null)} />}
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
+      {deleteAntigravityTarget && <AntigravityDeleteDialog target={deleteAntigravityTarget}
+        disabled={remote.phase !== 'connected' || remote.threads.some(thread => thread.id === deleteAntigravityTarget.id &&
+          ['running', 'waiting_approval', 'waiting_input'].includes(thread.state))}
+        onDelete={async id => {
+          await remote.deleteAntigravityThread(id);
+          const key = composerDraftKey(cacheScope(config.serverUrl, config.pairingToken), id);
+          saveComposerDraft(key, '');
+          void saveAttachmentDraft(key, emptyAttachmentDraft).catch(() => undefined);
+        }}
+        onClose={() => setDeleteAntigravityTarget(undefined)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
           assistant={newAssistant}

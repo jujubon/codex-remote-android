@@ -51,9 +51,8 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
         <ComputerCardHeading title="连接状态" icon={<GaugeIcon />}>
           <ConnectionStatus phase={phase} detail={detail} onReconnect={onReconnect} compact />
         </ComputerCardHeading>
-        {endpoint && <div className="computer-setting-row connection-route"><span>{routeLabel}</span><strong>{endpoint}</strong></div>}
         {detail && !connected && <p className="computer-feedback" role="status">{detail}</p>}
-        <ConnectionDiagnostics key={`${phase}:${active}`} config={deviceConfig} sync={checkSync} />
+        <ConnectionDiagnostics key={`${phase}:${active}`} config={deviceConfig} sync={checkSync} endpoint={endpoint} routeLabel={routeLabel} />
       </section>
       <CodexDesktopCard key={`codex:${active}`} config={deviceConfig} connected={connected}
         state={status?.codexDesktop} onState={updateCodexDesktop} />

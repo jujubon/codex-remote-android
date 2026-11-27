@@ -235,6 +235,15 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 200, await readAntigravityUsage());
     return;
   }
+  if (request.method === "POST" && request.url === "/api/device/antigravity/thread/delete") {
+    const { threadId } = await readJsonBody(request, 1024);
+    if (typeof threadId !== "string" || !/^antigravity:[a-f0-9-]{36}$/i.test(threadId)) {
+      throw new FileTransferError("INVALID_ARGUMENT", "无效的 Antigravity 对话编号。", 400);
+    }
+    await gateway.deleteAntigravityThread(threadId);
+    json(response, 200, { threadId });
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/inbox") {
     json(response, 200, { files: await inbox.list((await device.settings()).folder) });
     return;

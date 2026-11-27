@@ -109,6 +109,13 @@ export class MobileGateway {
       .then(accountUsage)
       .finally(() => { this.pendingUsage = undefined; });
   }
+
+  async deleteAntigravityThread(threadId: string): Promise<void> {
+    await this.antigravitySessionStore().deleteConversation(threadId);
+    for (const socket of this.wss.clients) this.socketThreads.get(socket)?.delete(threadId);
+    this.updateThreadIndexFromNotification("thread/deleted", { threadId });
+    this.broadcast({ type: "event", method: "antigravity/threadDeleted", params: { threadId } });
+  }
   private readonly wss: WebSocketServer;
   private readonly approvals = new Map<number | string, RpcEnvelope>();
   private readonly desktopApprovalKeys = new Set<number | string>();

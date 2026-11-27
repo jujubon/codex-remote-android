@@ -84,6 +84,7 @@ export async function findAntigravityCli(env: NodeJS.ProcessEnv = process.env): 
 
 export class AntigravitySessions {
   private readonly threads = new Map<string, Conversation>();
+  private readonly deleting = new Map<string, Promise<void>>();
   private readonly active = new Map<string, { id: string; abort: AbortController }>();
   private readonly permissions = new Map<string, PendingPermission>();
   private writes = Promise.resolve();
@@ -146,6 +147,16 @@ export class AntigravitySessions {
 
   list() { return [...this.threads.keys()].map(id => this.summary(id)); }
 
+  async deleteConversation(id: string): Promise<void> {
+    const pending = this.deleting.get(id);
+    if (pending) return pending;
+    if (this.active.has(id)) throw new Error("请先结束或停止当前 Antigravity 任务，再删除对话。");
+    if (!this.threads.has(id)) return;
+    const operation = this.save(id).finally(() => { this.deleting.delete(id); });
+    this.deleting.set(id, operation);
+    return operation;
+  }
+
   page(id: string, limit: number, cursor?: string | null) {
     const thread = this.getThread(id);
     const end = cursor ? thread.turns.findIndex(turn => turn.id === cursor) : thread.turns.length;
@@ -164,6 +175,7 @@ export class AntigravitySessions {
 
   async start(id: string, text: string, callbacks: (id: string, turnId: string) => Callbacks,
     clientUserMessageId?: string, attachments: StoredUpload[] = []) {
+    if (this.deleting.has(id)) throw new Error("正在删除这段 Antigravity 对话。");
     if (!this.executable) throw new Error("电脑未安装 Antigravity CLI（agy）。");
     if (text.length > 20_000) throw new Error("消息过长，请缩短后再发送。");
     if (attachments.length > 10 || attachments.reduce((sum, file) => sum + file.size, 0) > MAX_ATTACHMENT_BYTES)
@@ -197,14 +209,17 @@ export class AntigravitySessions {
 
   close() { for (const { abort } of this.active.values()) abort.abort(); }
 
-  private save() {
-    const snapshot = JSON.stringify([...this.threads.values()].filter(thread => thread.turns.length));
+  private save(removeId?: string) {
+    const snapshot = [...this.threads.values()].filter(thread => thread.turns.length)
+      .map(thread => ({ id: thread.id, value: JSON.stringify(thread) }));
     const next = this.writes.then(async () => {
+      const values = snapshot.filter(thread => thread.id !== removeId && this.threads.has(thread.id)).map(thread => thread.value);
       const temporary = `${this.filename}.${randomUUID()}.tmp`;
       await mkdir(dirname(this.filename), { recursive: true });
       try {
-        await writeFile(temporary, snapshot, { mode: 0o600 });
+        await writeFile(temporary, `[${values.join(",")}]`, { mode: 0o600 });
         await rename(temporary, this.filename);
+        if (removeId) this.threads.delete(removeId);
       } finally { await rm(temporary, { force: true }); }
     });
     this.writes = next.catch(() => undefined);

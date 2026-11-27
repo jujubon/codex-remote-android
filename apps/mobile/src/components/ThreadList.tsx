@@ -140,6 +140,7 @@ interface ThreadListProps {
   quotaPercent?: number;
   onOpenQuota?: () => void;
   onArchive?: (thread: RemoteThread) => void;
+  onDelete?: (thread: RemoteThread) => void;
   hidden: ReturnType<typeof useHiddenProjects>;
   hiddenThreads: ReturnType<typeof useHiddenProjects>;
   removed: ReturnType<typeof useHiddenProjects>;
@@ -313,7 +314,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -387,6 +388,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
     return <SwipeActions id={id} open={swipe === id} onChange={setSwipe} actions={[
       { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hiddenThreads.setHidden(thread.id, true) },
       ...(onArchive && thread.assistant !== 'antigravity' ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
+      ...(onDelete && thread.assistant === 'antigravity' ? [{ label: '删除', tone: 'delete' as const, icon: <TrashIcon />, onSelect: () => onDelete(thread) }] : []),
     ]}>{card}</SwipeActions>;
   };
 

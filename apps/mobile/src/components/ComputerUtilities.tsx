@@ -5,12 +5,14 @@ import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
 import { checkLatestRelease, compareReleaseVersions, releasePage, type RemoteRelease } from '../lib/updates';
 import { ComputerCardHeading } from './ComputerCardHeading';
-import { UpdateIcon } from './Icons';
+import { GaugeIcon, UpdateIcon } from './Icons';
 
 type CheckResult = { ms: number; error?: string };
 const checks = ['电脑回执', 'Codex 额度请求', '对话列表同步'] as const;
 
-export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; sync: () => Promise<void> }) {
+export function ConnectionDiagnostics({ config, sync, endpoint, routeLabel }: {
+  config: RemoteConfig; sync: () => Promise<void>; endpoint: string; routeLabel: string;
+}) {
   const [results, setResults] = useState<Partial<Record<(typeof checks)[number], CheckResult>>>();
   const running = Boolean(results && Object.keys(results).length < checks.length);
 
@@ -23,7 +25,7 @@ export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; 
     ];
     checks.forEach((check, index) => {
       const started = performance.now();
-      void operations[index]!().then(
+      void Promise.resolve().then(operations[index]!).then(
         () => setResults(current => ({ ...current, [check]: { ms: performance.now() - started } })),
         error => setResults(current => ({ ...current, [check]: {
           ms: performance.now() - started,
@@ -34,7 +36,12 @@ export function ConnectionDiagnostics({ config, sync }: { config: RemoteConfig; 
   }
 
   return <div className="connection-diagnostics" aria-busy={running}>
-    <button className="secondary-button" type="button" disabled={running} onClick={run}>{running ? '正在自检…' : '连接自检'}</button>
+    <div className="computer-setting-row connection-route">
+      <span><small>{routeLabel}</small><strong title={endpoint}>{endpoint || '等待连接'}</strong></span>
+      <button className="connection-check-button" type="button" disabled={running} onClick={run}>
+        <GaugeIcon aria-hidden="true" /><span>{running ? '正在自检…' : results ? '重新自检' : '连接自检'}</span>
+      </button>
+    </div>
     {results && <dl className="computer-check-results computer-reveal" aria-live="polite">{checks.map(check => {
       const result = results[check];
       return <div key={check}>

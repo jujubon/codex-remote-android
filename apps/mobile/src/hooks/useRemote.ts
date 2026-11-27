@@ -1660,6 +1660,31 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     }
   }, [clearThreadAttentionNotification, updateAttentionNotification]);
 
+  const forgetAntigravityThread = useCallback((threadId: string) => {
+    if (!threadId.startsWith('antigravity:')) return;
+    replaceThreadsAndSyncAttention(threadsRef.current.filter(thread => thread.id !== threadId));
+    setMessagesByThread(current => {
+      const { [threadId]: removed, ...remaining } = current;
+      return removed ? remaining : current;
+    });
+    setHistoryByThread(current => {
+      const { [threadId]: removed, ...remaining } = current;
+      return removed ? remaining : current;
+    });
+    if (selectedThreadRef.current === threadId) {
+      selectedThreadRef.current = null;
+      setSelectedThreadId(null);
+    }
+  }, [replaceThreadsAndSyncAttention]);
+
+  const deleteAntigravityThread = useCallback(async (threadId: string) => {
+    if (!config) throw new Error('电脑未连接。');
+    const result = await deviceRequest<{ threadId: string }>({ ...config, serverUrl: socketRef.current?.serverUrl ?? config.serverUrl },
+      'antigravity/thread/delete', { threadId });
+    if (result.threadId !== threadId) throw new Error('电脑未确认删除，请刷新列表核对。');
+    forgetAntigravityThread(threadId);
+  }, [config, forgetAntigravityThread]);
+
   const flushPendingMessageDeltas = useCallback(() => {
     if (pendingMessageDeltaTimerRef.current != null) {
       window.clearTimeout(pendingMessageDeltaTimerRef.current);
@@ -2326,7 +2351,10 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           break;
         }
         case 'event':
-          handleEvent(message.method, message.params);
+          if (message.method === 'antigravity/threadDeleted') {
+            const threadId = record(message.params)?.threadId;
+            if (typeof threadId === 'string') forgetAntigravityThread(threadId);
+          } else handleEvent(message.method, message.params);
           break;
         case 'approvals.snapshot': {
           const next = message.approvals.map(normalizeApproval);
@@ -2480,7 +2508,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       }
       if (typeof message.syncCursor === 'number') syncCursorRef.current = Math.max(syncCursorRef.current, message.syncCursor);
     },
-    [applyPermissionModeSnapshot, clearThreadAttentionNotification, handleEvent, observeCompactionSnapshot, replaceThreadsAndSyncAttention, reportCompactionFailure, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
+    [applyPermissionModeSnapshot, clearThreadAttentionNotification, forgetAntigravityThread, handleEvent, observeCompactionSnapshot, replaceThreadsAndSyncAttention, reportCompactionFailure, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
   );
   handleMessageRef.current = handleMessage;
 
@@ -3172,7 +3200,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     antigravityAvailable,
     antigravityAttachments,
     canSteer,
-    archiveSupported, archiveRequest,
+    archiveSupported, archiveRequest, deleteAntigravityThread,
     desktopProjectMenus, desktopProjects, projectStatus, refreshProjects, serverId: serverIdRef.current,
     usage, usageStatus, refreshUsage, modelPending,
     queueReceipt,

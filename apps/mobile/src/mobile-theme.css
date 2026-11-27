@@ -640,6 +640,17 @@
 .management-item-copy small { color: var(--muted); font-size: 11px; }
 .management-restore { min-height: 40px; padding-inline: 10px; border: 0; border-radius: 9px; background: var(--surface-subtle); color: var(--accent); font-size: 12px; font-weight: 600; }
 .management-row:active, .management-restore:active { background: var(--surface-pressed); }
+.archive-browser { background: var(--surface-subtle); }
+.archive-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.archive-browser-body { padding-block-start: 4px; gap: 10px; }
+.archive-thread-list { list-style: none; }
+.archive-thread-row { grid-template-columns: 34px minmax(0, 1fr) auto; min-height: 66px; }
+.archive-thread-row .management-item-copy strong { font-size: .875rem; }
+.archive-thread-row .management-item-copy small { font-size: .75rem; }
+.archive-thread-row .management-restore { min-width: 54px; min-height: 44px; background: var(--accent-soft); }
+.archive-empty { display: grid; justify-items: center; gap: 10px; padding: 24px 12px; color: var(--muted); font-size: .875rem; }
+.archive-message { margin: 0; color: var(--muted); font-size: .8125rem; text-align: center; }
+.archive-more { justify-self: center; padding-inline: 18px; }
 
 .home-nav {
   display: grid;
@@ -709,7 +720,24 @@
 }
 .computer-connection .connection-status { max-width: 100%; min-height: 32px; padding-inline: 9px; font-size: .8125rem; }
 .connection-route { font-size: .8125rem; }
-.connection-route > strong { text-align: end; overflow-wrap: anywhere; }
+.connection-route > span > strong { overflow-wrap: anywhere; }
+.connection-check-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: none;
+  min-height: 44px;
+  padding-inline: 9px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.connection-check-button svg { width: 16px; height: 16px; }
 .computer-scroll .device-tools { display: grid; gap: 12px; }
 .computer-scroll .device-tools > p { margin: 0; }
 .computer-scroll .device-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 10px; }
@@ -747,7 +775,7 @@
 .computer-feedback { margin: 0; padding: 9px 11px; border-radius: 10px; color: var(--muted); background: var(--surface-subtle); font-size: .8125rem; overflow-wrap: anywhere; }
 :is(.computer-status-pill, .computer-feedback)[data-tone='success'] { color: #226149; background: #edf7f1; }
 :is(.computer-status-pill, .computer-feedback)[data-tone='error'] { color: #8b3045; background: #fff0f3; }
-.connection-diagnostics { display: grid; gap: 10px; justify-items: start; }
+.connection-diagnostics { display: grid; gap: 8px; min-width: 0; }
 .computer-check-results { display: grid; width: 100%; margin: 0; padding: 0 10px; border: 1px solid var(--line); border-radius: 12px; font-size: .8125rem; }
 .computer-check-results > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding-block: 8px; gap: 4px 10px; }
 .computer-check-results > div + div { border-top: 1px solid var(--line); }
