@@ -7,9 +7,8 @@ import { AttachmentDraftPreview } from './AttachmentDraftPreview';
 interface NewThreadSheetProps {
   initialDirectory?: string;
   desktopOnly: boolean;
-  antigravityAvailable?: boolean;
   antigravityAttachments?: boolean;
-  initialAssistant?: Assistant;
+  assistant: Assistant;
   projectMenus: boolean;
   projectStatus: string;
   directories: string[];
@@ -19,10 +18,9 @@ interface NewThreadSheetProps {
   onStart: (cwd: string, model?: string, modelProvider?: string, prompt?: string, destination?: 'projectless' | 'newProject', projectName?: string, assistant?: Assistant, files?: File[]) => Promise<boolean> | boolean;
 }
 
-export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvailable, antigravityAttachments, initialAssistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
+export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAttachments, assistant, projectMenus, projectStatus, directories, models, defaultModel, onClose, onStart }: NewThreadSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [prompt, setPrompt] = useState('');
-  const [assistant, setAssistant] = useState<Assistant>(antigravityAvailable && initialAssistant === 'antigravity' ? 'antigravity' : 'codex');
   const usingAntigravity = assistant === 'antigravity';
   const hasProjectModes = projectMenus || usingAntigravity;
   const [cwd, setCwd] = useState(initialDirectory ?? '');
@@ -78,13 +76,6 @@ export function NewThreadSheet({ initialDirectory, desktopOnly, antigravityAvail
           <button className="icon-button nav-icon-button" type="button" onClick={() => dialog.current?.close()} aria-label="关闭"><CloseIcon /></button>
         </div>
         <form className="new-thread-form" onSubmit={submit}>
-          {antigravityAvailable && <label><span>助手</span><select value={assistant} disabled={sending} onChange={event => {
-            const next = event.target.value as Assistant;
-            setAssistant(next);
-            if (next === 'antigravity' && (mode === 'newProject' || !cwd)) setMode('projectless');
-            if (next === 'codex' && !projectMenus) setMode('existing');
-            setError('');
-          }}><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select></label>}
           {(desktopOnly || usingAntigravity) && <label><span>首条消息</span><textarea required={!(useAttachments && files.length)} disabled={sending} placeholder={`给 ${usingAntigravity ? 'Antigravity' : 'Codex'} 发消息…`} rows={3} maxLength={4000} value={prompt} onChange={event => setPrompt(event.target.value)} /></label>}
           {useAttachments && <div className="new-thread-attachments">
             <label className="secondary-button">添加附件

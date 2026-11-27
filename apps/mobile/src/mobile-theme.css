@@ -528,11 +528,8 @@
 .project-list-toolbar { min-height: 44px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; color: var(--muted); font-size: .8125rem; }
 .project-list-actions { display: flex; align-items: center; gap: 6px; }
 .project-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; min-width: 0; }
-.assistant-filter { min-height: 34px; max-width: 118px; padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
-.thread-assistant { display: none; }
-.multi-assistant .thread-assistant { display: inline-flex; align-items: center; border-radius: 5px; padding: 2px 5px; background: var(--surface-subtle); color: var(--muted); font-size: .68rem; font-weight: 600; }
-.multi-assistant .thread-assistant[data-assistant='antigravity'] { background: var(--accent-soft); color: var(--accent); }
 .project-list-actions .quota-button { color: var(--accent); }
+.project-list-actions .antigravity-desktop-link { white-space: nowrap; }
 .session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
 .session-sheet .git-diff-panel { margin: 0; background: transparent; }
 .session-sheet .git-diff-panel > details > summary { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; min-height: 46px; }
@@ -605,28 +602,28 @@
 .home-nav {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 6px calc(var(--app-safe-right) + 18px) calc(var(--app-safe-bottom) + 6px) calc(var(--app-safe-left) + 18px);
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
 .home-nav button {
-  display: flex;
-  min-height: 48px;
+  display: grid;
+  min-height: 52px;
   min-width: 0;
   padding: 6px;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  place-content: center;
+  justify-items: center;
+  gap: 4px;
   border: 0;
   border-radius: 13px;
   background: transparent;
   color: var(--muted);
-  font-size: .875rem;
+  font-size: .75rem;
   font-weight: 650;
 }
+.home-nav button svg { width: 19px; height: 19px; }
 .home-nav button[aria-current=page] { background: var(--accent-soft); color: var(--accent); }
 .home-notice .error-toast { bottom: calc(var(--app-safe-bottom) + 65px); }
 .error-toast.receipt-toast { align-items: center; border-color: #d4e4da; border-left-color: #397351; background: #f1f9f4; color: #285b3e; }

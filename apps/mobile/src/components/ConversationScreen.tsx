@@ -817,7 +817,8 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       </section>}
           {thread.mobileManaged && <p className="session-settings-note">模型与思考强度在手机发起的下一轮生效。</p>}
           {thread.mobileSendOnly && <p className="session-settings-note">模型与思考强度仅用于手机普通发送。</p>}
-          {antigravity ? <p className="session-settings-note">使用电脑上 Antigravity CLI 的模型和权限设置。</p> : accountPanel}
+          {antigravity && <p className="session-settings-note">使用电脑上 Antigravity CLI 的模型和权限设置。</p>}
+          {accountPanel}
           <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
           {notice}
         </div>}

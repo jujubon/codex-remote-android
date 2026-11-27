@@ -1,7 +1,7 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { ConversationScreen } from './components/ConversationScreen';
 import { ComputerScreen } from './components/ComputerScreen';
@@ -22,9 +22,21 @@ import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
 import { loadInboxImage, type InboxFile } from './lib/deviceTools';
+import { openAntigravityPortal } from './lib/antigravityPortal';
+import { useAntigravityUsage } from './hooks/useAntigravityUsage';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 import type { Assistant } from './types/protocol';
+
+const assistantPageKey = 'codex-mobile.assistant-page.v1';
+function savedAssistantPage(): Assistant {
+  try { return localStorage.getItem(assistantPageKey) === 'antigravity' ? 'antigravity' : 'codex'; }
+  catch { return 'codex'; }
+}
+
+function emptyListPosition(): ThreadListPosition {
+  return { query: '', filter: '全部项目', scrollTop: 0 };
+}
 
 export function popThreadBackStack(stack: string[]): { previousThreadId: string | null; remaining: string[] } {
   if (stack.length === 0) return { previousThreadId: null, remaining: [] };
@@ -35,33 +47,49 @@ export function App() {
   const [config, setConfig] = useState<RemoteConfig | null | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState<boolean>();
-  const [homePage, setHomePage] = useState<HomePage>('projects');
+  const [homePage, setHomePage] = useState<HomePage>(savedAssistantPage);
+  const lastAssistantPage = useRef<Assistant>(homePage === 'antigravity' ? 'antigravity' : 'codex');
   const [taskPowerThreadId, setTaskPowerThreadId] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
-  const [newAssistant, setNewAssistant] = useState<Assistant>();
+  const [newAssistant, setNewAssistant] = useState<Assistant>('codex');
+  const [portalError, setPortalError] = useState('');
   const [backgroundError, setBackgroundError] = useState('');
   const [inboxSelection, setInboxSelection] = useState<{ file: InboxFile; threadId?: string }>();
   const [attention, setAttention] = useState<{ threadId: string; target: AttentionTarget }>();
   const [selectedAgentByThread, setSelectedAgentByThread] = useState<Record<string, string | null>>({});
   const threadBackStackRef = useRef<string[]>([]);
-  const threadListPosition = useRef<ThreadListPosition>({ query: '', filter: '全部项目', scrollTop: 0 });
+  const codexPosition = useRef<ThreadListPosition>(emptyListPosition());
+  const antigravityPosition = useRef<ThreadListPosition>(emptyListPosition());
   const remote = useRemote(config ?? null, deleteAttachmentsAfterTurn === true);
+  const antigravityUsage = useAntigravityUsage(config, remote.connectionUrl, remote.phase === 'connected');
+  const pageThreads = useMemo(() => remote.threads.filter(thread => (thread.assistant ?? 'codex') === homePage), [remote.threads, homePage]);
   const listHost = remote.serverId ?? config?.serverUrl ?? '';
-  const hidden = useHiddenProjects(listHost);
+  const activeAssistant = homePage === 'computer' ? lastAssistantPage.current : homePage;
+  const projectHost = activeAssistant === 'antigravity' ? `antigravity:${listHost}` : listHost;
+  const hidden = useHiddenProjects(projectHost);
   const hiddenThreads = useHiddenThreads(listHost);
-  const removed = useRemovedProjects(listHost);
+  const removed = useRemovedProjects(projectHost);
   const showDirectory = (path: string) => Boolean(path) && !hidden.isHidden(path) && !removed.isHidden(path);
+
+  const goToPage = useCallback((page: HomePage) => {
+    setHomePage(page);
+    setPortalError('');
+    if (page !== 'computer') {
+      lastAssistantPage.current = page;
+      try { localStorage.setItem(assistantPageKey, page); } catch { /* Keep the preference in memory. */ }
+    }
+  }, []);
 
   const openRootThread = useCallback((threadId: string, target?: AttentionTarget) => {
     threadBackStackRef.current = [];
-    setHomePage('projects');
+    goToPage(threadId.startsWith('antigravity:') ? 'antigravity' : 'codex');
     setTaskPowerThreadId(null);
     setAttention(target ? { threadId, target } : undefined);
     setSelectedAgentByThread((current) => ({ ...current, [threadId]: null }));
     remote.selectThread(threadId);
-  }, [remote.selectThread]);
+  }, [goToPage, remote.selectThread]);
 
   useEffect(() => {
     const threadId = remote.selectedThread?.id;
@@ -152,7 +180,7 @@ export function App() {
       else if (showNewThread) setShowNewThread(false);
       else if (showSettings) setShowSettings(false);
       else if (remote.selectedThreadId) navigateBack();
-      else if (homePage === 'computer') setHomePage('projects');
+      else if (homePage === 'computer') goToPage(lastAssistantPage.current);
       else void CapacitorApp.exitApp();
     }).then((handle) => {
       if (disposed) void handle.remove();
@@ -162,7 +190,7 @@ export function App() {
       disposed = true;
       void listener?.remove();
     };
-  }, [homePage, navigateBack, remote.selectedThreadId, showNewThread, showSettings]);
+  }, [goToPage, homePage, navigateBack, remote.selectedThreadId, showNewThread, showSettings]);
 
 
   useEffect(() => {
@@ -188,12 +216,13 @@ export function App() {
       forgetComposerDrafts(scope);
       await forgetAttachmentDrafts(composerDraftKey(scope, '')).catch(() => undefined);
     }
-    threadListPosition.current = { query: '', filter: '全部项目', scrollTop: 0 };
+    codexPosition.current = emptyListPosition();
+    antigravityPosition.current = emptyListPosition();
     setShowSettings(false);
     setConfig(null);
     setInboxSelection(undefined);
     setAttention(undefined);
-    setHomePage('projects');
+    goToPage('codex');
   }
 
   if (config === undefined) {
@@ -205,7 +234,10 @@ export function App() {
     );
   }
 
-  const accountPanel = <AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} />;
+  const activeUsage = activeAssistant === 'antigravity'
+    ? { ...antigravityUsage, assistantName: 'Antigravity' }
+    : { usage: remote.usage, status: remote.usageStatus, refresh: remote.refreshUsage };
+  const accountPanel = <AccountUsagePanel {...activeUsage} />;
 
   if (!config || showSettings) {
     return (
@@ -240,16 +272,16 @@ export function App() {
       {!remote.lastError && !backgroundError && remote.queueReceipt && (
         <div className="error-toast receipt-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
       )}
-      {(remote.lastError || backgroundError) && (
+      {(remote.lastError || backgroundError || portalError) && (
         <div className="error-toast" role="alert">
-          <span>{remote.lastError || backgroundError}</span>
-          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} className="nav-icon-button" aria-label="关闭错误提示"><CloseIcon /></button>
+          <span>{remote.lastError || backgroundError || portalError}</span>
+          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); setPortalError(''); }} className="nav-icon-button" aria-label="关闭错误提示"><CloseIcon /></button>
         </div>
       )}
   </>;
 
-  const phaseDetail = remote.phaseDetail || (remote.phase === 'connected' && !remote.codexReady ? '已连接电脑，Codex 服务正在等待就绪' : '');
-  const homeNav = <HomeNav page={homePage} onNavigate={setHomePage} />;
+  const phaseDetail = remote.phaseDetail || (homePage === 'codex' && remote.phase === 'connected' && !remote.codexReady ? '已连接电脑，Codex 服务正在等待就绪' : '');
+  const homeNav = <HomeNav page={homePage} onNavigate={goToPage} />;
   const draftKey = composerDraftKey(cacheScope(config.serverUrl, config.pairingToken), remote.selectedThread?.id ?? '');
 
   return (
@@ -266,7 +298,7 @@ export function App() {
           onTaskPower={() => setTaskPowerThreadId(remote.selectedThreadId)}
           onArchive={remote.archiveSupported && remote.selectedThread.assistant !== 'antigravity' ? () => setArchiveTarget({ id: remote.selectedThread!.id, title: remote.selectedThread!.title }) : undefined}
           accountPanel={accountPanel}
-          onRefreshUsage={remote.refreshUsage}
+          onRefreshUsage={activeUsage.refresh}
           notice={notice}
           thread={remote.selectedThread}
           messages={remote.selectedMessages}
@@ -323,7 +355,7 @@ export function App() {
           checkSync={remote.checkConversationSync}
           onUseInbox={file => {
             setInboxSelection({ file });
-            setHomePage('projects');
+            goToPage(lastAssistantPage.current);
           }}
           connectionUrl={remote.connectionUrl}
           phase={remote.phase}
@@ -333,22 +365,25 @@ export function App() {
           footer={homeNav}
           notice={notice} />
       ) : (
-        <ThreadList
-          antigravityAvailable={remote.antigravityAvailable}
+        <ThreadList key={homePage}
+          assistant={homePage}
+          canCreate={remote.phase === 'connected' && (homePage === 'codex' || remote.antigravityAvailable)}
+          desktopAction={homePage === 'antigravity' && <button className="manage-button antigravity-desktop-link" type="button"
+            onClick={() => { setPortalError(''); void openAntigravityPortal().catch((error: Error) => setPortalError(error.message)); }}>桌面对话</button>}
           attention={remote.threadAttention}
-          position={threadListPosition}
-          onArchives={remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
-          quota={<AccountUsagePanel usage={remote.usage} status={remote.usageStatus} refresh={remote.refreshUsage} expanded />}
-          onOpenQuota={remote.refreshUsage}
-          onArchive={remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
+          position={homePage === 'codex' ? codexPosition : antigravityPosition}
+          onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
+          quota={<AccountUsagePanel {...activeUsage} expanded />}
+          onOpenQuota={activeUsage.refresh}
+          onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
           hidden={hidden}
           hiddenThreads={hiddenThreads}
           removed={removed}
-          threads={remote.threads}
+          threads={pageThreads}
           phase={remote.phase}
           phaseDetail={phaseDetail}
           onSelect={openRootThread}
-          onCreate={(cwd, assistant) => { setNewDirectory(cwd); setNewAssistant(assistant); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
+          onCreate={cwd => { setNewDirectory(cwd); setNewAssistant(homePage); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
           footer={homeNav}
           notice={notice}
           onSettings={() => setShowSettings(true)}
@@ -361,11 +396,14 @@ export function App() {
       {archiveTarget && <ArchiveDialog target={archiveTarget} connected={remote.phase === 'connected'} request={remote.archiveRequest} onClose={() => setArchiveTarget(null)} />}
       {showNewThread && (
         <NewThreadSheet initialDirectory={newDirectory} desktopOnly={remote.desktopOnly}
-          initialAssistant={newAssistant} antigravityAvailable={remote.antigravityAvailable}
+          assistant={newAssistant}
           antigravityAttachments={remote.antigravityAttachments}
-          projectMenus={remote.desktopProjectMenus} projectStatus={remote.projectStatus}
-          directories={remote.desktopProjectMenus ? remote.desktopProjects.map(p => p.path).filter(showDirectory) :
-            [...new Set(remote.threads.filter(thread => !thread.projectless).map(thread => thread.cwd).filter(showDirectory))]}
+          projectMenus={newAssistant === 'codex' && remote.desktopProjectMenus} projectStatus={remote.projectStatus}
+          directories={[...new Set([
+            ...remote.desktopProjects.map(project => project.path),
+            ...(newAssistant === 'antigravity' || !remote.desktopProjectMenus
+              ? remote.threads.filter(thread => !thread.projectless).map(thread => thread.cwd) : []),
+          ].filter(showDirectory))]}
           models={remote.models} defaultModel={remote.selectedModel} onClose={() => setShowNewThread(false)} onStart={remote.startThread} />
       )}
 

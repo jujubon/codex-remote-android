@@ -1,12 +1,9 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
 import { useState } from 'react';
+import { openAntigravityPortal } from '../lib/antigravityPortal';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
 import { ComputerCardHeading } from './ComputerCardHeading';
 import { MonitorIcon } from './Icons';
-
-const antigravityRemote = registerPlugin<{ open(): Promise<void> }>('AntigravityRemote');
-const antigravityPortal = 'https://antigravity.google.com/';
 
 export function AntigravityDesktopCard({ config, connected, installed }: {
   config: RemoteConfig;
@@ -34,12 +31,9 @@ export function AntigravityDesktopCard({ config, connected, installed }: {
     setBusy('remote');
     setFeedback(undefined);
     try {
-      await antigravityRemote.open();
+      await openAntigravityPortal();
     } catch (error) {
-      const text = (error as { code?: string } | null)?.code === 'no_compatible_browser'
-        ? '请启用 Chrome，或将支持应用内标签页的浏览器设为默认浏览器。'
-        : '暂时无法打开 Antigravity 远程控制，请重试。';
-      setFeedback({ text, tone: 'error' });
+      setFeedback({ text: (error as Error).message, tone: 'error' });
     } finally {
       setBusy(undefined);
     }
@@ -50,9 +44,7 @@ export function AntigravityDesktopCard({ config, connected, installed }: {
     <div className="device-actions">
       <button type="button" className="secondary-button" disabled={!connected || installed === false || Boolean(busy)}
         onClick={() => void startDesktop()}>{busy === 'desktop' ? '正在启动…' : '启动电脑桌面版'}</button>
-      {Capacitor.getPlatform() === 'android'
-        ? <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void openRemote()}>打开远程控制</button>
-        : <a className="secondary-button" href={antigravityPortal} target="_blank" rel="noreferrer">打开远程控制</a>}
+      <button type="button" className="secondary-button" disabled={Boolean(busy)} onClick={() => void openRemote()}>打开远程控制</button>
     </div>
     <p className="computer-feedback" data-tone={feedback?.tone} role="status">{feedback?.text ?? (
       installed === false ? '电脑上未找到 Antigravity 桌面版。' : '用同一 Google 账号查看电脑上的 Antigravity 项目和对话。'

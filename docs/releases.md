@@ -8,6 +8,12 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.44
+
+- 底部设有 Codex、Antigravity 和电脑三个入口。两个助手各自显示对应的项目与对话，切换时保留搜索、筛选和滚动位置。
+- 在对应页面点「新聊天」即可使用当前助手。Antigravity 页提供桌面对话入口和模型额度，显示电脑 CLI 当前账号各组的剩余额度与重置时间。
+- Android 可覆盖安装。查看 Antigravity 额度需要 Windows 配套服务 0.9.44 和已登录的 Antigravity CLI 1.1.11 或更新版本。
+
 ## 0.9.43
 
 - 手机「电脑」页可启动 Windows 上的 Codex Desktop，检测到真实窗口后显示「已打开」。Codex 和 Antigravity 的启动入口并排放在连接状态下方的相邻卡片。

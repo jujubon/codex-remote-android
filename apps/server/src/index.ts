@@ -17,6 +17,7 @@ import { LAN_PORT, listenForLanDiscovery, trustedLanAddress } from "./lan-discov
 import { MobileGateway } from "./gateway.js";
 import { PromptQueueStore } from "./prompt-queue.js";
 import { AntigravitySessions, findAntigravityCli } from "./antigravity.js";
+import { antigravityUsageReader } from "./antigravity-usage.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -48,7 +49,9 @@ if (allowedRoots.includes(uploadDirectory)) await mkdir(uploadDirectory, { recur
 const files = await FileTransferManager.create({ allowedRoots, uploadDirectory });
 const inbox = new FileInbox(join(dirname(config.promptQueueFile), "file-inbox.json"), files);
 await files.cleanupOrphanedUploads(promptQueue.protectedFilePaths());
-const antigravity = await AntigravitySessions.open(join(dirname(config.promptQueueFile), "antigravity-threads.json"), await findAntigravityCli())
+const antigravityCli = await findAntigravityCli();
+const readAntigravityUsage = antigravityUsageReader(antigravityCli);
+const antigravity = await AntigravitySessions.open(join(dirname(config.promptQueueFile), "antigravity-threads.json"), antigravityCli)
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const heartbeat = gateway.startHeartbeat();
@@ -214,6 +217,10 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
   }
   if (request.method === "GET" && request.url === "/api/device/usage") {
     json(response, 200, await gateway.readAccountUsage());
+    return;
+  }
+  if (request.method === "GET" && request.url === "/api/device/antigravity/usage") {
+    json(response, 200, await readAntigravityUsage());
     return;
   }
   if (request.method === "GET" && request.url === "/api/device/inbox") {

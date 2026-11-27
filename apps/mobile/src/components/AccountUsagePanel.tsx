@@ -7,11 +7,11 @@ function windowName(minutes: number | null) {
   return minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`;
 }
 
-export function AccountUsagePanel({ usage, status, refresh, expanded = false }: {
-  usage: AccountUsage | null; status: string; refresh: () => void; expanded?: boolean;
+export function AccountUsagePanel({ usage, status, refresh, expanded = false, assistantName = 'Codex' }: {
+  usage: AccountUsage | null; status: string; refresh: () => void; expanded?: boolean; assistantName?: string;
 }) {
   const content = <>
-    <div className="usage-heading"><strong>{usage?.plan?.toUpperCase() || 'Codex'}</strong>
+    <div className="usage-heading"><strong>{usage?.plan?.toUpperCase() || assistantName}</strong>
       <button type="button" className="secondary-button" disabled={status === '正在读取额度…'} onClick={refresh}>刷新</button></div>
     {status && <p role="status">{status}</p>}
     {usage?.windows.map((w, i) => <div className="usage-window" key={i}>
