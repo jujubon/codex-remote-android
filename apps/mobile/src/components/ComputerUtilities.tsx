@@ -1,11 +1,12 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
 import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type HostUpdate, type RemoteRelease } from '../lib/updates';
 import { ComputerCardHeading } from './ComputerCardHeading';
-import { GaugeIcon, UpdateIcon } from './Icons';
+import { AlertIcon, CheckIcon, CloseIcon, GaugeIcon, UpdateIcon } from './Icons';
 
 type CheckResult = { ms: number; error?: string };
 const checks = ['电脑回执', 'Codex 额度请求', '对话列表同步'] as const;
@@ -62,18 +63,53 @@ const hostUpdateLabels: Record<HostUpdate['stage'], string> = {
   failed: '电脑更新未完成，可重试或手动安装。',
 };
 
-let cachedRelease: { data: RemoteRelease; checkedAt: number } | undefined;
+type UpdateTone = 'success' | 'info' | 'error';
+
+function UpdateToast({ text, tone, transient, dismissible, children, onDismiss }: {
+  text: string;
+  tone: UpdateTone;
+  transient: boolean;
+  dismissible: boolean;
+  children?: ReactNode;
+  onDismiss: () => void;
+}) {
+  const [leaving, setLeaving] = useState(false);
+  const dismiss = useRef(onDismiss);
+  dismiss.current = onDismiss;
+  useEffect(() => {
+    if (!transient || leaving) return;
+    const timer = setTimeout(() => setLeaving(true), 3600);
+    return () => clearTimeout(timer);
+  }, [transient, leaving, text]);
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => dismiss.current(), 160);
+    return () => clearTimeout(timer);
+  }, [leaving]);
+  const Icon = tone === 'success' ? CheckIcon : tone === 'error' ? AlertIcon : UpdateIcon;
+  return createPortal(
+    <div className="update-toast" data-tone={tone} data-leaving={leaving || undefined}>
+      <span className="update-toast-icon"><Icon aria-hidden="true" /></span>
+      <p role="status">{text}</p>
+      {dismissible && <button type="button" className="nav-icon-button update-toast-close"
+        aria-label="关闭更新提示" onClick={() => setLeaving(true)}><CloseIcon /></button>}
+      {children && <div className="update-toast-actions">{children}</div>}
+    </div>,
+    document.body,
+  );
+}
 
 export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupported }: {
   hostVersion: string; config: RemoteConfig; connected: boolean; hostUpdateSupported?: boolean;
 }) {
   const [mobileVersion, setMobileVersion] = useState('');
-  const [release, setRelease] = useState(cachedRelease?.data);
+  const [release, setRelease] = useState<RemoteRelease>();
   const [busy, setBusy] = useState(false);
   const [installing, setInstalling] = useState<'phone' | 'host'>();
   const [hostUpdate, setHostUpdate] = useState<HostUpdate>();
   const [error, setError] = useState('');
   const [phoneStatus, setPhoneStatus] = useState('');
+  const [dismissed, setDismissed] = useState(false);
   const confirmation = useRef<HTMLDialogElement>(null);
   const native = Capacitor.getPlatform() === 'android';
   useEffect(() => {
@@ -87,7 +123,11 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     async function refresh() {
       const result = await deviceRequest<{ update?: HostUpdate }>(config, 'update/status').catch(() => undefined);
       if (!valid) return;
-      if (result?.update) setHostUpdate(result.update);
+      const update = result?.update;
+      if (update) {
+        // A historical receipt is only relevant while following that update.
+        setHostUpdate(previous => hostUpdateRunning(update) || previous?.version === update.version ? update : previous);
+      }
       if (hostUpdateRunning(result?.update) || (!result && watchingHost)) timer = setTimeout(() => void refresh(), 3500);
     }
     void refresh();
@@ -96,20 +136,19 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
 
   async function check() {
     setBusy(true);
+    setRelease(undefined);
+    setHostUpdate(undefined);
     setError('');
+    setPhoneStatus('');
+    setDismissed(false);
     try {
-      const data = await checkLatestRelease();
-      cachedRelease = { data, checkedAt: Date.now() };
-      setRelease(data);
+      setRelease(await checkLatestRelease());
     } catch {
-      setError('无法读取 GitHub 更新。可以重试或打开发布页。');
+      setError('检查更新失败，请重试。');
     } finally {
       setBusy(false);
     }
   }
-  useEffect(() => {
-    if (!cachedRelease || Date.now() - cachedRelease.checkedAt > 120_000) void check();
-  }, []);
 
   async function updatePhone() {
     if (!release?.androidSha256) return;
@@ -119,7 +158,7 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     try {
       const result = await CompanionUpdate.install({ version: release.version, sha256: release.androidSha256 });
       setPhoneStatus(result.state === 'permission'
-        ? '请允许本 App 安装应用，返回后再点一次「更新手机」。'
+        ? '允许安装应用后，返回再点「更新手机」。'
         : '请在 Android 安装界面确认更新。');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '手机更新失败，请重试。');
@@ -135,6 +174,7 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     setError('');
     try {
       setHostUpdate(await deviceRequest<HostUpdate>(config, 'update/start', { version: release.version }));
+      setPhoneStatus('');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '电脑更新请求失败，请重试。');
     } finally {
@@ -144,39 +184,47 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
 
   const mobileComparison = release ? compareReleaseVersions(mobileVersion, release.version) : undefined;
   const hostComparison = release ? compareReleaseVersions(hostVersion, release.version) : undefined;
-  const requiredHostComparison = release?.minimumHost ? compareReleaseVersions(hostVersion, release.minimumHost) : undefined;
+  const phoneUpdate = mobileComparison !== undefined && mobileComparison < 0;
+  const computerUpdate = hostComparison !== undefined && hostComparison < 0
+    && !(hostUpdate?.stage === 'completed' && hostUpdate.version === release?.version);
+  const available = phoneUpdate || computerUpdate;
+  const upToDate = mobileComparison !== undefined && hostComparison !== undefined ? '已是最新版本'
+    : mobileComparison !== undefined ? '手机已是最新版本'
+    : hostComparison !== undefined ? '电脑已是最新版本' : '暂时无法确认已安装版本';
+  const updateProgress = installing === 'phone' ? '正在下载并校验手机更新…'
+    : installing === 'host' ? '正在请求电脑更新…' : undefined;
+  const message = error || updateProgress || (watchingHost && hostUpdate ? hostUpdateLabels[hostUpdate.stage] : undefined)
+    || phoneStatus || (hostUpdate ? hostUpdateLabels[hostUpdate.stage] : undefined)
+    || (release && (available ? `发现新版本 ${release.version}` : upToDate));
+  const pending = Boolean(installing) || watchingHost;
+  const tone: UpdateTone = pending ? 'info' : error || hostUpdate?.stage === 'failed' ? 'error'
+    : !available && !phoneStatus && (hostUpdate?.stage === 'completed' ||
+      mobileComparison !== undefined || hostComparison !== undefined) ? 'success' : 'info';
+  const showActions = available && !pending;
+  const transient = !pending && !showActions && !phoneStatus && tone !== 'error';
+  const canCheck = !busy && !pending;
   return <section className="computer-utility" aria-busy={busy || Boolean(installing) || watchingHost}>
     <ComputerCardHeading title="版本与更新" icon={<UpdateIcon />}>
-      <button className="secondary-button" type="button" disabled={busy} onClick={() => void check()}>{busy ? '正在检查…' : '检查更新'}</button>
+      <button className="secondary-button update-check-button" type="button" disabled={!canCheck} onClick={() => void check()}>
+        {busy && <span className="update-check-spinner" aria-hidden="true" />}{busy ? '正在检查…' : '检查更新'}
+      </button>
     </ComputerCardHeading>
     <dl className="computer-versions">
       <div className="computer-setting-row"><dt>手机</dt><dd>{mobileVersion || (native ? '待读取' : '浏览器预览')}</dd></div>
       <div className="computer-setting-row"><dt>电脑</dt><dd>{hostVersion || '待连接'}</dd></div>
     </dl>
-    {error && <p className="computer-feedback" data-tone="error" role="status">{error} <a href={releasePage} target="_blank" rel="noreferrer">查看发布页</a></p>}
-    {phoneStatus && <p className="computer-feedback" role="status">{phoneStatus}</p>}
-    {hostUpdate && <p className="computer-feedback" data-tone={hostUpdate.stage === 'failed' ? 'error' : undefined} role="status">
-      {hostUpdateLabels[hostUpdate.stage]}</p>}
-    {release && <div className="computer-update-result computer-reveal" aria-live="polite">
-      <strong>GitHub 最新版 {release.version}</strong>
-      {mobileComparison !== undefined && <small>{mobileComparison < 0 ? '手机有新版本' : '手机已是最新版本'}</small>}
-      <small>{requiredHostComparison !== undefined && requiredHostComparison < 0
-        ? `电脑需要更新到 ${release.minimumHost} 或更高版本`
-        : hostComparison === undefined ? '连接电脑后检查 Windows 版本'
-          : hostComparison >= 0 ? '电脑已是最新版本'
-            : requiredHostComparison !== undefined ? '电脑有可选更新，当前版本兼容' : '电脑有新版本，兼容性未确认'}</small>
-      <div className="computer-update-links">
-        {native && release.androidSha256 && mobileComparison !== undefined && mobileComparison < 0
-          && <button className="primary-button" type="button" disabled={Boolean(installing) || watchingHost}
-            onClick={() => void updatePhone()}>{installing === 'phone' ? '正在下载并校验…' : '更新手机'}</button>}
-        {connected && hostUpdateSupported && release.windows && hostComparison !== undefined && hostComparison < 0
-          && <button className="primary-button" type="button" disabled={Boolean(installing) || watchingHost}
-            onClick={() => confirmation.current?.showModal()}>更新电脑</button>}
-        {release.android && (mobileComparison === undefined || mobileComparison < 0) && <a href={release.android} target="_blank" rel="noreferrer">下载 APK</a>}
-        {release.windows && (hostComparison === undefined || hostComparison < 0) && <a href={release.windows} target="_blank" rel="noreferrer">下载 Windows ZIP</a>}
-        <a href={release.url} target="_blank" rel="noreferrer">发布说明</a>
-      </div>
-    </div>}
+    {!dismissed && message && <UpdateToast text={message} tone={tone} transient={transient}
+      dismissible={!pending && !transient} onDismiss={() => setDismissed(true)}>
+      {(showActions || tone === 'error') && <>
+        {showActions && phoneUpdate && (native && release?.androidSha256
+          ? <button className="primary-button" type="button" onClick={() => void updatePhone()}>更新手机</button>
+          : release?.android && <a className="primary-button" href={release.android} target="_blank" rel="noreferrer">下载 APK</a>)}
+        {showActions && computerUpdate && (connected && hostUpdateSupported && release?.windows
+          ? <button className="primary-button" type="button" onClick={() => confirmation.current?.showModal()}>更新电脑</button>
+          : release?.windows && <a className="primary-button" href={release.windows} target="_blank" rel="noreferrer">下载 Windows ZIP</a>)}
+        <a className="update-release-link" href={release?.url ?? releasePage} target="_blank" rel="noreferrer">发布说明</a>
+      </>}
+    </UpdateToast>}
     <dialog className="session-dialog" ref={confirmation} aria-labelledby="computer-update-title"
       onClick={event => { if (event.target === event.currentTarget) confirmation.current?.close(); }}>
       <div className="session-sheet">

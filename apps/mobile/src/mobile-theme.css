@@ -787,7 +787,7 @@
 .computer-check-results > div + div { border-top: 1px solid var(--line); }
 .computer-check-results dd { margin: 0; font-variant-numeric: tabular-nums; }
 .computer-check-results small { grid-column: 1 / -1; color: var(--muted); }
-.utility-muted, .computer-inbox-list small, .computer-update-result small { display: block; margin: 0; font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
+.utility-muted, .computer-inbox-list small { display: block; margin: 0; font-size: .8125rem; color: var(--muted); overflow-wrap: anywhere; }
 .inbox-body:not([hidden]) { display: grid; gap: 14px; }
 .inbox-disclosure { display: inline-flex; align-items: center; gap: 6px; }
 .inbox-disclosure svg { width: 16px; height: 16px; transition: transform var(--motion-fade) var(--ease-out); }
@@ -890,9 +890,69 @@
 .computer-versions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; font-size: .8125rem; }
 .computer-versions dt { color: var(--muted); }
 .computer-versions dd { margin: 0; text-align: end; font-weight: 600; overflow-wrap: anywhere; }
-.computer-update-result { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
-.computer-update-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
-.computer-update-links a { display: inline-flex; align-items: center; min-height: 40px; padding-inline: 10px; border-radius: 9px; color: var(--accent); background: var(--accent-soft); font-size: .8125rem; font-weight: 600; text-decoration: none; }
+.update-check-button { display: inline-flex; align-items: center; gap: 6px; }
+.update-check-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+.update-toast {
+  position: fixed;
+  z-index: 41;
+  inset-inline: max(14px, var(--app-safe-left)) max(14px, var(--app-safe-right));
+  bottom: calc(var(--app-safe-bottom) + 72px);
+  width: fit-content;
+  max-width: min(500px, calc(100% - 32px - var(--app-safe-left) - var(--app-safe-right)));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 9px 28px rgb(32 22 68 / 15%), 0 2px 5px rgb(32 22 68 / 6%);
+}
+.update-toast p { margin: 0; font-size: .875rem; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.update-toast-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.update-toast-icon svg { width: 17px; height: 17px; }
+.update-toast[data-tone='success'] .update-toast-icon { color: #226149; background: #edf7f1; }
+.update-toast[data-tone='error'] .update-toast-icon { color: #8b3045; background: #fff0f3; }
+.update-toast .update-toast-close { width: 36px; height: 36px; min-width: 36px; }
+.update-toast-close svg { width: 17px; height: 17px; }
+.update-toast-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-bottom: 3px;
+}
+.update-toast-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding-inline: 11px;
+  border-radius: 10px;
+  font-size: .8125rem;
+  text-decoration: none;
+}
+.update-release-link { display: inline-flex; align-items: center; min-height: 38px; padding-inline: 6px; color: var(--accent); font-size: .8125rem; font-weight: 600; text-decoration: none; }
+.update-toast[data-leaving] { pointer-events: none; opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .update-check-spinner { animation: update-spin .8s linear infinite; }
+  .update-toast { animation: update-toast-in 230ms var(--ease-out) both; }
+  .update-toast[data-leaving] { animation: update-toast-out 150ms ease-in both; }
+}
+@keyframes update-spin { to { transform: rotate(360deg); } }
+@keyframes update-toast-in { from { opacity: 0; transform: translateY(9px) scale(.98); } }
+@keyframes update-toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(6px); } }
 .attention-target:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
 .desktop-attention { padding: 12px; background: var(--surface-subtle); color: var(--muted); font-size: .875rem; }
 .computer-reader .reader-action { width: 100%; }

@@ -116,3 +116,7 @@ export function UploadIcon(props: IconProps) {
 export function UpdateIcon(props: IconProps) {
   return <IconBase {...props}><path d="M19 10a7 7 0 1 0-1.5 7M19 5v5h-5m5 5v4m-2-2h4" /></IconBase>;
 }
+
+export function CheckIcon(props: IconProps) {
+  return <IconBase {...props}><path d="m5 12 4 4L19 6" /></IconBase>;
+}
