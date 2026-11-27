@@ -14,11 +14,19 @@ function Write-WatchLog([string]$Message) {
     Add-Content -LiteralPath $file -Encoding UTF8 -Value "$(Get-Date -Format o) $Message"
 }
 
+function Start-BackgroundProcess([string]$FilePath, [string]$Arguments) {
+    $start = [Diagnostics.ProcessStartInfo]::new($FilePath, $Arguments)
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    return [Diagnostics.Process]::Start($start)
+}
+
 function Stop-Child($Child) {
     if ($null -eq $Child) { return }
     try {
         if (!$Child.HasExited) {
-            & "$env:SystemRoot\System32\taskkill.exe" /PID $Child.Id /T /F 2>$null | Out-Null
+            $stop = Start-BackgroundProcess "$env:SystemRoot\System32\taskkill.exe" "/PID $($Child.Id) /T /F"
+            try { $stop.WaitForExit() } finally { $stop.Dispose() }
             if (!$Child.WaitForExit(3000)) { throw 'A managed process failed to exit.' }
         }
     } finally {
@@ -73,9 +81,9 @@ try {
             if ($hostKey -and (!$hostChild -or $hostChild.HasExited) -and $now -ge $hostRetry) {
                 $hostRetry = $now.AddSeconds(10)
                 if ($hostChild) { $hostChild.Dispose(); $hostChild = $null }
-                $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $config.companion + '" -Background'
+                $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $config.companion + '" -Background'
                 if ($launchTunnel) { $arguments += ' -Tunnel' }
-                $hostChild = Start-Process -FilePath $psExe -ArgumentList $arguments -WindowStyle Hidden -PassThru
+                $hostChild = Start-BackgroundProcess $psExe $arguments
                 Write-WatchLog "Companion launched ($($hostChild.Id))."
             }
             if ($tunnelKey -and $hostChild -and (!$tunnelChild -or $tunnelChild.HasExited) -and $now -ge $tunnelRetry) {
@@ -83,7 +91,7 @@ try {
                 if ($tunnelChild) { $tunnelChild.Dispose(); $tunnelChild = $null }
                 $arguments = 'tunnel --no-autoupdate --protocol ' + $config.protocol + ' --logfile "' +
                     (Join-Path $root 'tunnel.log') + '" run --token-file "' + $config.tokenFile + '"'
-                $tunnelChild = Start-Process -FilePath $config.tunnelExe -ArgumentList $arguments -WindowStyle Hidden -PassThru
+                $tunnelChild = Start-BackgroundProcess $config.tunnelExe $arguments
                 Write-WatchLog "Cloudflare tunnel launched ($($tunnelChild.Id))."
             }
         } catch {

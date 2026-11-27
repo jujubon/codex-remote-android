@@ -49,26 +49,49 @@ if ($Disable) {
 $entry = Join-Path $PSScriptRoot 'apps\server\dist\index.js'
 if (!(Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Extract the entire Windows ZIP before enabling automatic start.' }
 if (!(Get-AppxPackage 'OpenAI.Codex')) { throw 'Install Codex Desktop before enabling automatic start.' }
+$sourceLauncher = Join-Path $PSScriptRoot 'CodexRemoteWatch.exe'
+if (!(Test-Path -LiteralPath $sourceLauncher -PathType Leaf)) { throw 'The Windows package is missing CodexRemoteWatch.exe.' }
+$launcherHash = (Get-FileHash -LiteralPath $sourceLauncher -Algorithm SHA256).Hash
+$launcher = Join-Path $state "CodexRemoteWatch-$($launcherHash.Substring(0, 16)).exe"
+if (!(Test-Path -LiteralPath $launcher)) { Copy-Item -LiteralPath $sourceLauncher -Destination $launcher }
+if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash -ne $launcherHash) { throw 'The installed watcher launcher differs from the Windows package.' }
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Watch-CodexDesktop.ps1') -Destination $watchPath -Force
-$config | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
-$config | Add-Member -NotePropertyName companion -NotePropertyValue (Join-Path $PSScriptRoot 'Start-CodexMobile.ps1') -Force
-Save-Settings $config
-
+$action = New-ScheduledTaskAction -Execute $launcher
 $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $watchPath + '"'
 if (!$task) {
-    $action = New-ScheduledTaskAction -Execute $psExe -Argument $arguments
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userSid
     $principal = New-ScheduledTaskPrincipal -UserId $userSid -LogonType Interactive -RunLevel Limited
     $options = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal `
         -Settings $options -Description 'Starts Codex Remote only while Codex Desktop is open.' | Out-Null
-} elseif ($task.State -eq 'Disabled') {
-    Enable-ScheduledTask -TaskName $taskName | Out-Null
+} elseif (@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $launcher -or $task.Actions[0].Arguments) {
+    $wasRunning = $task.State -eq 'Running'
+    try {
+        if ($wasRunning) {
+            $paused = $config.PSObject.Copy()
+            $paused | Add-Member -NotePropertyName enabled -NotePropertyValue $false -Force
+            Save-Settings $paused
+            $deadline = [datetime]::UtcNow.AddSeconds(25)
+            while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
+                if ([datetime]::UtcNow -ge $deadline) { throw 'The existing watcher did not stop gracefully.' }
+                Start-Sleep -Milliseconds 300
+            }
+        }
+        Set-ScheduledTask -TaskName $taskName -Action $action | Out-Null
+    } catch {
+        if ($wasRunning) {
+            Save-Settings $config
+            if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Ready') { Start-ScheduledTask -TaskName $taskName }
+        }
+        throw
+    }
 }
+$config | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
+$config | Add-Member -NotePropertyName companion -NotePropertyValue (Join-Path $PSScriptRoot 'Start-CodexMobile.ps1') -Force
+Save-Settings $config
+if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Disabled') { Enable-ScheduledTask -TaskName $taskName | Out-Null }
 Move-LegacyShortcut
 if ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') {
     Start-ScheduledTask -TaskName $taskName

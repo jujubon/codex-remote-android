@@ -8,6 +8,11 @@
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
 
+## 0.9.38
+
+- Windows 登录后的监视任务改为无控制台启动，打开 Codex Desktop 时才启动配套服务和隧道。
+- 解压新版 Windows ZIP 后运行 `Enable-Autostart.cmd` 更新已有计划任务。Android 0.9.37 可继续使用。
+
 ## 0.9.37
 
 - 电脑页统一连接、投屏、剪贴板、屏幕、文件传输、收件箱和更新卡片。操作回执显示在对应卡片内。
