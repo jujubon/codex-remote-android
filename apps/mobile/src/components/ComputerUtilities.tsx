@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type DeviceStatus } from '../lib/deviceTools';
-import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type HostUpdate, type RemoteRelease, type StartupUpdate } from '../lib/updates';
+import { CompanionUpdate, checkLatestRelease, compareReleaseVersions, hostUpdateRunning, releasePage, type DownloadBytes, type HostUpdate, type PhoneUpdateProgress, type RemoteRelease, type StartupUpdate } from '../lib/updates';
 import { ComputerCardHeading } from './ComputerCardHeading';
 import { AlertIcon, CheckIcon, CloseIcon, GaugeIcon, UpdateIcon } from './Icons';
 
@@ -57,7 +57,7 @@ export function ConnectionDiagnostics({ config, sync, endpoint, routeLabel }: {
 
 const hostUpdateLabels: Record<HostUpdate['stage'], string> = {
   pending: '电脑已收到更新请求。',
-  downloading: '电脑正在下载并校验更新…',
+  downloading: '正在下载电脑更新…',
   switching: '配套服务正在切换版本，手机会自动重连。',
   completed: '电脑配套服务更新完成。',
   failed: '电脑更新未完成，可重试或手动安装。',
@@ -65,11 +65,12 @@ const hostUpdateLabels: Record<HostUpdate['stage'], string> = {
 
 type UpdateTone = 'success' | 'info' | 'error';
 
-function UpdateToast({ text, tone, transient, dismissible, children, onDismiss }: {
+function UpdateToast({ text, tone, transient, dismissible, progress, children, onDismiss }: {
   text: string;
   tone: UpdateTone;
   transient: boolean;
   dismissible: boolean;
+  progress?: ReactNode;
   children?: ReactNode;
   onDismiss: () => void;
 }) {
@@ -88,15 +89,42 @@ function UpdateToast({ text, tone, transient, dismissible, children, onDismiss }
   }, [leaving]);
   const Icon = tone === 'success' ? CheckIcon : tone === 'error' ? AlertIcon : UpdateIcon;
   return createPortal(
-    <div className="update-toast" data-tone={tone} data-leaving={leaving || undefined}>
+    <div className="update-toast" data-tone={tone} data-leaving={leaving || undefined} data-progress={Boolean(progress) || undefined}>
       <span className="update-toast-icon"><Icon aria-hidden="true" /></span>
       <p role="status">{text}</p>
       {dismissible && <button type="button" className="nav-icon-button update-toast-close"
         aria-label="关闭更新提示" onClick={() => setLeaving(true)}><CloseIcon /></button>}
+      {progress && <div className="update-progress-list">{progress}</div>}
       {children && <div className="update-toast-actions">{children}</div>}
     </div>,
     document.body,
   );
+}
+
+function downloadSize(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
+function DownloadProgress({ label, detail, bytes }: { label: string; detail: string; bytes?: DownloadBytes }) {
+  const loaded = bytes?.downloadedBytes;
+  const total = bytes?.totalBytes;
+  const hasLoaded = typeof loaded === 'number' && Number.isSafeInteger(loaded) && loaded >= 0;
+  const hasTotal = typeof total === 'number' && Number.isSafeInteger(total) && total > 0;
+  const fraction = hasLoaded && hasTotal ? Math.min(1, loaded / total) : undefined;
+  const percent = fraction === undefined ? undefined : Math.floor(fraction * 100);
+  const sizes = hasLoaded ? (hasTotal ? `${downloadSize(loaded)} / ${downloadSize(total)}` : downloadSize(loaded)) : '';
+  return <div className="update-download">
+    <div className="update-download-caption">
+      <span><strong>{label}</strong><small>{detail}</small></span>
+      {percent !== undefined && <strong className="update-download-percent">{percent}%</strong>}
+    </div>
+    <div className="update-download-track" role="progressbar" aria-label={`${label}下载进度`}
+      aria-valuenow={percent} aria-valuetext={percent !== undefined ? `${percent}%，${sizes}` : sizes || detail}
+      data-indeterminate={fraction === undefined || undefined}>
+      <span style={fraction === undefined ? undefined : { transform: `scaleX(${fraction})` }} />
+    </div>
+    {sizes && <small className="update-download-size">{sizes}</small>}
+  </div>;
 }
 
 export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupported, requestedUpdate, onUpdateStarted }: {
@@ -110,6 +138,7 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
   const [hostUpdate, setHostUpdate] = useState<HostUpdate>();
   const [error, setError] = useState('');
   const [phoneStatus, setPhoneStatus] = useState('');
+  const [phoneProgress, setPhoneProgress] = useState<PhoneUpdateProgress>();
   const [dismissed, setDismissed] = useState(false);
   const confirmation = useRef<HTMLDialogElement>(null);
   const card = useRef<HTMLElement>(null);
@@ -117,6 +146,23 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
   const native = Capacitor.getPlatform() === 'android';
   useEffect(() => {
     if (native) void CapacitorApp.getInfo().then(info => setMobileVersion(info.version)).catch(() => undefined);
+  }, [native]);
+  useEffect(() => {
+    if (!native) return;
+    let mounted = true;
+    let receivedEvent = false;
+    const listener = CompanionUpdate.addListener('downloadProgress', progress => {
+      receivedEvent = true;
+      if (mounted) setPhoneProgress(progress.stage === 'idle' ? undefined : progress);
+    });
+    void listener.then(async () => {
+      const progress = await CompanionUpdate.getProgress();
+      if (mounted && !receivedEvent && progress.stage !== 'idle') setPhoneProgress(progress);
+    }).catch(() => undefined);
+    return () => {
+      mounted = false;
+      void listener.then(handle => handle.remove()).catch(() => undefined);
+    };
   }, [native]);
   const watchingHost = hostUpdateRunning(hostUpdate);
   useEffect(() => {
@@ -131,7 +177,9 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
         // A historical receipt is only relevant while following that update.
         setHostUpdate(previous => hostUpdateRunning(update) || previous?.version === update.version ? update : previous);
       }
-      if (hostUpdateRunning(result?.update) || (!result && watchingHost)) timer = setTimeout(() => void refresh(), 3500);
+      if (hostUpdateRunning(update) || (!result && watchingHost)) {
+        timer = setTimeout(() => void refresh(), update?.stage === 'switching' || !result ? 2500 : 900);
+      }
     }
     void refresh();
     return () => { valid = false; clearTimeout(timer); };
@@ -159,13 +207,14 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
     setError('');
     setPhoneStatus('');
     try {
-      const result = await CompanionUpdate.install({ version: target.version, sha256: target.androidSha256 });
+      const result = await CompanionUpdate.install({ version: target.version, sha256: target.androidSha256, bytes: target.androidBytes });
       setPhoneStatus(result.state === 'permission'
         ? '允许安装应用后，返回再点「更新手机」。'
         : '请在 Android 安装界面确认更新。');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '手机更新失败，请重试。');
     } finally {
+      setPhoneProgress(undefined);
       setInstalling(undefined);
     }
   }
@@ -213,19 +262,22 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
   const upToDate = mobileComparison !== undefined && hostComparison !== undefined ? '已是最新版本'
     : mobileComparison !== undefined ? '手机已是最新版本'
     : hostComparison !== undefined ? '电脑已是最新版本' : '暂时无法确认已安装版本';
-  const updateProgress = installing === 'phone' ? '正在下载并校验手机更新…'
+  const phoneDownloading = installing === 'phone' || phoneProgress !== undefined;
+  const hostDownloading = hostUpdate?.stage === 'pending' || hostUpdate?.stage === 'downloading';
+  const updateProgress = phoneDownloading && hostDownloading ? '正在下载手机和电脑更新…'
+    : phoneDownloading ? '正在更新手机…'
     : installing === 'host' ? '正在请求电脑更新…' : undefined;
-  const message = error || updateProgress || (watchingHost && hostUpdate ? hostUpdateLabels[hostUpdate.stage] : undefined)
+  const message = updateProgress || (watchingHost && hostUpdate ? hostUpdateLabels[hostUpdate.stage] : undefined) || error
     || phoneStatus || (hostUpdate ? hostUpdateLabels[hostUpdate.stage] : undefined)
     || (release && (available ? `发现新版本 ${release.version}` : upToDate));
-  const pending = Boolean(installing) || watchingHost;
+  const pending = Boolean(installing) || watchingHost || phoneDownloading;
   const tone: UpdateTone = pending ? 'info' : error || hostUpdate?.stage === 'failed' ? 'error'
     : !available && !phoneStatus && (hostUpdate?.stage === 'completed' ||
       mobileComparison !== undefined || hostComparison !== undefined) ? 'success' : 'info';
   const showActions = available && !pending;
   const transient = !pending && !showActions && !phoneStatus && tone !== 'error';
   const canCheck = !busy && !pending;
-  return <section ref={card} className="computer-utility" aria-busy={busy || Boolean(installing) || watchingHost}>
+  return <section ref={card} className="computer-utility" aria-busy={busy || pending}>
     <ComputerCardHeading title="版本与更新" icon={<UpdateIcon />}>
       <button className="secondary-button update-check-button" type="button" disabled={!canCheck} onClick={() => void check()}>
         {busy && <span className="update-check-spinner" aria-hidden="true" />}{busy ? '正在检查…' : '检查更新'}
@@ -236,7 +288,14 @@ export function UpdatePanel({ hostVersion, config, connected, hostUpdateSupporte
       <div className="computer-setting-row"><dt>电脑</dt><dd>{hostVersion || '待连接'}</dd></div>
     </dl>
     {!dismissed && message && <UpdateToast text={message} tone={tone} transient={transient}
-      dismissible={!pending && !transient} onDismiss={() => setDismissed(true)}>
+      dismissible={!pending && !transient} onDismiss={() => setDismissed(true)}
+      progress={phoneDownloading || hostDownloading ? <>
+        {phoneDownloading && <DownloadProgress label="手机 APK" bytes={phoneProgress}
+          detail={phoneProgress?.stage === 'verifying' ? '正在校验' : phoneProgress?.stage === 'downloading' ? '下载中' : '准备下载'} />}
+        {hostDownloading && <DownloadProgress label="电脑 ZIP" bytes={hostUpdate}
+          detail={hostUpdate.stage === 'pending' ? '等待电脑响应'
+            : hostUpdate.totalBytes && hostUpdate.downloadedBytes === hostUpdate.totalBytes ? '正在校验和解压' : '下载中'} />}
+      </> : undefined}>
       {(showActions || tone === 'error') && <>
         {showActions && phoneUpdate && (native && release?.androidSha256
           ? <button className="primary-button" type="button" onClick={() => void updatePhone()}>更新手机</button>

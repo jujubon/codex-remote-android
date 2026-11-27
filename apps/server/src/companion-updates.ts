@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 import { HOST_VERSION } from "./config.js";
 import { FileTransferError } from "./file-transfer.js";
 
-type UpdateState = { version: string; stage: "pending" | "downloading" | "switching" | "completed" | "failed" };
+type UpdateState = {
+  version: string;
+  stage: "pending" | "downloading" | "switching" | "completed" | "failed";
+  downloadedBytes?: number;
+  totalBytes?: number;
+};
 const versionPattern = /^\d{1,5}\.\d{1,5}\.\d{1,5}$/;
 const isUpdating = (state?: UpdateState): state is UpdateState =>
   Boolean(state && ["pending", "downloading", "switching"].includes(state.stage));
@@ -29,8 +34,11 @@ export class CompanionUpdates {
       throw error;
     });
     if (!content) return;
-    const { version, stage } = JSON.parse(content.replace(/^\uFEFF/, "")) as UpdateState;
-    return { version, stage };
+    const { version, stage, downloadedBytes, totalBytes } = JSON.parse(content.replace(/^\uFEFF/, "")) as UpdateState;
+    if (stage !== "downloading" || typeof downloadedBytes !== "number" || typeof totalBytes !== "number" ||
+        !Number.isSafeInteger(downloadedBytes) || !Number.isSafeInteger(totalBytes) ||
+        downloadedBytes < 0 || totalBytes <= 0 || downloadedBytes > totalBytes) return { version, stage };
+    return { version, stage, downloadedBytes, totalBytes };
   }
 
   async start(version: unknown): Promise<UpdateState> {

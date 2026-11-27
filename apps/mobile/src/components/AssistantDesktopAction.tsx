@@ -97,7 +97,7 @@ export function AssistantDesktopAction({ assistant, config, connectionUrl, conne
         setConfirmClose(false);
         dialog.current?.showModal();
       }}>
-      <MonitorIcon aria-hidden="true" /><span>启动桌面</span><i data-state={desktopState} aria-hidden="true" />
+      <MonitorIcon aria-hidden="true" /><span>启动</span><i data-state={desktopState} aria-hidden="true" />
     </button>
     <span id="assistant-desktop-state" hidden>{statusText}</span>
     <dialog className="session-dialog" ref={dialog} aria-labelledby="assistant-desktop-title"
@@ -117,7 +117,7 @@ export function AssistantDesktopAction({ assistant, config, connectionUrl, conne
           </div>
         </> : <div className="device-actions">
           {available && !opened && <button className="primary-button" type="button"
-            disabled={Boolean(motion)} onClick={() => void start()}>启动桌面</button>}
+            disabled={Boolean(motion)} onClick={() => void start()}>启动</button>}
           {!codex && <button className={opened ? 'primary-button' : 'secondary-button'} type="button"
             disabled={motion === 'close'} onClick={() => void openPortal()}>进入桌面对话</button>}
           {opened && status?.desktopCloseSupported && <button className="secondary-button assistant-desktop-close" type="button"

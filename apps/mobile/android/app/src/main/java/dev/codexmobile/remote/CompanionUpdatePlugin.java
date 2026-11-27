@@ -26,11 +26,19 @@ public class CompanionUpdatePlugin extends Plugin {
     private static final String RELEASE = "https://github.com/jujubon/codex-remote-android/releases/download/";
     private static final long MAX_BYTES = 100L * 1024 * 1024;
     private final AtomicBoolean updating = new AtomicBoolean();
+    private volatile JSObject progress;
+
+    @PluginMethod
+    public void getProgress(PluginCall call) {
+        JSObject active = progress;
+        call.resolve(active == null ? new JSObject().put("stage", "idle") : active);
+    }
 
     @PluginMethod
     public void install(PluginCall call) {
         String version = call.getString("version", "");
         String sha = call.getString("sha256", "");
+        long expected = call.getInt("bytes", 0);
         if (!version.matches("\\d{1,5}\\.\\d{1,5}\\.\\d{1,5}") || !sha.matches("[0-9a-f]{64}")) {
             call.reject("发布包缺少有效的校验值。");
             return;
@@ -39,6 +47,7 @@ public class CompanionUpdatePlugin extends Plugin {
             call.reject("手机更新正在处理，请稍候。");
             return;
         }
+        publishProgress(version, "preparing", 0, 0);
         new Thread(() -> {
             File folder = new File(getContext().getCacheDir(), "companion-update");
             File apk = new File(folder, "Codex-Remote-" + version + ".apk");
@@ -46,7 +55,8 @@ public class CompanionUpdatePlugin extends Plugin {
             try {
                 if (!folder.isDirectory() && !folder.mkdirs()) throw new IOException("无法创建更新缓存。");
                 if (!apk.isFile() || apk.length() > MAX_BYTES || !sha.equals(fileDigest(apk))) {
-                    download(new URL(RELEASE + "v" + version + "/" + apk.getName()), part);
+                    download(version, new URL(RELEASE + "v" + version + "/" + apk.getName()), part,
+                        expected > 0 && expected <= MAX_BYTES ? expected : 0);
                     if (!sha.equals(fileDigest(part))) throw new IOException("APK 校验失败，请重试。");
                     if (!part.renameTo(apk)) throw new IOException("无法保存已下载的 APK。");
                 }
@@ -61,6 +71,7 @@ public class CompanionUpdatePlugin extends Plugin {
                 }
                 getActivity().runOnUiThread(() -> openInstaller(call, apk));
             } catch (Exception error) {
+                clearProgress();
                 updating.set(false);
                 call.reject(error instanceof IOException && error.getMessage() != null && error.getMessage().endsWith("。")
                     ? error.getMessage() : "无法下载手机更新，请检查网络后重试。");
@@ -86,11 +97,24 @@ public class CompanionUpdatePlugin extends Plugin {
         } catch (RuntimeException error) {
             call.reject("无法打开 Android 安装界面，请从发布页下载安装。");
         } finally {
+            clearProgress();
             updating.set(false);
         }
     }
 
-    private static void download(URL url, File destination) throws IOException {
+    private void publishProgress(String version, String stage, long downloaded, long total) {
+        JSObject next = new JSObject().put("version", version).put("stage", stage).put("downloadedBytes", downloaded);
+        if (total > 0) next.put("totalBytes", total);
+        progress = next;
+        notifyListeners("downloadProgress", next);
+    }
+
+    private void clearProgress() {
+        progress = null;
+        notifyListeners("downloadProgress", new JSObject().put("stage", "idle"));
+    }
+
+    private void download(String version, URL url, File destination, long expected) throws IOException {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MINUTES.toNanos(4);
         for (int redirects = 0; redirects < 4; redirects++) {
             String host = url.getHost().toLowerCase(Locale.ROOT);
@@ -110,16 +134,31 @@ public class CompanionUpdatePlugin extends Plugin {
                     url = new URL(url, location);
                     continue;
                 }
-                if (status != 200 || connection.getContentLengthLong() > MAX_BYTES) throw new IOException("更新包下载失败。");
+                long contentLength = connection.getContentLengthLong();
+                long total = expected > 0 ? expected : contentLength;
+                if (status != 200 || total > MAX_BYTES || (expected > 0 && contentLength >= 0 && contentLength != expected)) {
+                    throw new IOException("更新包下载失败。");
+                }
+                publishProgress(version, "downloading", 0, total);
                 try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(destination)) {
                     byte[] buffer = new byte[65536];
                     long size = 0;
+                    long reportAfter = System.nanoTime() + 150_000_000L;
                     int length;
                     while ((length = input.read(buffer)) != -1) {
                         size += length;
-                        if (size > MAX_BYTES || System.nanoTime() > deadline) throw new IOException("更新包下载超时或超过大小限制。");
+                        if (size > MAX_BYTES || (total > 0 && size > total) || System.nanoTime() > deadline) {
+                            throw new IOException("更新包下载超时或超过大小限制。");
+                        }
                         output.write(buffer, 0, length);
+                        long now = System.nanoTime();
+                        if (now >= reportAfter) {
+                            publishProgress(version, "downloading", size, total);
+                            reportAfter = now + 150_000_000L;
+                        }
                     }
+                    if (total > 0 && size != total) throw new IOException("更新包下载不完整。");
+                    publishProgress(version, "verifying", size, total);
                 }
                 return;
             } finally {

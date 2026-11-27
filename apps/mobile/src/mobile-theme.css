@@ -526,7 +526,11 @@
 .back-button.nav-icon-button { color: var(--ink); }
 
 .project-list-toolbar { min-height: 46px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: var(--muted); font-size: .8125rem; }
-.project-list-actions { display: flex; flex: 0 0 auto; align-items: center; padding-inline: 3px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.project-list-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.project-search-row { display: flex; align-items: stretch; gap: 8px; }
+.project-search-row .project-search { flex: 1; min-width: 0; }
+.project-search-row .project-management-button { flex: 0 0 46px; min-height: 46px; height: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.project-search-row .project-management-button:active { background: var(--accent-soft); }
 .project-counts { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; line-height: 1.35; }
 .project-counts span { white-space: nowrap; }
 .project-counts span + span::before { content: '·'; margin-inline-end: 6px; }
@@ -534,8 +538,6 @@
   .project-counts span + span::before { content: none; }
 }
 .project-list-actions > button { min-height: 44px; padding-inline: 8px; }
-.project-list-actions > button + button { position: relative; }
-.project-list-actions > button + button::before { content: ''; position: absolute; inset-inline-start: 0; inset-block: 12px; border-inline-start: 1px solid var(--line); }
 .project-list-actions .quota-button { width: 44px; color: var(--accent); }
 .quota-ring {
   display: grid;
@@ -949,6 +951,29 @@
 .update-toast[data-tone='error'] .update-toast-icon { color: #8b3045; background: #fff0f3; }
 .update-toast .update-toast-close { width: 36px; height: 36px; min-width: 36px; }
 .update-toast-close svg { width: 17px; height: 17px; }
+.update-toast[data-progress] { width: min(360px, 100%); padding: 12px 14px; }
+.update-progress-list { grid-column: 1 / -1; display: grid; gap: 11px; margin-top: 5px; }
+.update-download { display: grid; gap: 6px; min-width: 0; }
+.update-download-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: .8125rem; }
+.update-download-caption > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 7px; }
+.update-download-caption small, .update-download-size { color: var(--muted); font-size: .6875rem; }
+.update-download-percent { color: var(--accent); font-variant-numeric: tabular-nums; }
+.update-download-size { justify-self: end; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.update-download-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+.update-download-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 220ms var(--ease-out);
+}
+.update-download-track[data-indeterminate] span { width: 32%; opacity: .68; }
 .update-toast-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -974,10 +999,12 @@
   .update-check-spinner { animation: update-spin .8s linear infinite; }
   .update-toast { animation: update-toast-in 230ms var(--ease-out) both; }
   .update-toast[data-leaving] { animation: update-toast-out 150ms ease-in both; }
+  .update-download-track[data-indeterminate] span { animation: update-download-slide 1.4s ease-in-out infinite; }
 }
 @keyframes update-spin { to { transform: rotate(360deg); } }
 @keyframes update-toast-in { from { opacity: 0; transform: translateY(9px) scale(.98); } }
 @keyframes update-toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(6px); } }
+@keyframes update-download-slide { from { transform: translateX(-100%); } to { transform: translateX(315%); } }
 .attention-target:focus { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
 .desktop-attention { padding: 12px; background: var(--surface-subtle); color: var(--muted); font-size: .875rem; }
 .computer-reader .reader-action { width: 100%; }

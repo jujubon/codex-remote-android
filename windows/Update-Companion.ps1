@@ -53,6 +53,62 @@ function Read-Health([string]$Address) {
     }
 }
 
+function Save-ReleaseDownload([uri]$Uri, [long]$ExpectedBytes, $Update) {
+    $allowedHosts = @('github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com')
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    for ($redirect = 0; $redirect -le 3; $redirect++) {
+        if ($Uri.Scheme -ne 'https' -or !$Uri.IsDefaultPort -or $Uri.UserInfo -or $Uri.Host -notin $allowedHosts) {
+            throw 'The release download URL is invalid.'
+        }
+        $request = [Net.HttpWebRequest]::Create($Uri)
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = 'Codex-Remote-Updater'
+        $request.Timeout = 20000
+        $request.ReadWriteTimeout = 20000
+        $response = $request.GetResponse()
+        try {
+            $status = [int]$response.StatusCode
+            if ($status -ge 300 -and $status -lt 400 -and $response.Headers['Location']) {
+                $Uri = [uri]::new($Uri, $response.Headers['Location'])
+                continue
+            }
+            if ($status -ne 200 -or ($response.ContentLength -ge 0 -and $response.ContentLength -ne $ExpectedBytes)) {
+                throw 'The release download size is invalid.'
+            }
+            $Update.downloadedBytes = 0
+            $Update.totalBytes = $ExpectedBytes
+            Save-Json $updatePath $Update
+            $inputStream = $response.GetResponseStream()
+            $outputStream = [IO.File]::Create($archive)
+            try {
+                $buffer = New-Object byte[] 65536
+                $nextReport = 0
+                while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $bytes = $Update.downloadedBytes + $count
+                    if ($bytes -gt $ExpectedBytes -or $clock.Elapsed.TotalSeconds -gt 180) {
+                        throw 'The release download exceeded the size or time limit.'
+                    }
+                    $outputStream.Write($buffer, 0, $count)
+                    $Update.downloadedBytes = $bytes
+                    if ($clock.ElapsedMilliseconds -ge $nextReport) {
+                        Save-Json $updatePath $Update
+                        $nextReport = $clock.ElapsedMilliseconds + 350
+                    }
+                }
+            } finally {
+                $outputStream.Dispose()
+                $inputStream.Dispose()
+            }
+            if ($Update.downloadedBytes -ne $ExpectedBytes) { throw 'The release download was incomplete.' }
+            Save-Json $updatePath $Update
+            return
+        } finally {
+            $response.Dispose()
+        }
+    }
+    throw 'Too many release download redirects.'
+}
+
 $mutex = [Threading.Mutex]::new($false, 'Local\CodexRemoteCompanionUpdate')
 $owned = $false
 try {
@@ -63,6 +119,8 @@ try {
     if ($marker.version -cnotmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}$') { throw 'Invalid version.' }
     if ($marker.stage -ne 'switching') {
         $marker.stage = 'downloading'
+        $marker | Add-Member -NotePropertyName downloadedBytes -NotePropertyValue 0 -Force
+        $marker | Add-Member -NotePropertyName totalBytes -NotePropertyValue $null -Force
         Save-Json $updatePath $marker
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $api = "https://api.github.com/repos/$repository/releases/latest"
@@ -75,7 +133,7 @@ try {
             $assets[0].size -le 0 -or $assets[0].size -gt 150MB) { throw 'Update asset metadata is invalid.' }
         $asset = $assets[0]
         $url = "https://github.com/$repository/releases/download/$tag/$name"
-        Invoke-WebRequest -Uri $url -UseBasicParsing -MaximumRedirection 3 -TimeoutSec 180 -OutFile $archive
+        Save-ReleaseDownload -Uri $url -ExpectedBytes $asset.size -Update $marker
         if ((Get-Item -LiteralPath $archive).Length -ne $asset.size -or
             (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $asset.digest.Substring(7)) {
             throw 'The release checksum did not match.'

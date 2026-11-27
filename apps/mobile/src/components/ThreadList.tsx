@@ -417,10 +417,14 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
         <ConnectionStatus phase={phase} detail={phaseDetail} onReconnect={onReconnect} />
       </div>}
       <div className="thread-browser">
-        <div className="project-search">
-          <SearchIcon />
-          <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={event => updateQuery(event.target.value)} />
-          {query && <button className="nav-icon-button" type="button" aria-label="清空搜索" onClick={() => updateQuery('')}><CloseIcon /></button>}
+        <div className="project-search-row">
+          <div className="project-search">
+            <SearchIcon />
+            <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={event => updateQuery(event.target.value)} />
+            {query && <button className="nav-icon-button" type="button" aria-label="清空搜索" onClick={() => updateQuery('')}><CloseIcon /></button>}
+          </div>
+          <button type="button" className="nav-icon-button project-management-button" title="管理项目与对话"
+            aria-label="管理项目与对话" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}><MoreIcon /></button>
         </div>
         <nav className="segmented-controls project-filters" data-selected={Math.max(0, projectFilters.indexOf(filter))} aria-label="对话筛选">{projectFilters.map(label =>
           <button key={label} type="button" aria-pressed={label === filter} onClick={() => { if (label !== filter) updateFilter(label); }}>{label}</button>
@@ -438,7 +442,6 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
                 <span>{quotaPercent === undefined ? '–' : `${quotaPercent}%`}</span>
               </span>
             </button>}
-            <button type="button" className="manage-button" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}>管理</button>
           </div>
         </div>
       </div>
