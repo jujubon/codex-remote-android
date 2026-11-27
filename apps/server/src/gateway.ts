@@ -135,6 +135,8 @@ export class MobileGateway {
   private readonly quotaFailedTurns = new Map<string, string>();
   private readonly recentMobileStarts = new Map<string, MobileThreadStart>();
   private readonly queueDrains = new Map<string, Promise<void>>();
+  private hostUpdating = false;
+  private taskRequests = 0;
   private readonly desktopQueuedFollowUps = new Map<string, number>();
   private readonly gitDiffs = new Map<string, GitDiffSnapshot>();
   private readonly syncJournal = new SyncJournal();
@@ -616,7 +618,11 @@ export class MobileGateway {
       return;
     }
 
+    const startsWork = ["thread.start", "thread.compact", "thread.settings", "turn.start",
+      "prompt.queue.resume", "prompt.queue.promote"].includes(message.type);
+    if (startsWork) this.taskRequests++;
     try {
+      if (startsWork && this.hostUpdating) throw new GatewayRequestError("host_updating", "电脑配套服务正在更新，请重新连接后再发送。");
       switch (message.type) {
         case "ping":
           this.send(socket, { type: "pong", id: message.id });
@@ -1170,7 +1176,21 @@ export class MobileGateway {
         ...(message.type === "turn.start" ? { threadId: message.threadId } : {}),
         message: quotaLimited ? USAGE_LIMIT_MESSAGE : error instanceof Error ? error.message : "Request failed",
       });
+    } finally {
+      if (startsWork) this.taskRequests--;
     }
+  }
+
+  pauseForHostUpdate(): boolean {
+    if (this.taskRequests || this.queueDrains.size || this.mobileOperations.size ||
+        this.appServerCurrentTurnIds.size || this.antigravity?.hasActiveTurns) return false;
+    this.hostUpdating = true;
+    return true;
+  }
+
+  resumeAfterHostUpdate(): void {
+    this.hostUpdating = false;
+    for (const threadId of this.mobileThreads) this.scheduleQueueDrain(threadId);
   }
 
   private async refreshThreadDiff(threadId: string, broadcast: boolean): Promise<GitDiffSnapshot> {
@@ -1839,7 +1859,7 @@ export class MobileGateway {
   }
 
   private scheduleQueueDrain(threadId: string): void {
-    if (!this.promptQueue || this.queueDrains.has(threadId)) return;
+    if (this.hostUpdating || !this.promptQueue || this.queueDrains.has(threadId)) return;
     const drain = Promise.resolve().then(() => this.drainPromptQueue(threadId)).catch((error) => {
       console.warn("[prompt-queue] drain", threadId, error);
     }).finally(() => {

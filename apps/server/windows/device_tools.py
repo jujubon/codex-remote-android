@@ -46,6 +46,7 @@ window_owner = bind(user, "GetWindow", w.HWND, w.HWND, w.UINT)
 window_process = bind(user, "GetWindowThreadProcessId", w.DWORD, w.HWND, c.POINTER(w.DWORD))
 open_process = bind(kernel, "OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
 package_family = bind(kernel, "GetPackageFamilyName", w.LONG, w.HANDLE, c.POINTER(w.UINT), w.LPWSTR)
+image_path = bind(kernel, "QueryFullProcessImageNameW", w.BOOL, w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD))
 close_handle = bind(kernel, "CloseHandle", w.BOOL, w.HANDLE)
 
 
@@ -62,7 +63,7 @@ def require_desktop_session():
         raise RuntimeError("An interactive Windows user session is required.")
 
 
-def codex_window_open():
+def desktop_window_open(target=None):
     found = False
 
     @WINDOW_CALLBACK
@@ -76,9 +77,14 @@ def codex_window_open():
         if not process:
             return True
         try:
-            family = c.create_unicode_buffer(128)
-            length = w.UINT(len(family))
-            found = package_family(process, c.byref(length), family) == 0 and family.value == CODEX_PACKAGE
+            if target:
+                path = c.create_unicode_buffer(32768)
+                length = w.DWORD(len(path))
+                found = bool(image_path(process, 0, path, c.byref(length))) and os.path.normcase(path.value) == target
+            else:
+                family = c.create_unicode_buffer(128)
+                length = w.UINT(len(family))
+                found = package_family(process, c.byref(length), family) == 0 and family.value == CODEX_PACKAGE
             return not found
         finally:
             close_handle(process)
@@ -148,12 +154,14 @@ def handle(request):
     elif action == "open":
         os.startfile(request["target"])
         send()
-    elif action == "antigravity-open":
+    elif action in ("antigravity-status", "antigravity-open"):
         target = request["target"]
-        os.startfile(target, cwd=os.path.dirname(target))
-        send()
+        opened = desktop_window_open(os.path.normcase(target))
+        if not opened and action == "antigravity-open":
+            os.startfile(target, cwd=os.path.dirname(target))
+        send({"opened": opened})
     elif action == "codex-status" or action == "codex-open":
-        opened = codex_window_open()
+        opened = desktop_window_open()
         if not opened and action == "codex-open":
             os.startfile("shell:AppsFolder\\" + CODEX_PACKAGE + "!App")
         send({"opened": opened})

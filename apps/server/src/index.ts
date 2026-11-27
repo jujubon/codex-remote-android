@@ -19,6 +19,7 @@ import { PromptQueueStore } from "./prompt-queue.js";
 import { AntigravitySessions, findAntigravityCli } from "./antigravity.js";
 import { antigravityUsageReader } from "./antigravity-usage.js";
 import { UsageResets } from "./usage-resets.js";
+import { CompanionUpdates } from "./companion-updates.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -56,6 +57,8 @@ const readAntigravityUsage = antigravityUsageReader(antigravityCli);
 const antigravity = await AntigravitySessions.open(join(dirname(config.promptQueueFile), "antigravity-threads.json"), antigravityCli)
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
+const updates = new CompanionUpdates(() => gateway.pauseForHostUpdate(), () => gateway.resumeAfterHostUpdate());
+await updates.restoreGuard().catch(error => console.warn("[updates] Could not restore update guard", error));
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
   deviceSettingsPath,
@@ -214,7 +217,16 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === "GET" && request.url === "/api/device/status") {
-    json(response, 200, { ...await device.status(), version: HOST_VERSION, reader: reader.status() });
+    json(response, 200, { ...await device.status(), version: HOST_VERSION, reader: reader.status(), hostUpdateSupported: updates.supported });
+    return;
+  }
+  if (request.method === "GET" && request.url === "/api/device/update/status") {
+    json(response, 200, { update: await updates.status() });
+    return;
+  }
+  if (request.method === "POST" && request.url === "/api/device/update/start") {
+    const { version } = await readJsonBody(request, 1024);
+    json(response, 202, await updates.start(version));
     return;
   }
   if (request.method === "GET" && request.url === "/api/device/usage") {

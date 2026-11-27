@@ -108,6 +108,7 @@ export class AntigravitySessions {
 
   get available() { return this.executable !== undefined; }
   currentTurn(id: string) { return this.active.get(id)?.id; }
+  get hasActiveTurns() { return this.active.size > 0; }
   approvals() { return [...this.permissions.values()].map(permission => permission.approval); }
 
   resolveApproval(id: string, decision: ApprovalDecision) {

@@ -23,7 +23,7 @@ import { useRemote } from './hooks/useRemote';
 import { clearRemoteConfig, loadRemoteConfig, type RemoteConfig } from './lib/configStore';
 import { initializeNotifications } from './lib/notifications';
 import { loadInboxImage, type InboxFile } from './lib/deviceTools';
-import { openAntigravityPortal } from './lib/antigravityPortal';
+import { AssistantDesktopAction } from './components/AssistantDesktopAction';
 import { useAntigravityUsage } from './hooks/useAntigravityUsage';
 import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
@@ -56,7 +56,6 @@ export function App() {
   const [showNewThread, setShowNewThread] = useState(false);
   const [newDirectory, setNewDirectory] = useState<string>();
   const [newAssistant, setNewAssistant] = useState<Assistant>('codex');
-  const [portalError, setPortalError] = useState('');
   const [backgroundError, setBackgroundError] = useState('');
   const [inboxSelection, setInboxSelection] = useState<{ file: InboxFile; threadId?: string }>();
   const [attention, setAttention] = useState<{ threadId: string; target: AttentionTarget }>();
@@ -84,7 +83,6 @@ export function App() {
 
   const goToPage = useCallback((page: HomePage) => {
     setHomePage(page);
-    setPortalError('');
     if (page !== 'computer') {
       lastAssistantPage.current = page;
       try { localStorage.setItem(assistantPageKey, page); } catch { /* Keep the preference in memory. */ }
@@ -287,10 +285,10 @@ export function App() {
       {!remote.lastError && !backgroundError && remote.queueReceipt && (
         <div className="error-toast receipt-toast" role="status"><span>{remote.queueReceipt}</span><button type="button" aria-label="关闭回执" className="nav-icon-button" onClick={remote.dismissReceipt}><CloseIcon /></button></div>
       )}
-      {(remote.lastError || backgroundError || portalError) && (
+      {(remote.lastError || backgroundError) && (
         <div className="error-toast" role="alert">
-          <span>{remote.lastError || backgroundError || portalError}</span>
-          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); setPortalError(''); }} className="nav-icon-button" aria-label="关闭错误提示"><CloseIcon /></button>
+          <span>{remote.lastError || backgroundError}</span>
+          <button type="button" onClick={() => { remote.dismissError(); setBackgroundError(''); }} className="nav-icon-button" aria-label="关闭错误提示"><CloseIcon /></button>
         </div>
       )}
   </>;
@@ -360,7 +358,7 @@ export function App() {
           onDiscardLocalMessage={remote.discardLocalMessage}
         />
       ) : homePage === 'computer' ? (
-        <ComputerScreen config={config} antigravityAvailable={remote.antigravityAvailable}
+        <ComputerScreen config={config}
           hostVersion={remote.hostVersion}
           deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
           onChangeAttachmentCleanup={async (enabled) => {
@@ -383,8 +381,8 @@ export function App() {
         <ThreadList key={homePage}
           assistant={homePage}
           canCreate={remote.phase === 'connected' && (homePage === 'codex' || remote.antigravityAvailable)}
-          desktopAction={homePage === 'antigravity' && <button className="manage-button antigravity-desktop-link" type="button"
-            onClick={() => { setPortalError(''); void openAntigravityPortal().catch((error: Error) => setPortalError(error.message)); }}>桌面对话</button>}
+          desktopAction={config && <AssistantDesktopAction assistant={homePage} config={config}
+            connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'} />}
           attention={remote.threadAttention}
           position={homePage === 'codex' ? codexPosition : antigravityPosition}
           onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}

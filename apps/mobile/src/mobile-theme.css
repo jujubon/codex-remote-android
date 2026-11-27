@@ -551,7 +551,13 @@
 }
 .quota-ring[data-known=false] { background: var(--line-strong); }
 .quota-ring[data-known=false] > span { color: var(--muted); }
-.project-list-actions .antigravity-desktop-link { white-space: nowrap; }
+.project-list-actions .assistant-desktop-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.assistant-desktop-link svg { width: 17px; height: 17px; }
+.assistant-desktop-link i { width: 6px; height: 6px; border-radius: 50%; background: #387954; }
+.assistant-desktop-sheet .device-actions { padding-top: 12px; }
+@media (max-width: 350px) {
+  .assistant-desktop-link span { display: none; }
+}
 .session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
 .usage-resets { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); }
 .usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }

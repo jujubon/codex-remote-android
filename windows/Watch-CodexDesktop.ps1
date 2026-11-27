@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $configPath = Join-Path $root 'settings.json'
+$updatePath = Join-Path $root 'update.json'
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 function Write-WatchLog([string]$Message) {
@@ -35,6 +36,7 @@ $mutex = [Threading.Mutex]::new($false, 'Local\CodexRemoteDesktopWatch')
 $owned = $false
 $hostChild = $null
 $tunnelChild = $null
+$updateChild = $null
 $hostKey = $tunnelKey = ''
 $hostRetry = $tunnelRetry = [datetime]::MinValue
 try {
@@ -45,6 +47,19 @@ try {
         try {
             $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($config.enabled -eq $false) { break }
+            $updater = Join-Path (Split-Path -Parent $config.companion) 'Update-Companion.ps1'
+            $env:CMR_LIFECYCLE_UPDATES = if (Test-Path -LiteralPath $updater -PathType Leaf) { '1' } else { '0' }
+            if ($updateChild -and $updateChild.HasExited) {
+                $updateChild.Dispose()
+                $updateChild = $null
+            }
+            if (!$updateChild -and $env:CMR_LIFECYCLE_UPDATES -eq '1' -and (Test-Path -LiteralPath $updatePath)) {
+                $update = Get-Content -LiteralPath $updatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($update.stage -in @('pending', 'downloading', 'switching')) {
+                    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $updater + '"'
+                    $updateChild = Start-BackgroundProcess $psExe $arguments
+                }
+            }
             $launchTunnel = $config.tunnelExe -and $config.tokenFile -and $config.protocol -in @('http2', 'quic', 'auto')
             $nextTunnelKey = if ($launchTunnel) { "$($config.tunnelExe)|$($config.tokenFile)|$($config.protocol)" } else { '' }
             $nextHostKey = "$($config.companion)|$launchTunnel"
@@ -86,6 +101,7 @@ try {
 } finally {
     try {
         if ($owned) {
+            if ($updateChild) { $updateChild.Dispose() }
             try { Stop-Child $tunnelChild } finally { Stop-Child $hostChild }
             Write-WatchLog 'Companion and tunnel stopped.'
         }

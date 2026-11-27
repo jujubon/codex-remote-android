@@ -150,6 +150,9 @@ export class DeviceTools {
       supported: this.supported,
       awakeUntil: this.hold?.until ?? null,
       antigravityDesktopInstalled: Boolean(antigravity),
+      antigravityDesktopOpen: antigravity
+        ? await this.native({ action: "antigravity-status", target: antigravity }).then(result => result.opened).catch(() => undefined)
+        : undefined,
       codexDesktop,
     };
     try {

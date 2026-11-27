@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LanDiscoveryPlugin.class);
         registerPlugin(CrossNetworkReaderPlugin.class);
         registerPlugin(AntigravityRemotePlugin.class);
+        registerPlugin(CompanionUpdatePlugin.class);
         super.onCreate(savedInstanceState);
         getBridge().getWebView().setWebChromeClient(new MultiFileChromeClient(getBridge()));
     }
