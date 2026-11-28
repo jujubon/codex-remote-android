@@ -18,6 +18,10 @@ export function PlusIcon(props: IconProps) {
   return <IconBase {...props}><path d="M12 5v14M5 12h14" /></IconBase>;
 }
 
+export function MailIcon(props: IconProps) {
+  return <IconBase {...props}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" /></IconBase>;
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <IconBase {...props}>

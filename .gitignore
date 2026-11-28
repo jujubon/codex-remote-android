@@ -8,3 +8,4 @@ coverage/
 .DS_Store
 runtime/
 __pycache__/
+campus-mail-data/

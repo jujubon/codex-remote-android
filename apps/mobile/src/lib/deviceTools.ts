@@ -102,7 +102,8 @@ export async function deviceRequest<T>(config: RemoteConfig, action: string, bod
   const url = new URL(toWebSocketUrl(config.serverUrl));
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/device/' + action;
-  const method = ['status', 'usage', 'antigravity/usage', 'inbox', 'update/status', 'cockpit/accounts', 'cockpit/status'].includes(action)
+  const method = ['status', 'usage', 'antigravity/usage', 'inbox', 'update/status', 'cockpit/accounts', 'cockpit/status', 'mail'].includes(action)
+    || /^mail\/[a-f0-9]{64}$/.test(action)
     || (action === 'antigravity/models' && body === undefined)
     || (['audio/mute', 'display/power'].includes(action) && body === undefined) ? 'GET' : 'POST';
   const timeoutMs = ['inbox/clear', 'thread/rename'].includes(action) ? 60_000 : action === 'reader/open-remote' ? 25_000 : ['antigravity/usage', 'antigravity/models'].includes(action) ? 22_000

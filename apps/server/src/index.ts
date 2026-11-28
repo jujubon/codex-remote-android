@@ -21,6 +21,7 @@ import { antigravityUsageReader } from "./antigravity-usage.js";
 import { UsageResets } from "./usage-resets.js";
 import { CompanionUpdates } from "./companion-updates.js";
 import { CockpitAccounts } from "./cockpit-accounts.js";
+import { CampusMail } from "./campus-mail.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -58,6 +59,12 @@ const readAntigravityUsage = antigravityUsageReader(antigravityCli);
 const antigravity = await AntigravitySessions.open(join(dirname(config.promptQueueFile), "antigravity-threads.json"), antigravityCli)
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
+const campusMail = process.platform === "win32" && process.env.LOCALAPPDATA
+  ? new CampusMail(join(process.env.LOCALAPPDATA, "CodexMobileRemote", "campus-mail.json"), alerts => gateway.publishMail(alerts)) : undefined;
+if (campusMail) {
+  gateway.mailAlerts = () => campusMail.alerts();
+  campusMail.start();
+}
 const updates = new CompanionUpdates(() => gateway.pauseForHostUpdate(), () => gateway.resumeAfterHostUpdate());
 await updates.restoreGuard().catch(error => console.warn("[updates] Could not restore update guard", error));
 const heartbeat = gateway.startHeartbeat();
@@ -219,6 +226,21 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 }
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (campusMail && request.method === "GET" && request.url === "/api/device/mail") {
+    json(response, 200, campusMail.list());
+    return;
+  }
+  if (campusMail && request.method === "POST" && request.url === "/api/device/mail/sync") {
+    void campusMail.sync(true);
+    json(response, 202, campusMail.list());
+    return;
+  }
+  const mailId = /^\/api\/device\/mail\/([a-f0-9]{64})$/.exec(request.url ?? "")?.[1];
+  if (campusMail && request.method === "GET" && mailId) {
+    const mail = campusMail.read(mailId);
+    json(response, mail ? 200 : 404, mail ?? { error: "这封邮件已不在 App 的近期收件箱。" });
+    return;
+  }
   if (request.method === "GET" && request.url === "/api/device/cockpit/accounts") {
     json(response, 200, await cockpit.list());
     return;
@@ -440,6 +462,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(localListenerTimer);
   closeDiscovery?.();
   device.stopHold();
+  campusMail?.stop();
   reader.close();
   gateway.close();
   await desktopIpc.stop();

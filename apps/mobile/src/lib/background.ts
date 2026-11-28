@@ -4,7 +4,7 @@ import type { RemoteConfig } from './configStore';
 export interface BackgroundAction {
   threadId?: string;
   action?: string;
-  kind?: 'approval' | 'completion' | 'background';
+  kind?: 'approval' | 'completion' | 'background' | 'mail';
   nonce?: string;
 }
 

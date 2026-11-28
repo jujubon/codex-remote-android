@@ -451,6 +451,10 @@ final class CodexBackgroundSocket {
 
     private void handleEvent(String method, JSONObject params) {
         if (params == null) return;
+        if ("mail/changed".equals(method)) {
+            CampusMailNotifications.publish(context, params.optJSONArray("alerts"));
+            return;
+        }
         String threadId = firstString(params, "threadId", "conversationId");
         if ("thread/status/changed".equals(method)) {
             observeThreadState(threadId, stateFromStatus(params.opt("status")));

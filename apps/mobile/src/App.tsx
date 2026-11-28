@@ -9,6 +9,7 @@ import { ComputerScreen } from './components/ComputerScreen';
 import { stopCrossNetworkReader } from './components/CrossNetworkReader';
 import { DevicePowerDialog } from './components/DeviceTools';
 import { HomeNav, type HomePage } from './components/HomeNav';
+import { CampusMailScreen } from './components/CampusMailScreen';
 import { CloseIcon } from './components/Icons';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { RenameThreadDialog, type RenameThreadTarget } from './components/RenameThreadDialog';
@@ -54,6 +55,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState<boolean>();
   const [homePage, setHomePage] = useState<HomePage>(savedAssistantPage);
+  const [mailTarget, setMailTarget] = useState<string>();
   const [startupUpdateHandled, setStartupUpdateHandled] = useState(false);
   const [requestedUpdate, setRequestedUpdate] = useState<StartupUpdate>();
   const lastAssistantPage = useRef<Assistant>(homePage === 'antigravity' ? 'antigravity' : 'codex');
@@ -81,14 +83,14 @@ export function App() {
   }, [needsAntigravityModels, antigravityModels.refresh]);
   const pageThreads = useMemo(() => remote.threads.filter(thread => (thread.assistant ?? 'codex') === homePage), [remote.threads, homePage]);
   useEffect(() => {
-    if (remote.phase !== 'connected' || homePage === 'computer') return;
+    if (remote.phase !== 'connected' || homePage === 'computer' || homePage === 'mail') return;
     const usage = homePage === 'codex' ? remote.usage : antigravityUsage.usage;
     if (usage && Date.now() - usage.checkedAt < 60_000) return;
     if (homePage === 'codex') remote.refreshUsage();
     else void antigravityUsage.refresh();
   }, [config, homePage, remote.phase]);
   const listHost = remote.serverId ?? config?.serverUrl ?? '';
-  const activeAssistant = homePage === 'computer' ? lastAssistantPage.current : homePage;
+  const activeAssistant = homePage === 'codex' || homePage === 'antigravity' ? homePage : lastAssistantPage.current;
   const projectHost = activeAssistant === 'antigravity' ? `antigravity:${listHost}` : listHost;
   const hidden = useHiddenProjects(projectHost);
   const hiddenThreads = useHiddenThreads(listHost);
@@ -97,7 +99,7 @@ export function App() {
 
   const goToPage = useCallback((page: HomePage) => {
     setHomePage(page);
-    if (page !== 'computer') {
+    if (page === 'codex' || page === 'antigravity') {
       lastAssistantPage.current = page;
       try { localStorage.setItem(assistantPageKey, page); } catch { /* Keep the preference in memory. */ }
     }
@@ -184,12 +186,21 @@ export function App() {
     const openAction = (action: { threadId?: string; nonce?: string; action?: string }) => {
       if (action.nonce && consumedNonces.has(action.nonce)) return;
       if (action.nonce) consumedNonces.add(action.nonce);
+      const mailId = /^openMail:([a-f0-9]{64})$/.exec(action.action ?? '')?.[1];
+      if (mailId) {
+        remote.selectThread(null);
+        setShowNewThread(false);
+        setShowSettings(false);
+        setMailTarget(mailId);
+        goToPage('mail');
+        return;
+      }
       if (action.threadId && action.threadId !== 'global') openRootThread(action.threadId, parseAttentionAction(action.action));
     };
     void CodexBackground.addListener('notificationAction', openAction).then((handle) => { listener = handle; });
     void CodexBackground.consumePendingAction().then(({ action }) => { if (action) openAction(action); }).catch(() => undefined);
     return () => void listener?.remove();
-  }, [openRootThread]);
+  }, [goToPage, openRootThread, remote.selectThread]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -201,7 +212,7 @@ export function App() {
       else if (showNewThread) setShowNewThread(false);
       else if (showSettings) setShowSettings(false);
       else if (remote.selectedThreadId) navigateBack();
-      else if (homePage === 'computer') goToPage(lastAssistantPage.current);
+      else if (homePage === 'computer' || homePage === 'mail') goToPage(lastAssistantPage.current);
       else void CapacitorApp.exitApp();
     }).then((handle) => {
       if (disposed) void handle.remove();
@@ -372,6 +383,9 @@ export function App() {
           onDownloadAttachment={remote.downloadHostAttachment}
           onDiscardLocalMessage={remote.discardLocalMessage}
         />
+      ) : homePage === 'mail' ? (
+        <CampusMailScreen config={config} connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'}
+          revision={remote.mailRevision} target={mailTarget} onTargetClosed={() => setMailTarget(undefined)} footer={homeNav} />
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
           hostVersion={remote.hostVersion}

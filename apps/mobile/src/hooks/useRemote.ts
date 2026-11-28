@@ -1339,6 +1339,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const [skills, setSkills] = useState<SkillOption[]>([]);
   const [usage, setUsage] = useState<AccountUsage | null>(null);
   const [usageStatus, setUsageStatus] = useState('');
+  const [mailRevision, setMailRevision] = useState(0);
   const usageSwitching = useRef(false);
   const usageRequest = useRef('');
   const usageTimers = useRef<{ fallback?: number; deadline?: number }>({});
@@ -2432,7 +2433,9 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           break;
         }
         case 'event':
-          if (message.method === 'antigravity/threadDeleted') {
+          if (message.method === 'mail/changed') {
+            setMailRevision(revision => revision + 1);
+          } else if (message.method === 'antigravity/threadDeleted') {
             const threadId = record(message.params)?.threadId;
             if (typeof threadId === 'string') forgetAntigravityThread(threadId);
           } else if (message.method === 'codex/accountSwitch') {
@@ -3299,6 +3302,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   return {
     phase,
     phaseDetail,
+    mailRevision,
     connectionUrl: phase === 'connected' ? connectionUrl : '',
     hostVersion: phase === 'connected' ? hostVersion : '',
     checkConversationSync,

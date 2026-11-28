@@ -23,6 +23,7 @@ Check a task's progress, answer a question, attach a screenshot, or start someth
 | **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a turn, or stop it. Use Cockpit Tools to compare account quotas, switch accounts, and open Codex Desktop automatically. |
 | **Antigravity** | Start and resume chats through the signed-in Windows CLI and check usage. Open the official Google remote panel from the desktop controls for desktop conversations. |
 | **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
+| **Mail** | Read Central South University mail, filter priority senders, and view summaries from a local model running on Windows. |
 
 ## Quick start
 
@@ -64,6 +65,14 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 3. After Cockpit confirms the switch, the Windows companion reloads the phone's Codex connection and opens Codex Desktop. The sheet reports account verification and desktop launch separately. If Windows hasn't confirmed a window, tap **Launch** (`启动`) in the Codex tab. Check workspaces that share an email address on the PC.
 
 Cockpit manages account credentials on Windows. The phone receives masked labels, plans, quotas, and operation status. The companion connects to Cockpit over loopback. Keep Cockpit's WebSocket port local.
+
+## Central South University mail
+
+1. Update Android and the Windows companion to **1.2.0**, then create a mail client password in [CSU webmail](https://mail.csu.edu.cn/).
+2. Run `Set-CampusMail.cmd` from the active Windows companion folder and enter your full address and client password. Windows encrypts the credentials for your user. The mail cache defaults to the `mail` subfolder of the configured update directory. Use `-DataDirectory` to choose a different location.
+3. Open **Mail** (`邮件`) on the phone. The first sync imports up to 20 recent messages. Later arrivals trigger notifications while the companion is online. On reconnect, the app can catch up on arrivals from the past 24 hours.
+
+To enable AI summaries, run [Ollama in local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features), install a local model, then run `Set-CampusMail.cmd -Model model-name`. Press Enter to keep a saved client password. Use `-PrioritySenders` from PowerShell to select senders whose messages can make a sound. Other notifications are silent, with message contents hidden on the lock screen. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
 
 ## Background operation and updates
 

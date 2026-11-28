@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import type { MailAlert } from "./campus-mail.js";
 import {
   WIRE_PROTOCOL,
   type AccountUsage,
@@ -102,6 +103,16 @@ const THREAD_SOURCE_KINDS = [
 ];
 
 export class MobileGateway {
+  mailAlerts?: () => MailAlert[];
+
+  publishMail(alerts: MailAlert[]) {
+    const payload = JSON.stringify(this.mailEvent(alerts));
+    for (const socket of this.wss.clients) this.sendPayload(socket, payload);
+  }
+
+  private mailEvent(alerts: MailAlert[]): ServerMessage {
+    return { type: "event", method: "mail/changed", params: { alerts } };
+  }
   private pendingUsage?: Promise<AccountUsage>;
   private accountSwitching = false;
   private verifyUsageAccount?: () => Promise<boolean>;
@@ -631,6 +642,7 @@ export class MobileGateway {
     // approval messages stay for backwards compatibility; the snapshot lets new
     // clients remove approvals whose resolved event was missed while offline.
     this.send(socket, { type: "approvals.snapshot", approvals: pendingApprovals });
+    if (this.mailAlerts) this.send(socket, this.mailEvent(this.mailAlerts()));
     // Large task indexes and histories are client-requested after welcome so a
     // reconnect can resume from its persisted cursor without a duplicate dump.
   }

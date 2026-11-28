@@ -23,6 +23,7 @@
 | **Codex** | 浏览项目和对话、发起任务、查看额度。支持的会话可以答复提问、处理审批、引导或停止。配合 Cockpit Tools，可以比较各账号额度、切换账号，并自动打开 Codex Desktop。 |
 | **Antigravity** | 用电脑上已登录的 CLI 新建和继续对话、查看额度。需要接手桌面对话时，从「启动」进入 Google 官方远程面板。 |
 | **电脑** | 自检连接、互传文件和剪贴板、锁屏、熄屏挂机、静音与关机，也可预览收件箱图片、使用手机阅读窗和安装更新。 |
+| **邮件** | 只读查看中南大学邮箱，按重点发件人筛选，并通过 Windows 上的本地模型查看摘要和待办。 |
 
 ## 快速开始
 
@@ -64,6 +65,14 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 3. Cockpit 确认切换后，Windows 配套服务会重新载入手机的 Codex 连接，并自动打开 Codex Desktop。界面分别显示账号验证和桌面启动结果。若桌面暂未确认打开，可在 Codex 首页点「启动」。相同邮箱的多个工作区需要在电脑上核对。
 
 账号凭据由 Cockpit 在电脑上管理。手机收到脱敏标签、套餐、额度和操作状态。配套服务通过本机回环地址访问 Cockpit 的自动化接口，Cockpit 的 WebSocket 端口应留在本机。
+
+## 学校邮箱
+
+1. 将手机和 Windows 配套服务均更新到 **1.2.0**。在[中南大学网页邮箱](https://mail.csu.edu.cn/)的「个人信息 → 邮箱密码」生成客户端专用密码。
+2. 在正在使用的 Windows 配套服务目录运行 `Set-CampusMail.cmd`，按提示填入完整邮箱和客户端专用密码。凭据由 Windows 当前用户加密保存。默认邮件缓存位于已配置的更新目录下的 `mail` 子目录，也可用 `-DataDirectory` 指定位置。
+3. 在手机打开「邮件」。首次同步最近 20 封，之后提醒新邮件。Windows 配套服务在线时支持跨网同步，手机断线重连后补提醒最近 24 小时的新信。
+
+要启用 AI 摘要，在电脑运行 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)，下载本地模型，然后用 `Set-CampusMail.cmd -Model 模型名` 保存模型名。已有的邮箱专用密码可以直接回车保留。用 `-PrioritySenders` 配置需要响铃的发件地址，例如在 PowerShell 运行 `.\Set-CampusMail.ps1 -PrioritySenders 'advisor@csu.edu.cn','office@csu.edu.cn'`。普通来信静默通知，锁屏隐藏邮件内容。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
 
 ## 后台运行与更新
 
