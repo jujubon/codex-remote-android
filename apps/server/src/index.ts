@@ -21,7 +21,7 @@ import { antigravityUsageReader } from "./antigravity-usage.js";
 import { UsageResets } from "./usage-resets.js";
 import { CompanionUpdates } from "./companion-updates.js";
 import { CockpitAccounts } from "./cockpit-accounts.js";
-import { CampusMail } from "./campus-mail.js";
+import { Mailboxes } from "./mailboxes.js";
 
 const config = loadConfig();
 const bridge = new AppServerBridge({
@@ -60,7 +60,7 @@ const antigravity = await AntigravitySessions.open(join(dirname(config.promptQue
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const campusMail = process.platform === "win32" && process.env.LOCALAPPDATA
-  ? new CampusMail(join(process.env.LOCALAPPDATA, "CodexMobileRemote", "campus-mail.json"), alerts => gateway.publishMail(alerts)) : undefined;
+  ? new Mailboxes(join(process.env.LOCALAPPDATA, "CodexMobileRemote"), alerts => gateway.publishMail(alerts)) : undefined;
 if (campusMail) {
   gateway.mailAlerts = () => campusMail.alerts();
   campusMail.start();
@@ -226,19 +226,22 @@ async function handleHttp(request: IncomingMessage, response: ServerResponse): P
 }
 
 async function handleDevice(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  if (campusMail && request.method === "GET" && request.url === "/api/device/mail") {
-    json(response, 200, campusMail.list());
+  const mailboxRoute = /^\/api\/device\/mail(?:\/account\/([a-f0-9]{64}))?(?:\/(sync|settings))?$/.exec(request.url ?? "");
+  const mailboxId = mailboxRoute?.[1];
+  const mailboxAction = mailboxRoute?.[2];
+  if (campusMail && mailboxRoute && request.method === "GET" && !mailboxAction) {
+    await campusMail.discover();
+    json(response, 200, campusMail.list(mailboxId));
     return;
   }
-  if (campusMail && request.method === "POST" && request.url === "/api/device/mail/sync") {
-    void campusMail.sync(true);
-    json(response, 202, campusMail.list());
+  if (campusMail && request.method === "POST" && mailboxAction === "sync") {
+    json(response, 202, await campusMail.sync(mailboxId));
     return;
   }
-  if (campusMail && request.method === "POST" && request.url === "/api/device/mail/settings") {
+  if (campusMail && request.method === "POST" && mailboxAction === "settings") {
     try {
       const body = await readJsonBody(request, 24_000);
-      json(response, 200, await campusMail.configure(body));
+      json(response, 200, await campusMail.configure(mailboxId, body));
     } catch (error) {
       json(response, 400, { error: error instanceof Error ? error.message : "无法保存邮箱设置。" });
     }

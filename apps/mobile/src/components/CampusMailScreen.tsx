@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
+import { cacheScope } from '../lib/remoteCache';
 import { AssistantSettingsSheet } from './AssistantSettingsSheet';
-import { ChevronRightIcon, MailIcon, SettingsIcon, UpdateIcon } from './Icons';
+import { ChevronDownIcon, ChevronRightIcon, MailIcon, SettingsIcon, UpdateIcon } from './Icons';
 import { SearchField } from './SearchField';
 
 type Importance = 'important' | 'normal' | 'promotion';
@@ -10,20 +11,32 @@ type Provider = 'antigravity' | 'ollama' | 'off';
 type Task = { state: 'pending' | 'review' | 'done'; remindAt?: number };
 type Row = { id: string; subject: string; sender: string; receivedAt: number; priority: boolean; summary?: string;
   importance?: Importance; task?: Task; action?: string; deadline?: string };
-type Detail = Omit<Row, 'summary'> & { address: string; body: string; truncated: boolean; summaryFailed?: boolean;
+type Mailbox = { id: string; address: string; kind: 'csu' | 'qq'; pending: number };
+type Detail = Omit<Row, 'summary'> & { mailboxId?: string; address: string; body: string; truncated: boolean; summaryFailed?: boolean;
   importanceOverride?: Importance; translation?: string;
   summary?: { overview: string; action: string; deadline: string; quote: string; needsTranslation?: boolean } };
 type Inbox = { configured: boolean; mailbox?: 'csu' | 'qq'; mailboxId?: string; syncing: boolean; status: string;
+  mailboxes?: Mailbox[];
   lastSyncAt: number | null; model: string | null; modelReady: boolean | null;
   smartMail?: boolean; provider?: Provider; prioritySenders?: string[]; analysisStatus?: string; analyzingId?: string; pendingAnalysis?: number; rows: Row[] };
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const dateLabel = (date: number) => dateFormat.format(date);
+const mailboxName = (kind: Mailbox['kind']) => kind === 'qq' ? 'QQ 邮箱' : '学校邮箱';
+const mailboxPath = (id?: string) => id ? `mail/account/${id}` : 'mail';
+
+function savedMailbox(key: string) {
+  try {
+    const value = localStorage.getItem(key);
+    return value && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
+  } catch { return undefined; }
+}
 
 export function CampusMailScreen({ config, connectionUrl, connected, revision, target, onTargetClosed, footer }: {
   config: RemoteConfig; connectionUrl?: string; connected: boolean; revision: number; target?: string;
   onTargetClosed: () => void; footer: ReactNode;
 }) {
   const endpoint = useMemo(() => ({ ...config, serverUrl: connectionUrl || config.serverUrl }), [config, connectionUrl]);
+  const accountKey = `codex-mobile.mailbox.${cacheScope(config.serverUrl, config.pairingToken)}`;
   const [inbox, setInbox] = useState<Inbox>();
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -44,35 +57,63 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const detailSheet = useRef<HTMLDialogElement>(null);
   const settingsSheet = useRef<HTMLDialogElement>(null);
   const consentSheet = useRef<HTMLDialogElement>(null);
-  const displayedMailbox = useRef<string | undefined>(undefined);
+  const accountSheet = useRef<HTMLDialogElement>(null);
+  const activeMailbox = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (displayedMailbox.current && displayedMailbox.current !== inbox?.mailboxId) {
-      if (detailSheet.current?.open) detailSheet.current.close();
-      if (consentSheet.current?.open) consentSheet.current.close();
-      if (settingsSheet.current?.open) settingsSheet.current.close();
-      setDetail(undefined);
-      setView('inbox');
-      setQuery('');
-      setFilter('all');
-    }
-    displayedMailbox.current = inbox?.mailboxId;
-  }, [inbox?.mailboxId]);
+    activeMailbox.current = savedMailbox(accountKey);
+  }, [accountKey]);
+
+  const rememberMailbox = useCallback((id?: string) => {
+    activeMailbox.current = id;
+    try {
+      if (id) localStorage.setItem(accountKey, id);
+      else localStorage.removeItem(accountKey);
+    } catch { /* Selection remains available in memory. */ }
+  }, [accountKey]);
 
   const load = useCallback(async () => {
     const sequence = ++request.current;
+    const id = activeMailbox.current;
     try {
-      const next = await deviceRequest<Inbox>(endpoint, 'mail');
-      if (request.current === sequence) { setInbox(next); setError(''); }
+      const next = await deviceRequest<Inbox>(endpoint, mailboxPath(id)).catch(error => {
+        if (!id || !(error instanceof Error) || !error.message.includes('未提供这项功能')) throw error;
+        return deviceRequest<Inbox>(endpoint, 'mail');
+      });
+      if (request.current === sequence) {
+        if (next.mailboxes) rememberMailbox(next.mailboxId);
+        else if (id) rememberMailbox(undefined);
+        setInbox(next);
+        setError('');
+      }
     } catch (failure) {
       if (request.current === sequence) setError(failure instanceof Error ? failure.message : '暂时无法读取邮箱。');
     }
-  }, [endpoint]);
+  }, [endpoint, rememberMailbox]);
 
   useEffect(() => {
     if (connected) void load();
     return () => { request.current++; };
   }, [connected, load, revision]);
+
+  const selectMailbox = useCallback((id: string, fromNotification = false) => {
+    accountSheet.current?.close();
+    if (id === activeMailbox.current) return;
+    if (!fromNotification) {
+      detailSheet.current?.close();
+      setSelected(undefined);
+      setDetail(undefined);
+    }
+    consentSheet.current?.close();
+    settingsSheet.current?.close();
+    rememberMailbox(id);
+    setInbox(undefined);
+    setError('');
+    setQuery('');
+    setFilter('all');
+    setView('inbox');
+    void load();
+  }, [load, rememberMailbox]);
 
   const showMail = useCallback((id: string) => {
     setDetail(undefined);
@@ -91,21 +132,24 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
     if (!selected || !connected) return;
     let active = true;
     void deviceRequest<Detail>(endpoint, `mail/${selected}`).then(mail => {
-      if (active) { setDetail(mail); setDetailError(''); }
-    }).catch(() => { if (active) setDetailError('暂时无法读取这封邮件，请稍后重试。'); });
+      if (active) {
+        if (mail.mailboxId) selectMailbox(mail.mailboxId, true);
+        setDetail(mail);
+        setDetailError('');
+      }
+    }).catch(() => { if (active) { setDetail(undefined); setDetailError('暂时无法读取这封邮件，请稍后重试。'); } });
     return () => { active = false; };
-  }, [connected, endpoint, revision, selected]);
+  }, [connected, endpoint, revision, selected, selectMailbox]);
 
   async function sync() {
+    const id = activeMailbox.current;
     setSyncRequested(true);
     ++request.current;
     try {
-      const next = await deviceRequest<Inbox>(endpoint, 'mail/sync', {});
-      setInbox(next);
-      setError('');
-      void load();
+      const next = await deviceRequest<Inbox>(endpoint, `${mailboxPath(id)}/sync`, {});
+      if (activeMailbox.current === id) { setInbox(next); setError(''); void load(); }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : '无法刷新邮件。');
+      if (activeMailbox.current === id) setError(failure instanceof Error ? failure.message : '无法刷新邮件。');
     } finally { setSyncRequested(false); }
   }
 
@@ -117,15 +161,17 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
 
   async function saveSettings(values: { provider?: Provider; cloudConsent?: boolean; prioritySenders?: string[] }) {
     if (settingsBusy || !connected) return false;
+    const id = activeMailbox.current;
     setSettingsBusy(true);
     setSettingsError('');
     try {
-      const result = await deviceRequest<Inbox>(endpoint, 'mail/settings', values);
+      const result = await deviceRequest<Inbox>(endpoint, `${mailboxPath(id)}/settings`, values);
+      if (activeMailbox.current !== id) return false;
       ++request.current;
       setInbox(result);
       return true;
     } catch (failure) {
-      setSettingsError(failure instanceof Error ? failure.message : '无法保存邮箱设置。');
+      if (activeMailbox.current === id) setSettingsError(failure instanceof Error ? failure.message : '无法保存邮箱设置。');
       return false;
     } finally { setSettingsBusy(false); }
   }
@@ -153,11 +199,19 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const pendingTasks = inbox?.rows.filter(row => row.task?.state === 'pending').length ?? 0;
   const reviewing = inbox?.rows.filter(row => row.task?.state === 'review').length ?? 0;
   const canChange = connected && !actionBusy;
-  const mailboxLabel = inbox?.mailbox === 'qq' ? 'QQ 邮箱' : inbox?.configured ? '学校邮箱' : '邮件';
+  const mailboxLabel = inbox?.mailbox ? mailboxName(inbox.mailbox) : '邮件';
+  const accounts = inbox?.mailboxes ?? [];
+  const account = accounts.find(item => item.id === inbox?.mailboxId);
 
   return <main className="app-screen computer-screen campus-mail-screen">
     <header className="top-bar computer-top-bar">
-      <span className="project-symbol"><MailIcon /></span><h1>{mailboxLabel}</h1>
+      <span className="project-symbol"><MailIcon /></span>
+      <div className="mail-account-heading">
+        <h1>{accounts.length > 1 ? <button type="button" className="mail-account-trigger" aria-label="切换邮箱"
+          aria-haspopup="dialog" onClick={() => accountSheet.current?.showModal()}>
+          <span>{mailboxLabel}</span><ChevronDownIcon aria-hidden="true" /></button> : mailboxLabel}</h1>
+        {account && <small title={account.address}>{account.address}</small>}
+      </div>
       <div className="mail-header-actions">
         <button className="nav-icon-button" type="button" aria-label="同步邮件" disabled={!connected || syncRequested || inbox?.syncing || !inbox?.configured}
           onClick={() => void sync()}><UpdateIcon /></button>
@@ -215,6 +269,17 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
       </>}
     </div>
     {footer}
+    <AssistantSettingsSheet dialogRef={accountSheet} title="选择邮箱" titleId="select-mailbox-title" closeLabel="关闭邮箱选择" onClosed={() => undefined}>
+      <ul className="mail-account-list">{accounts.map(item => <li key={item.id}>
+        <button type="button" aria-current={inbox?.mailboxId === item.id ? 'true' : undefined}
+          className="mail-account-option" onClick={() => selectMailbox(item.id)}>
+          <span className="mail-row-icon"><MailIcon aria-hidden="true" /></span>
+          <span className="mail-account-name"><strong>{mailboxName(item.kind)}</strong><small>{item.address}</small></span>
+          {item.pending > 0 && <span className="mail-account-count">{item.pending} 项待办</span>}
+          {inbox?.mailboxId === item.id && <span className="mail-account-current">当前</span>}
+        </button>
+      </li>)}</ul>
+    </AssistantSettingsSheet>
     <AssistantSettingsSheet dialogRef={detailSheet} title="邮件详情" titleId="mail-detail-title" closeLabel="关闭邮件详情" onClosed={() => {
       setSelected(undefined); onTargetClosed();
     }}>
@@ -285,11 +350,12 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
     <AssistantSettingsSheet dialogRef={settingsSheet} title="邮箱设置" titleId="mail-settings-title" closeLabel="关闭邮箱设置" onClosed={() => undefined}>
       <section className="mail-settings-card">
         {inbox?.smartMail && inbox.configured ? <>
-          <h3>当前来源 · {mailboxLabel}</h3>
+          <h3>当前邮箱 · {mailboxLabel}</h3>
           <details className="mail-detail-disclosure mail-source-help">
-            <summary>在电脑切换邮箱<ChevronRightIcon aria-hidden="true" /></summary>
+            <summary>在电脑添加邮箱<ChevronRightIcon aria-hidden="true" /></summary>
             <p>QQ 邮箱使用 IMAP 授权码。在电脑运行 <code>Set-CampusMail.cmd -Provider qq</code>。</p>
-            <p>切回已配置的学校邮箱，运行 <code>Set-CampusMail.cmd -Provider csu -UseSaved</code>。</p>
+            <p>添加学校邮箱，运行 <code>Set-CampusMail.cmd -Provider csu</code>。添加同类的另一个地址时，可用 <code>-Address</code> 指定完整邮箱地址。</p>
+            <p>两个账号会同时同步，点邮件页顶部的邮箱名称即可切换。</p>
           </details>
           <h3>自动摘要与分类</h3>
           <p>{inbox.provider === 'antigravity' ? 'Antigravity 已开启' : inbox.provider === 'ollama' ? `本地模型 · ${inbox.model ?? 'Ollama'}` : '未开启'}</p>

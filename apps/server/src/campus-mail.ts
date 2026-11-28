@@ -9,6 +9,7 @@ const mailHelper = fileURLToPath(new URL("../windows/campus_mail.py", import.met
 const retained = 150;
 const oneDay = 86_400_000;
 type MailConfig = { address: string; secret: string; dataDir: string; model?: string; prioritySenders?: string[] };
+type ScheduleAnalysis = <T>(task: () => Promise<T>) => Promise<T>;
 type MailContent = { uid: number; subject: string; sender: string; address: string; receivedAt: number; body: string; truncated: boolean };
 type Provider = "antigravity" | "ollama" | "off";
 type Preferences = { provider?: Provider; prioritySenders?: string[] };
@@ -25,6 +26,18 @@ const importanceOf = (row: Message) => row.override ?? (row.voluntaryPetition ? 
 const normalizedAddress = /^[^\s@]+@[^\s@]+$/;
 const schoolAddress = /^[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn$/i;
 const qqAddress = /^[a-z0-9._+%-]+@qq\.com$/i;
+
+export const mailAccountId = (address: string) => digest(address.toLowerCase());
+export const mailKind = (address: string) => qqAddress.test(address) ? "qq" as const : "csu" as const;
+
+export function parseMailConfig(raw: string): MailConfig | undefined {
+  let config: MailConfig | undefined;
+  try { config = JSON.parse(raw.replace(/^\uFEFF/, "")) as MailConfig; } catch {}
+  if (!config || typeof config.address !== "string" || (!schoolAddress.test(config.address) && !qqAddress.test(config.address)) ||
+      typeof config.secret !== "string" || !config.secret || typeof config.dataDir !== "string" || !isAbsolute(config.dataDir)) return undefined;
+  if (typeof config.model !== "string" || !config.model) config.model = undefined;
+  return config;
+}
 
 export function classifyMailRow(row: Message): Message {
   if (row.voluntaryPetition !== undefined) return row;
@@ -80,7 +93,8 @@ export class CampusMail {
   private stopped = false;
   private writeTail = Promise.resolve();
 
-  constructor(private readonly configFile: string, private readonly publish: (alerts: MailAlert[]) => void) {}
+  constructor(private readonly configFile: string, private readonly publish: (alerts: MailAlert[]) => void,
+    private readonly scheduleAnalysis: ScheduleAnalysis = task => task(), private readonly expectedAccountId?: string) {}
 
   start() {
     void this.sync();
@@ -113,7 +127,7 @@ export class CampusMail {
 
   list() {
     return {
-      configured: Boolean(this.settings), mailbox: this.settings ? (qqAddress.test(this.settings.address) ? "qq" : "csu") : undefined,
+      configured: Boolean(this.settings), mailbox: this.settings ? mailKind(this.settings.address) : undefined,
       mailboxId: this.accountKey,
       syncing: Boolean(this.polling), status: this.status,
       model: this.settings?.model ?? null, modelReady: this.modelReady, lastSyncAt: this.cache?.lastSyncAt ?? null,
@@ -213,17 +227,14 @@ export class CampusMail {
       this.resetAnalysis();
       return;
     }
-    let config: MailConfig | undefined;
-    try { config = JSON.parse(raw.replace(/^\uFEFF/, "")) as MailConfig; } catch {}
-    if (!config || typeof config.address !== "string" || (!schoolAddress.test(config.address) && !qqAddress.test(config.address)) ||
-        typeof config.secret !== "string" || !config.secret || typeof config.dataDir !== "string" || !isAbsolute(config.dataDir)) {
+    const config = parseMailConfig(raw);
+    if (!config || (this.expectedAccountId && mailAccountId(config.address) !== this.expectedAccountId)) {
       this.settings = this.cache = this.accountKey = this.cachePath = undefined;
       this.resetAnalysis();
       this.status = "邮箱配置无效，请在电脑上重新设置。";
       throw new Error("mail configuration");
     }
-    if (typeof config.model !== "string" || !config.model) config.model = undefined;
-    const key = digest(config.address.toLowerCase());
+    const key = mailAccountId(config.address);
     const path = join(config.dataDir, `inbox-${key}.json`);
     const changed = this.accountKey !== key || this.settings?.dataDir !== config.dataDir;
     if (changed) {
@@ -308,14 +319,18 @@ export class CampusMail {
   }
 
   private async processAnalysis(config: MailConfig, provider: Exclude<Provider, "off">, signal: AbortSignal) {
-    const generate = await openMailGenerator(provider, config.model, config.dataDir, signal).catch(() => undefined);
+    const run = await openMailGenerator(provider, config.model, config.dataDir, signal).catch(() => undefined);
     if (signal.aborted) return;
-    this.modelReady = !!generate;
-    if (!generate) {
+    this.modelReady = !!run;
+    if (!run) {
       this.analysisStatus = provider === "antigravity" ? "未找到电脑上的 Antigravity CLI。" : "本地 Ollama 模型暂不可用。";
       this.nextAnalysisAt = Date.now() + 120_000;
       return;
     }
+    const generate = (prompt: string, schema: object) => this.scheduleAnalysis(() => {
+      signal.throwIfAborted();
+      return run(prompt, schema);
+    });
     for (let index = 0; index < 24 && !signal.aborted; index++) {
       const available = (this.cache?.rows ?? []).filter(row => !row.retryAt || row.retryAt <= Date.now());
       const needsSummary = available.filter(row => !row.summary?.importance);

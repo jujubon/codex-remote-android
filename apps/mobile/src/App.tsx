@@ -1,7 +1,7 @@
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArchiveDialog, type ArchiveTarget } from './components/ArchiveDialog';
 import { AntigravityDeleteDialog, type AntigravityDeleteTarget } from './components/AntigravityDeleteDialog';
 import { ConversationScreen } from './components/ConversationScreen';
@@ -9,7 +9,6 @@ import { ComputerScreen } from './components/ComputerScreen';
 import { stopCrossNetworkReader } from './components/CrossNetworkReader';
 import { DevicePowerDialog } from './components/DeviceTools';
 import { HomeNav, type HomePage } from './components/HomeNav';
-import { CampusMailScreen } from './components/CampusMailScreen';
 import { CloseIcon } from './components/Icons';
 import { NewThreadSheet } from './components/NewThreadSheet';
 import { RenameThreadDialog, type RenameThreadTarget } from './components/RenameThreadDialog';
@@ -36,6 +35,7 @@ import type { Assistant } from './types/protocol';
 import { compareReleaseVersions, type StartupUpdate } from './lib/updates';
 
 const assistantPageKey = 'codex-mobile.assistant-page.v1';
+const CampusMailScreen = lazy(() => import('./components/CampusMailScreen').then(module => ({ default: module.CampusMailScreen })));
 function savedAssistantPage(): Assistant {
   try { return localStorage.getItem(assistantPageKey) === 'antigravity' ? 'antigravity' : 'codex'; }
   catch { return 'codex'; }
@@ -384,8 +384,11 @@ export function App() {
           onDiscardLocalMessage={remote.discardLocalMessage}
         />
       ) : homePage === 'mail' ? (
-        <CampusMailScreen config={config} connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'}
-          revision={remote.mailRevision} target={mailTarget} onTargetClosed={() => setMailTarget(undefined)} footer={homeNav} />
+        <Suspense fallback={<main className="app-screen computer-screen"><div className="computer-scroll">
+          <p className="computer-feedback" role="status">正在打开邮件…</p></div>{homeNav}</main>}>
+          <CampusMailScreen config={config} connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'}
+            revision={remote.mailRevision} target={mailTarget} onTargetClosed={() => setMailTarget(undefined)} footer={homeNav} />
+        </Suspense>
       ) : homePage === 'computer' ? (
         <ComputerScreen config={config}
           hostVersion={remote.hostVersion}

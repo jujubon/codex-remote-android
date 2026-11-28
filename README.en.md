@@ -76,7 +76,7 @@ With Android and the Windows companion on **1.3.0**, open Mail settings and conf
 
 Routine and promotional messages stay in your inbox. Important mail can notify you, and explicit action requests appear under To-dos. Change a classification, complete or snooze a task, and manage priority contacts from the Mail tab. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
 
-Version **1.4.0** also supports personal [QQ Mail](https://mail.qq.com/). Enable IMAP and generate an authorization code in QQ Mail, then run `Set-CampusMail.cmd -Provider qq` from the active Windows companion folder. Each mailbox keeps its own credentials and analysis settings. One mailbox syncs at a time. Run `Set-CampusMail.cmd -Provider csu -UseSaved` to switch back to the saved CSU account.
+Version **1.5.0** syncs multiple CSU and personal [QQ Mail](https://mail.qq.com/) accounts concurrently. Enable IMAP and generate an authorization code in QQ Mail, then run `Set-CampusMail.cmd -Provider qq` from the active Windows companion folder. Use `-Address` to add a specific address. Saved accounts are imported during the upgrade. Switch between inboxes and to-dos from the Mail header. Each mailbox keeps its own analysis settings and priority contacts.
 
 ## Background operation and updates
 

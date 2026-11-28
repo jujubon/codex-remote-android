@@ -9,7 +9,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $state = Join-Path $env:LOCALAPPDATA 'CodexMobileRemote'
-$path = Join-Path $state 'campus-mail.json'
+$accountsDir = Join-Path $state 'mail-accounts'
+$legacyFiles = @('campus-mail.json', 'campus-mail-csu.json', 'campus-mail-qq.json')
+$schoolPattern = '^[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn$'
+$qqPattern = '^[a-z0-9._+%-]+@qq\.com$'
 
 function Read-MailConfig([string]$file) {
     if (Test-Path -LiteralPath $file -PathType Leaf) {
@@ -17,13 +20,16 @@ function Read-MailConfig([string]$file) {
     }
 }
 
-function Write-MailConfig([string]$file, $value) {
-    New-Item -ItemType Directory -Path $state -Force | Out-Null
+function Write-MailConfig([string]$file, $value, [switch]$OnlyIfMissing) {
+    New-Item -ItemType Directory -Path $accountsDir -Force | Out-Null
     $temporary = "$file.$PID.tmp"
     $backup = "$file.$PID.bak"
     try {
         $value | ConvertTo-Json -Compress | Set-Content -LiteralPath $temporary -Encoding UTF8
-        if (Test-Path -LiteralPath $file -PathType Leaf) { [IO.File]::Replace($temporary, $file, $backup) }
+        if ($OnlyIfMissing) {
+            try { [IO.File]::Move($temporary, $file) }
+            catch { if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw } }
+        } elseif (Test-Path -LiteralPath $file -PathType Leaf) { [IO.File]::Replace($temporary, $file, $backup) }
         else { [IO.File]::Move($temporary, $file) }
         if (Test-Path -LiteralPath $backup -PathType Leaf) { Remove-Item -LiteralPath $backup }
     } finally {
@@ -31,41 +37,59 @@ function Write-MailConfig([string]$file, $value) {
     }
 }
 
-$active = Read-MailConfig $path
-$activeProvider = if ($active.address -match '@qq\.com$') { 'qq' } else { 'csu' }
-if (!$Provider) {
-    $Provider = if ($Address -match '@qq\.com$') { 'qq' } elseif ($Address) { 'csu' } else { $activeProvider }
+function Get-MailConfigPath([string]$email) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($email.ToLowerInvariant()))
+        Join-Path $accountsDir (([BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant() + '.json')
+    } finally { $sha.Dispose() }
 }
-$savedPath = Join-Path $state "campus-mail-$Provider.json"
-$current = if ($active -and $activeProvider -eq $Provider) { $active } else { Read-MailConfig $savedPath }
-$pattern = if ($Provider -eq 'qq') { '^[a-z0-9._+%-]+@qq\.com$' } else { '^[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn$' }
-$providerName = if ($Provider -eq 'qq') { 'QQ Mail' } else { 'CSU mail' }
 
-function Select-MailConfig($value) {
-    if ($active -and $activeProvider -ne $Provider) {
-        Write-MailConfig (Join-Path $state "campus-mail-$activeProvider.json") $active
+$marker = Join-Path $accountsDir '.legacy-imported'
+if (!(Test-Path -LiteralPath $marker -PathType Leaf)) {
+    New-Item -ItemType Directory -Path $accountsDir -Force | Out-Null
+    foreach ($name in $legacyFiles) {
+        $legacy = Read-MailConfig (Join-Path $state $name)
+        if (!$legacy.secret -or ($legacy.address -notmatch $schoolPattern -and $legacy.address -notmatch $qqPattern)) { continue }
+        $target = Get-MailConfigPath $legacy.address
+        if (!(Test-Path -LiteralPath $target -PathType Leaf)) { Write-MailConfig $target $legacy -OnlyIfMissing }
     }
-    Write-MailConfig $path $value
-    if (Test-Path -LiteralPath $savedPath -PathType Leaf) { Remove-Item -LiteralPath $savedPath }
-    Write-Host "$providerName is selected. Refresh the Mail tab in Codex Remote."
+    New-Item -ItemType File -Path $marker -Force | Out-Null
 }
+
+$eligible = Get-ChildItem -LiteralPath $accountsDir -File -Filter '*.json' | Where-Object { $_.Name -match '^[a-f0-9]{64}\.json$' } |
+    ForEach-Object { Read-MailConfig $_.FullName } | Where-Object {
+        $_.secret -and (!$Provider -or ($Provider -eq 'qq' -and $_.address -match $qqPattern) -or ($Provider -eq 'csu' -and $_.address -match $schoolPattern))
+    }
+if (!$Address) {
+    $Address = if (@($eligible).Count -eq 1) { $eligible.address } else { Read-Host 'Full email address (CSU or QQ Mail)' }
+}
+$Address = ([string]$Address).Trim().ToLowerInvariant()
+if ($Address -notmatch $schoolPattern -and $Address -notmatch $qqPattern) { throw 'Enter a full CSU or QQ Mail email address.' }
+$actualProvider = if ($Address -match $qqPattern) { 'qq' } else { 'csu' }
+if ($Provider -and $Provider -ne $actualProvider) { throw 'The email address does not match the selected provider.' }
+$Provider = $actualProvider
+$providerName = if ($Provider -eq 'qq') { 'QQ Mail' } else { 'CSU mail' }
+$path = Get-MailConfigPath $Address
+$current = Read-MailConfig $path
 
 if ($Disconnect) {
-    if ($activeProvider -eq $Provider -and (Test-Path -LiteralPath $path -PathType Leaf)) { Remove-Item -LiteralPath $path }
-    if (Test-Path -LiteralPath $savedPath -PathType Leaf) { Remove-Item -LiteralPath $savedPath }
+    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path }
+    foreach ($name in $legacyFiles) {
+        $file = Join-Path $state $name
+        $legacy = Read-MailConfig $file
+        if ($legacy.address -ieq $Address) { Remove-Item -LiteralPath $file }
+    }
     Write-Host "$providerName disconnected. Its cache remains in the configured mail data folder."
     return
 }
 
 if ($UseSaved) {
-    if (!$current.secret -or $current.address -notmatch $pattern) { throw "$providerName does not have a saved account. Run setup without -UseSaved." }
-    Select-MailConfig $current
+    if (!$current.secret) { throw "$providerName does not have a saved account. Run setup without -UseSaved." }
+    Write-Host "$providerName is already connected. Select the account in the Mail tab on your phone."
     return
 }
 
-if (!$Address) { $Address = if ($current) { $current.address } else { Read-Host "Full $providerName address" } }
-$Address = ([string]$Address).Trim().ToLowerInvariant()
-if ($Address -notmatch $pattern) { throw "Enter a full $providerName address." }
 if (!$DataDirectory) {
     $lifecycle = Join-Path $state 'DesktopLifecycle\settings.json'
     $settings = if (Test-Path -LiteralPath $lifecycle -PathType Leaf) {
@@ -73,7 +97,7 @@ if (!$DataDirectory) {
     }
     $DataDirectory = if ($current.dataDir) { $current.dataDir }
         elseif ($settings.updateRoot) { Join-Path $settings.updateRoot 'mail' }
-        elseif ($active.dataDir) { $active.dataDir }
+        elseif (@($eligible).Count -ge 1 -and @($eligible)[0].dataDir) { @($eligible)[0].dataDir }
         else { Join-Path $PSScriptRoot 'campus-mail-data' }
 }
 if ($DataDirectory -notmatch '^[A-Za-z]:\\') { throw 'The mail data directory must be an absolute local path.' }
@@ -114,6 +138,7 @@ if ($password.Length) {
 } elseif (!$secret -or $Address -ine $current.address) { throw 'A client password is required for this email address.' }
 
 New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
-Select-MailConfig @{ address = $Address; secret = $secret; dataDir = $DataDirectory; model = $Model; prioritySenders = @($PrioritySenders) }
+Write-MailConfig $path @{ address = $Address; secret = $secret; dataDir = $DataDirectory; model = $Model; prioritySenders = @($PrioritySenders) }
+Write-Host "$providerName added. Select the account in the Mail tab on your phone."
 Write-Host "Message cache: $DataDirectory"
 if (!$Model) { Write-Host 'To use AI summaries, open Mail settings and select a provider.' }

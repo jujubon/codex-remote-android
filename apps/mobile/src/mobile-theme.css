@@ -1043,6 +1043,27 @@
 .mail-header-actions { display: flex; flex: none; align-items: center; }
 .mail-header-actions .nav-icon-button:disabled { opacity: .42; }
 .campus-mail-scroll { display: grid; align-content: start; gap: 12px; }
+.mail-account-heading { display: grid; min-width: 0; gap: 2px; }
+.mail-account-heading small, .mail-account-name small {
+  min-width: 0; overflow: hidden; color: var(--muted); font-size: .73rem; text-overflow: ellipsis; white-space: nowrap;
+}
+.mail-account-trigger {
+  display: flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; text-align: start; cursor: pointer;
+}
+.mail-account-trigger svg { flex: 0 0 15px; width: 15px; height: 15px; color: var(--accent); }
+.mail-account-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mail-account-option {
+  display: flex; align-items: center; gap: 9px; width: 100%; min-height: 58px; padding: 9px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); text-align: start;
+}
+.mail-account-option[aria-current=true] { border-color: #cfc1f4; background: var(--accent-soft); }
+.mail-account-option:active { background: var(--surface-pressed); }
+.mail-account-name { flex: 1; display: grid; min-width: 0; gap: 2px; }
+.mail-account-name strong { font-size: .875rem; }
+.mail-account-count, .mail-account-current { flex: none; font-size: .72rem; white-space: nowrap; }
+.mail-account-count { color: var(--muted); }
+.mail-account-current { color: var(--accent); font-weight: 650; }
 .mail-view-tabs { --segments: 2; }
 .mail-enable-ai { display: flex; align-items: center; justify-content: space-between; color: var(--accent); text-align: start; }
 .mail-enable-ai svg { width: 16px; height: 16px; }

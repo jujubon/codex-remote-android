@@ -76,7 +76,7 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 
 普通和推广邮件保留在收件箱。重要邮件可提醒，有明确行动要求的邮件进入「待办」。可手动调整分类、完成待办或延后一小时提醒。在邮箱设置中管理重点联系人或关闭自动分析。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
 
-手机和 Windows 配套服务均升级到 **1.4.0** 后，也可使用个人 QQ 邮箱。在 [QQ 邮箱](https://mail.qq.com/) 的设置中开启 IMAP 并生成授权码，然后在 Windows 配套服务目录运行 `Set-CampusMail.cmd -Provider qq`。两个邮箱的授权和分析设置分别保存，同一时刻同步一个。运行 `Set-CampusMail.cmd -Provider csu -UseSaved` 可切回已配置的学校邮箱。
+手机和 Windows 配套服务均升级到 **1.5.0** 后，可以同时同步多个学校邮箱和个人 QQ 邮箱。在 [QQ 邮箱](https://mail.qq.com/) 的设置中开启 IMAP 并生成授权码，然后在 Windows 配套服务目录运行 `Set-CampusMail.cmd -Provider qq`。可通过 `-Address` 指定要添加的完整地址。已授权账号会在升级时导入。在手机邮件页顶部切换账号查看收件箱与待办，在设置中分别管理每个账号的分析方式和重点联系人。
 
 ## 后台运行与更新
 
