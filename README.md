@@ -68,11 +68,13 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 
 ## 学校邮箱
 
-1. 将手机和 Windows 配套服务均更新到 **1.2.0**。在[中南大学网页邮箱](https://mail.csu.edu.cn/)的「个人信息 → 邮箱密码」生成客户端专用密码。
+1. 将手机和 Windows 配套服务均更新到 **1.3.0**。首次连接时，在[中南大学网页邮箱](https://mail.csu.edu.cn/)的「个人信息 → 邮箱密码」生成客户端专用密码。
 2. 在正在使用的 Windows 配套服务目录运行 `Set-CampusMail.cmd`，按提示填入完整邮箱和客户端专用密码。凭据由 Windows 当前用户加密保存。默认邮件缓存位于已配置的更新目录下的 `mail` 子目录，也可用 `-DataDirectory` 指定位置。
-3. 在手机打开「邮件」。首次同步最近 20 封，之后提醒新邮件。Windows 配套服务在线时支持跨网同步，手机断线重连后补提醒最近 24 小时的新信。
+3. 在手机打开「邮件」。首次同步最近 20 封，之后自动增量同步。重连可补发最近 24 小时符合条件的提醒。
 
-要启用 AI 摘要，在电脑运行 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)，下载本地模型，然后用 `Set-CampusMail.cmd -Model 模型名` 保存模型名。已有的邮箱专用密码可以直接回车保留。用 `-PrioritySenders` 配置需要响铃的发件地址，例如在 PowerShell 运行 `.\Set-CampusMail.ps1 -PrioritySenders 'advisor@csu.edu.cn','office@csu.edu.cn'`。普通来信静默通知，锁屏隐藏邮件内容。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
+在「邮件 → 设置」确认开启 Antigravity 自动分析。配套服务通过已登录的 Antigravity CLI 将标题和所需正文交给 Google，逐封生成摘要、分类、待办和中文译文，凭据和附件留在电脑上。也可运行 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)，下载本地模型后用 `Set-CampusMail.cmd -Model 模型名` 配置。提示输入专用密码时回车可沿用现有授权。
+
+普通和推广邮件保留在收件箱。重要邮件可提醒，有明确行动要求的邮件进入「待办」。可手动调整分类、完成待办或延后一小时提醒。在邮箱设置中管理重点联系人或关闭自动分析。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
 
 ## 后台运行与更新
 

@@ -68,11 +68,13 @@ Cockpit manages account credentials on Windows. The phone receives masked labels
 
 ## Central South University mail
 
-1. Update Android and the Windows companion to **1.2.0**, then create a mail client password in [CSU webmail](https://mail.csu.edu.cn/).
+1. Update Android and the Windows companion to **1.3.0**. For a new mailbox connection, create a mail client password in [CSU webmail](https://mail.csu.edu.cn/).
 2. Run `Set-CampusMail.cmd` from the active Windows companion folder and enter your full address and client password. Windows encrypts the credentials for your user. The mail cache defaults to the `mail` subfolder of the configured update directory. Use `-DataDirectory` to choose a different location.
-3. Open **Mail** (`邮件`) on the phone. The first sync imports up to 20 recent messages. Later arrivals trigger notifications while the companion is online. On reconnect, the app can catch up on arrivals from the past 24 hours.
+3. Open **Mail** (`邮件`) on the phone. The first sync imports up to 20 recent messages, followed by incremental sync. On reconnect, the app can deliver eligible notifications from the past 24 hours.
 
-To enable AI summaries, run [Ollama in local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features), install a local model, then run `Set-CampusMail.cmd -Model model-name`. Press Enter to keep a saved client password. Use `-PrioritySenders` from PowerShell to select senders whose messages can make a sound. Other notifications are silent, with message contents hidden on the lock screen. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
+With Android and the Windows companion on **1.3.0**, open Mail settings and confirm to enable Antigravity processing. The signed-in CLI sends the subject and relevant body text to Google for summaries, importance, to-dos, and Chinese translations. Credentials and attachments stay on the PC. For local processing, run [Ollama in local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features), install a model, and run `Set-CampusMail.cmd -Model model-name`. Press Enter to reuse a saved client password.
+
+Routine and promotional messages stay in your inbox. Important mail can notify you, and explicit action requests appear under To-dos. Change a classification, complete or snooze a task, and manage priority contacts from the Mail tab. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
 
 ## Background operation and updates
 

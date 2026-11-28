@@ -235,6 +235,25 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
     json(response, 202, campusMail.list());
     return;
   }
+  if (campusMail && request.method === "POST" && request.url === "/api/device/mail/settings") {
+    try {
+      const body = await readJsonBody(request, 24_000);
+      json(response, 200, await campusMail.configure(body));
+    } catch (error) {
+      json(response, 400, { error: error instanceof Error ? error.message : "无法保存邮箱设置。" });
+    }
+    return;
+  }
+  const mailActionId = /^\/api\/device\/mail\/([a-f0-9]{64})\/action$/.exec(request.url ?? "")?.[1];
+  if (campusMail && request.method === "POST" && mailActionId) {
+    try {
+      const { operation } = await readJsonBody(request, 1024);
+      json(response, 200, await campusMail.change(mailActionId, operation));
+    } catch (error) {
+      json(response, 400, { error: error instanceof Error ? error.message : "无法保存邮件状态。" });
+    }
+    return;
+  }
   const mailId = /^\/api\/device\/mail\/([a-f0-9]{64})$/.exec(request.url ?? "")?.[1];
   if (campusMail && request.method === "GET" && mailId) {
     const mail = campusMail.read(mailId);

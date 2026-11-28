@@ -50,8 +50,9 @@ final class CampusMailNotifications {
             JSONObject alert = alerts.optJSONObject(index);
             if (alert == null) continue;
             String id = alert.optString("id");
+            String mailId = alert.optString("mailId", id);
             long at = alert.optLong("at");
-            if (!id.matches("[a-f0-9]{64}") || at < cutoff) continue;
+            if (!id.matches("[a-f0-9]{64}") || !mailId.matches("[a-f0-9]{64}") || at < cutoff) continue;
             boolean posted = seen.contains(id);
             String tag = "campus-mail-" + id;
             // A completed summary can update an existing notification, including after a reconnect.
@@ -61,9 +62,9 @@ final class CampusMailNotifications {
             boolean priority = alert.optBoolean("priority");
             String channel = priority ? PRIORITY_CHANNEL : SILENT_CHANNEL;
             Intent open = new Intent(context, MainActivity.class).setAction(Intent.ACTION_MAIN)
-                    .setData(Uri.parse("codexremote://mail/" + id))
+                    .setData(Uri.parse("codexremote://mail/" + mailId))
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            NotificationActionStore.decorate(open, "global", "openMail:" + id, "mail");
+            NotificationActionStore.decorate(open, "global", "openMail:" + mailId, "mail");
             PendingIntent pending = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             Notification redacted = new NotificationCompat.Builder(context, channel)
                     .setSmallIcon(R.drawable.ic_codex_notification).setContentTitle(TITLE).build();
