@@ -6,6 +6,7 @@ import { ElapsedTime } from './ElapsedTime';
 import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EditIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
 import { SwipeActions } from './SwipeActions';
 import { closeDialogForHandoff } from '../lib/dialogMotion';
+import { AssistantSettingsSheet } from './AssistantSettingsSheet';
 import type { useHiddenProjects } from '../lib/hiddenProjects';
 import type { AttentionTarget } from '../lib/attention';
 
@@ -328,6 +329,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
   const quotaRef = useRef<HTMLDialogElement>(null);
+  const [quotaOpen, setQuotaOpen] = useState(false);
   const removeRef = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState(position.current.query);
   const [swipe, setSwipe] = useState<string | null>(null);
@@ -446,7 +448,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
           <div className="project-list-actions">
             {desktopAction}
             {quota && <button type="button" className="nav-icon-button quota-button" aria-label={`查看 ${quotaTitle}${quotaPercent === undefined ? '' : `，最低剩余 ${quotaPercent}%`}`}
-              aria-haspopup="dialog" onClick={() => { quotaRef.current?.showModal(); onOpenQuota?.(); }}>
+              aria-haspopup="dialog" onClick={() => { setQuotaOpen(true); quotaRef.current?.showModal(); onOpenQuota?.(); }}>
               <span className="quota-ring" data-known={quotaPercent !== undefined} aria-hidden="true" style={{ '--quota-fill': `${quotaPercent ?? 0}%` } as CSSProperties}>
                 <span>{quotaPercent === undefined ? '–' : `${quotaPercent}%`}</span>
               </span>
@@ -455,15 +457,8 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
         </div>
       </div>
 
-      {quota && <dialog className="session-dialog" ref={quotaRef} aria-labelledby="project-quota-title"
-        onClick={event => { if (event.target === event.currentTarget) quotaRef.current?.close(); }}>
-        <div className="session-sheet">
-          <header className="sheet-title-row"><h2 id="project-quota-title">{quotaTitle}</h2>
-            <button type="button" className="nav-icon-button" aria-label="关闭额度" onClick={() => quotaRef.current?.close()}><CloseIcon /></button>
-          </header>
-          {quota}
-        </div>
-      </dialog>}
+      {quota && <AssistantSettingsSheet dialogRef={quotaRef} titleId="project-quota-title" title={quotaTitle} closeLabel="关闭额度"
+        onClosed={() => setQuotaOpen(false)}>{quotaOpen && quota}</AssistantSettingsSheet>}
       <dialog className="session-dialog management-dialog" ref={manageRef} aria-labelledby="project-management-title"
         onClick={event => { if (event.target === event.currentTarget) manageRef.current?.close(); }}>
         <div className="session-sheet list-management">

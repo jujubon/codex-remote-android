@@ -16,7 +16,9 @@ import { PromptQueuePanel } from './PromptQueuePanel';
 import { TransientActivity } from './TransientActivity';
 import type { InboxFile } from '../lib/deviceTools';
 import { approvalAttention, type AttentionTarget } from '../lib/attention';
-import { afterDialogClose, closeDialogForHandoff } from '../lib/dialogMotion';
+import { closeDialogForHandoff } from '../lib/dialogMotion';
+import { AssistantSelect } from './AssistantSelect';
+import { AssistantSettingsSheet } from './AssistantSettingsSheet';
 
 interface ConversationScreenProps {
   antigravityAttachments?: boolean;
@@ -379,6 +381,11 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   const settingsRef = useRef<HTMLDialogElement>(null);
   const actionsRef = useRef<HTMLDialogElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  function openSettings() {
+    setSettingsOpen(true);
+    settingsRef.current?.showModal();
+    onRefreshUsage();
+  }
   const [hasNewContent, setHasNewContent] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [renderedEntryLimit, setRenderedEntryLimit] = useState(DEFAULT_RENDERED_ENTRY_LIMIT);
@@ -613,10 +620,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
             <span className="session-project">
               {thread.projectless || !thread.cwd ? '无项目对话' : thread.cwd.split(/[\\/]/).filter(Boolean).at(-1)}
             </span>
-          <button className="session-summary" type="button" aria-label={antigravity ? 'Antigravity 对话设置' : '模型、权限与额度'} aria-haspopup="dialog" onClick={() => {
-              setSettingsOpen(true);
-              settingsRef.current?.showModal();
-            }}>
+          <button className="session-summary" type="button" aria-label={antigravity ? 'Antigravity 对话设置' : '模型、权限与额度'} aria-haspopup="dialog" onClick={openSettings}>
               <b>{antigravity ? antigravityModelLabel : activeModel?.displayName || selectedModel || '模型未读取'}</b>
               <ChevronDownIcon className="session-chevron" />
               {!antigravity && selectedPermissionMode === 'full-access' && <ShieldIcon aria-label="完全访问" />}
@@ -785,51 +789,47 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <PromptQueuePanel items={promptQueue} attention={attention?.kind === 'queue' ? attention : undefined}
         onCancel={onCancelQueuedPrompt} onPromote={onPromoteQueuedPrompt} onResume={onResumePromptQueue} running={running} />
-      <dialog className="session-dialog" ref={settingsRef} aria-labelledby="session-options" onClose={event => afterDialogClose(event, () => setSettingsOpen(false))} onClick={event => {
-        if (event.target === event.currentTarget) settingsRef.current?.close();
-      }}>
-        {settingsOpen && <div className="session-sheet">
-          <header className="sheet-title-row"><h2 id="session-options">对话设置</h2>
-            <button type="button" className="icon-button nav-icon-button" aria-label="关闭对话设置" onClick={() => settingsRef.current?.close()}><CloseIcon /></button>
-          </header>
-      {!antigravity && <section className="session-toolbar" aria-label="任务设置">
-        <label>
-          <span>模型</span>
-          <select value={selectedModel} onChange={(event) => onSelectModel(event.target.value)} disabled={phase !== 'connected' || modelPending}>
-            <option value="" disabled>模型未读取</option>
-            {selectedModel && !activeModel && <option value={selectedModel}>{selectedModel}</option>}
-            {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>思考强度</span>
-          <select value={selectedEffort} onChange={(event) => onSelectEffort(event.target.value)} disabled={phase !== 'connected' || modelPending || effortOptions.length === 0}>
-            <option value="" disabled>桌面默认</option>
-            {selectedEffort && !effortOptions.some(e => e.reasoningEffort === selectedEffort) && <option value={selectedEffort}>{selectedEffort}</option>}
-            {effortOptions.map((effort) => <option key={effort.reasoningEffort} value={effort.reasoningEffort}>{effort.reasoningEffort}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>权限 / 审阅</span>
-          <select value={selectedPermissionMode} onChange={(event) => onSelectPermissionMode(event.target.value as PermissionMode)} disabled={phase !== 'connected'}>
-            <option value="auto">自动 · 工作区</option>
-            <option value="granular">严格确认</option>
-            <option value="read-only">严格审阅 · 只读</option>
-            <option value="guardian-approvals">替我审阅</option>
-            <option value="full-access">完全访问</option>
-          </select>
-        </label>
-        {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
-      </section>}
+      <AssistantSettingsSheet dialogRef={settingsRef} titleId="session-options" title="对话设置" closeLabel="关闭对话设置"
+        onClosed={() => setSettingsOpen(false)}>
+        {settingsOpen && <>
+          {antigravity ? <AntigravityModelPicker catalog={antigravityModels} value={selectedModel} onChange={onSelectModel}
+            disabled={phase !== 'connected'} pending={modelPending} running={running || approvals.length > 0} /> :
+            <section className="assistant-model-fields" aria-label="任务设置">
+              <label className="assistant-model-field">
+                <span>Codex 模型</span>
+                <AssistantSelect value={selectedModel} onChange={event => onSelectModel(event.target.value)} disabled={phase !== 'connected' || modelPending}>
+                  <option value="" disabled>模型未读取</option>
+                  {selectedModel && !activeModel && <option value={selectedModel}>{selectedModel}</option>}
+                  {models.filter((model) => !model.hidden).map((model) => <option key={model.id} value={model.model}>{model.displayName || model.model}</option>)}
+                </AssistantSelect>
+              </label>
+              <label className="assistant-model-field">
+                <span>思考强度</span>
+                <AssistantSelect value={selectedEffort} onChange={event => onSelectEffort(event.target.value)} disabled={phase !== 'connected' || modelPending || effortOptions.length === 0}>
+                  <option value="" disabled>桌面默认</option>
+                  {selectedEffort && !effortOptions.some(e => e.reasoningEffort === selectedEffort) && <option value={selectedEffort}>{selectedEffort}</option>}
+                  {effortOptions.map((effort) => <option key={effort.reasoningEffort} value={effort.reasoningEffort}>{effort.reasoningEffort}</option>)}
+                </AssistantSelect>
+              </label>
+              <label className="assistant-model-field">
+                <span>权限 / 审阅</span>
+                <AssistantSelect value={selectedPermissionMode} onChange={event => onSelectPermissionMode(event.target.value as PermissionMode)} disabled={phase !== 'connected'}>
+                  <option value="auto">自动 · 工作区</option>
+                  <option value="granular">严格确认</option>
+                  <option value="read-only">严格审阅 · 只读</option>
+                  <option value="guardian-approvals">替我审阅</option>
+                  <option value="full-access">完全访问</option>
+                </AssistantSelect>
+              </label>
+              {permissionModeStatus && <div className="permission-mode-status" role="status" aria-live="polite">{permissionModeStatus}</div>}
+            </section>}
           {thread.mobileManaged && <p className="session-settings-note">模型与思考强度在手机发起的下一轮生效。</p>}
           {thread.mobileSendOnly && <p className="session-settings-note">模型与思考强度仅用于手机普通发送。</p>}
-          {antigravity && <AntigravityModelPicker catalog={antigravityModels} value={selectedModel} onChange={onSelectModel}
-            disabled={phase !== 'connected'} pending={modelPending} running={running || approvals.length > 0} />}
           {accountPanel}
           <GitDiffPanel snapshot={gitDiff} onRefresh={onRefreshGitDiff} />
           {notice}
-        </div>}
-      </dialog>
+        </>}
+      </AssistantSettingsSheet>
       <dialog className="session-dialog conversation-actions-dialog" ref={actionsRef} aria-labelledby="conversation-actions-title"
         onClick={event => { if (event.target === event.currentTarget) actionsRef.current?.close(); }}>
         <div className="session-sheet">
@@ -867,11 +867,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           thread.state === 'waiting_approval' ? '等待审批' :
           thread.state === 'quota_limited' ? <span className="quota-status">
             <span>Codex 额度已达到上限</span>
-            <button type="button" className="secondary-button" onClick={() => {
-              setSettingsOpen(true);
-              settingsRef.current?.showModal();
-              onRefreshUsage();
-            }}>查看额度</button>
+            <button type="button" className="secondary-button" onClick={openSettings}>查看额度</button>
           </span> : thread.state === 'error' ? '执行异常' : '等待同步'}
       </div>}
       {!settingsOpen && notice}

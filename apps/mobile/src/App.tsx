@@ -256,7 +256,7 @@ export function App() {
   }
 
   const activeUsage = activeAssistant === 'antigravity'
-    ? { ...antigravityUsage, assistantName: 'Antigravity' }
+    ? antigravityUsage
     : { usage: remote.usage, status: remote.usageStatus, refresh: () => remote.refreshUsage(),
       resetConfig: config ? { ...config, serverUrl: remote.connectionUrl || config.serverUrl } : undefined,
       onReset: () => remote.refreshUsage(true) };
@@ -403,7 +403,7 @@ export function App() {
           attention={remote.threadAttention}
           position={homePage === 'codex' ? codexPosition : antigravityPosition}
           onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
-          quota={<AccountUsagePanel {...activeUsage} expanded />}
+          quota={accountPanel}
           quotaPercent={quotaPercent}
           onOpenQuota={activeUsage.refresh}
           onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}

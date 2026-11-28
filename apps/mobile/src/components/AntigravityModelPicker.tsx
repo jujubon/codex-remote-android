@@ -1,5 +1,6 @@
 import type { AntigravityModelCatalog } from '../hooks/useAntigravityModels';
-import { ChevronDownIcon, UpdateIcon } from './Icons';
+import { AssistantSelect } from './AssistantSelect';
+import { UpdateIcon } from './Icons';
 
 export function AntigravityModelPicker({ catalog, value, onChange, disabled, newThread, pending, running }: {
   catalog: AntigravityModelCatalog;
@@ -12,17 +13,14 @@ export function AntigravityModelPicker({ catalog, value, onChange, disabled, new
 }) {
   return <div className="agy-model-picker">
     <div className="agy-model-controls">
-      <label className="agy-model-field">
+      <label className="assistant-model-field">
         <span>Antigravity 模型</span>
-        <span className="agy-model-select">
-          <select value={value} onChange={event => onChange(event.target.value)}
-            disabled={disabled || pending || running || !catalog.options.length}>
-            <option value="">{newThread ? 'CLI 默认模型' : '跟随 CLI 会话'}</option>
-            {value && !catalog.options.some(model => model.model === value) && <option value={value} disabled>{value}</option>}
-            {catalog.options.map(model => <option key={model.id} value={model.model}>{model.displayName}</option>)}
-          </select>
-          <ChevronDownIcon aria-hidden="true" />
-        </span>
+        <AssistantSelect value={value} onChange={event => onChange(event.target.value)}
+          disabled={disabled || pending || running || !catalog.options.length}>
+          <option value="">{newThread ? 'CLI 默认模型' : '跟随 CLI 会话'}</option>
+          {value && !catalog.options.some(model => model.model === value) && <option value={value} disabled>{value}</option>}
+          {catalog.options.map(model => <option key={model.id} value={model.model}>{model.displayName}</option>)}
+        </AssistantSelect>
       </label>
       <button className="nav-icon-button agy-model-refresh" type="button" aria-label="刷新 Antigravity 模型"
         disabled={disabled || catalog.loading || pending} onClick={() => void catalog.refresh(true)}>

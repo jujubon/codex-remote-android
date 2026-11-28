@@ -49,5 +49,7 @@ test('sends selected files directly to the computer receive folder endpoint', as
 
 test('quota can be retried after a request times out', () => {
   const view = renderToStaticMarkup(<AccountUsagePanel usage={null} status="读取额度超时" refresh={() => undefined} />);
-  expect(view).toMatch(/<button type="button" class="secondary-button">刷新/);
+  const refreshButton = view.match(/<button\b[^>]*aria-label="刷新额度"[^>]*>/)?.[0];
+  expect(refreshButton).toBeDefined();
+  expect(refreshButton).not.toContain('disabled');
 });

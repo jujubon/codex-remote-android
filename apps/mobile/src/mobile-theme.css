@@ -410,11 +410,7 @@
 .async-question-response { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .async-question-response input { width: 100%; min-width: 0; min-height: 44px; }
 .async-question-response button { min-height: 44px; }
-.session-settings-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
-.account-usage summary { display: flex; align-items: center; justify-content: space-between; min-height: 40px; color: var(--ink); }
-.account-usage summary::-webkit-details-marker { display: none; }
-.account-usage summary svg { width: 16px; height: 16px; color: var(--muted); transition: transform var(--motion-panel) var(--ease-out); }
-.account-usage[open] summary svg { transform: rotate(180deg); }
+.session-settings-note { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.45; }
 
 .session-dialog {
   border-radius: 24px 24px 0 0;
@@ -424,6 +420,32 @@
 }
 .session-sheet .sheet-title-row { gap: 10px; }
 .session-sheet .sheet-title-row > button { flex: 0 0 auto; }
+.session-dialog.assistant-sheet {
+  --assistant-sheet-height: min(81dvh, 650px);
+  width: min(100%, 500px);
+  max-height: var(--assistant-sheet-height);
+  overflow: hidden;
+}
+.assistant-sheet-frame {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--assistant-sheet-height);
+}
+.assistant-sheet-header {
+  flex: none;
+  gap: 12px;
+  padding: 9px max(12px, var(--app-safe-right)) 9px max(18px, var(--app-safe-left));
+  background: var(--surface);
+}
+.assistant-sheet-close.nav-icon-button { flex: 0 0 44px; background: var(--surface-subtle); }
+.assistant-sheet-body {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px max(14px, var(--app-safe-right)) calc(var(--app-safe-bottom) + 14px) max(14px, var(--app-safe-left));
+}
 .session-dialog[data-handoff], .session-dialog[data-handoff]::backdrop { animation: none; transition: none; }
 .sheet-title-row h2 { color: var(--ink); }
 .sheet-handle { background: #cbc2db; }
@@ -661,18 +683,61 @@
 .startup-update-sheet p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.55; }
 .startup-update-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
 .startup-update-buttons button { min-height: 44px; border-radius: 11px; padding-inline: 6px; }
-.session-sheet .account-usage-expanded { padding: 8px 0 0; border: 0; background: transparent; }
-.cockpit-accounts { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+.account-usage { display: grid; gap: 10px; min-width: 0; }
+.usage-card, .usage-resets, .cockpit-accounts {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.usage-heading, .usage-title, .cockpit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.usage-heading { justify-content: space-between; }
+.usage-title { flex-wrap: wrap; }
+.usage-title > svg { flex: none; width: 17px; height: 17px; color: var(--accent); }
+.usage-heading :is(h3, strong) { margin: 0; font-size: .875rem; font-weight: 650; }
+.usage-plan {
+  padding: 3px 7px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .6875rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.usage-icon-button.nav-icon-button { width: 44px; height: 44px; flex: 0 0 44px; color: var(--accent); }
+.usage-icon-button.nav-icon-button svg { width: 18px; height: 18px; }
+.usage-icon-button:disabled { opacity: .45; }
+.usage-windows { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.usage-window { display: grid; gap: 5px; min-width: 0; font-size: .8125rem; overflow-wrap: anywhere; }
+.usage-window + .usage-window { padding-top: 9px; border-top: 1px solid var(--line); }
+.usage-window strong { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+.usage-window progress { width: 100%; height: 6px; appearance: none; border: 0; border-radius: 99px; overflow: hidden; accent-color: var(--accent); }
+.usage-window progress::-webkit-progress-bar { background: var(--accent-soft); }
+.usage-window progress::-webkit-progress-value { background: var(--accent); border-radius: 99px; }
+.usage-window progress::-moz-progress-bar { background: var(--accent); border-radius: 99px; }
+.account-usage small, .usage-note { color: var(--muted); font-size: .75rem; line-height: 1.45; }
+.usage-note { margin: 0; overflow-wrap: anywhere; }
+.cockpit-heading { display: grid; min-width: 0; gap: 2px; }
+.cockpit-actions { flex: none; gap: 0; }
+.cockpit-toggle svg { transition: transform var(--motion-panel) var(--ease-out); }
+.cockpit-toggle[aria-expanded=true] svg { transform: rotate(180deg); }
 .cockpit-accounts-body { display: grid; gap: 8px; }
-.cockpit-account-list { display: grid; margin: 0; padding: 0; list-style: none; max-height: 38dvh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
-.cockpit-account-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
+.cockpit-account-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.cockpit-account-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-block: 6px; min-height: 54px; font-size: .8125rem; }
 .cockpit-account-list li + li { border-top: 1px solid var(--line); }
 .cockpit-account-list li > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
-.cockpit-account-list .secondary-button, .cockpit-refresh { min-height: 44px; }
-.cockpit-refresh { justify-self: end; }
-.cockpit-confirm p { margin: 0; overflow-wrap: anywhere; }
-.usage-resets { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); }
-.usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 8px; }
+.cockpit-account-list .secondary-button, .usage-reset-row .secondary-button { flex: none; min-height: 44px; padding-inline: 12px; font-size: .8125rem; }
+.cockpit-accounts .computer-feedback, .cockpit-confirm p { margin: 0; font-size: .8125rem; overflow-wrap: anywhere; }
+.usage-resets { padding-block: 12px; }
+.usage-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .8125rem; }
 .usage-reset-row > div { min-width: 0; overflow-wrap: anywhere; }
 .usage-reset-row strong, .usage-reset-row small, .usage-reset-confirmation small { display: block; }
 .usage-reset-row button { flex: none; }
@@ -834,9 +899,11 @@
 
 .agy-model-picker { display: grid; gap: 6px; min-width: 0; }
 .agy-model-controls { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: end; gap: 7px; }
-.agy-model-field { display: grid; gap: 6px; min-width: 0; font-size: .8125rem; font-weight: 650; }
-.agy-model-select { position: relative; display: grid; min-width: 0; }
-.agy-model-select select, .new-thread-form .agy-model-select select {
+.assistant-model-field { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: .8125rem; font-weight: 650; }
+.assistant-model-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.assistant-model-fields > :first-child { grid-column: 1 / -1; }
+.assistant-select { position: relative; display: grid; min-width: 0; }
+.assistant-select select, .new-thread-form .assistant-select select {
   width: 100%;
   min-width: 0;
   min-height: 44px;
@@ -849,7 +916,7 @@
   text-overflow: ellipsis;
   font: inherit;
 }
-.agy-model-select svg {
+.assistant-select svg {
   position: absolute;
   inset-inline-end: 10px;
   top: calc(50% - 8px);
@@ -860,7 +927,7 @@
 }
 .agy-model-refresh.nav-icon-button { width: 44px; height: 44px; background: var(--accent-soft); color: var(--accent); }
 .agy-model-note { color: var(--muted); font-size: .75rem; line-height: 1.4; }
-.session-sheet > .agy-model-picker { margin: 10px 0 14px; }
+.assistant-model-fields .permission-mode-status { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
 
 .home-nav {
   display: grid;
