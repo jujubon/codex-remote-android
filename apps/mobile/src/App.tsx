@@ -33,6 +33,7 @@ import { parseAttentionAction, type AttentionTarget } from './lib/attention';
 import { CodexBackground, resumeBackgroundRuntime, startBackgroundRuntime, updateBackgroundThread } from './lib/background';
 import type { Assistant } from './types/protocol';
 import { compareReleaseVersions, type StartupUpdate } from './lib/updates';
+import { homeQuotaPercent } from './lib/usageDisplay';
 
 const assistantPageKey = 'codex-mobile.assistant-page.v1';
 const CampusMailScreen = lazy(() => import('./components/CampusMailScreen').then(module => ({ default: module.CampusMailScreen })));
@@ -272,10 +273,7 @@ export function App() {
       resetConfig: config ? { ...config, serverUrl: remote.connectionUrl || config.serverUrl } : undefined,
       onReset: () => remote.refreshUsage(true) };
   const accountPanel = <AccountUsagePanel {...activeUsage} />;
-  const quotaWindows = activeUsage.usage?.windows.filter(window => Number.isFinite(window.remainingPercent));
-  const quotaPercent = quotaWindows?.length
-    ? Math.round(Math.min(100, Math.max(0, Math.min(...quotaWindows.map(window => window.remainingPercent)))))
-    : undefined;
+  const quotaPercent = homeQuotaPercent(activeUsage.usage, activeAssistant);
 
   if (!config || showSettings) {
     return (

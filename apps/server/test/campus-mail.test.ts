@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { classifyMailRow, mailAlerts, taskFromSummary } from "../src/campus-mail.js";
-import { translationChunks, validateSummary } from "../src/mail-analysis.js";
+import { createAntigravityMailRouter, MailQuotaError, translationChunks, validateSummary } from "../src/mail-analysis.js";
 
 const now = Date.UTC(2026, 10, 28, 10);
 const mail = {
@@ -11,6 +11,60 @@ const result = {
   overview: "周五前提交实验报告。", importance: "important", task: "explicit", action: "提交实验报告",
   quote: "Please send the lab report by Friday at 18:00.", deadline: "周五 18:00", deadlineQuote: "Friday at 18:00", needsTranslation: true,
 };
+
+describe("Antigravity mail model routing", () => {
+  const gemini = "gemini-4-hydrogen-high";
+  const claude = "claude-opus-4-6-thinking";
+  const signal = new AbortController().signal;
+
+  it("starts on Gemini, reuses Claude while Gemini is limited and prefers Gemini again after its retry time", async () => {
+    vi.useFakeTimers();
+    try {
+      const route = createAntigravityMailRouter();
+      const generate = vi.fn(async model => model);
+      await expect(route(generate, signal)).resolves.toBe(gemini);
+      generate.mockRejectedValueOnce(new MailQuotaError());
+      await expect(route(generate, signal)).resolves.toBe(claude);
+      await expect(route(generate, signal)).resolves.toBe(claude);
+      vi.advanceTimersByTime(15 * 60_000);
+      await expect(route(generate, signal)).resolves.toBe(gemini);
+      expect(generate.mock.calls.flat()).toEqual([gemini, gemini, claude, claude, gemini]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps both models on cooldown and retries the one whose cooldown ends first", async () => {
+    vi.useFakeTimers();
+    try {
+      const route = createAntigravityMailRouter();
+      const retryAt = Date.now() + 30_000;
+      const generate = vi.fn(async model => model)
+        .mockRejectedValueOnce(new MailQuotaError(retryAt))
+        .mockRejectedValueOnce(new MailQuotaError(retryAt + 30_000));
+      await expect(route(generate, signal)).rejects.toMatchObject({ retryAt });
+      await expect(route(generate, signal)).rejects.toMatchObject({ retryAt });
+      expect(generate.mock.calls.flat()).toEqual([gemini, claude]);
+      vi.advanceTimersByTime(30_000);
+      await expect(route(generate, signal)).resolves.toBe(gemini);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not switch models after an authentication failure or an aborted analysis", async () => {
+    const route = createAntigravityMailRouter();
+    const controller = new AbortController();
+    const stopped = new Error("stopped");
+    const generate = vi.fn().mockRejectedValueOnce(new Error("login")).mockImplementationOnce(async () => {
+      controller.abort(stopped);
+      throw new MailQuotaError();
+    });
+    await expect(route(generate, signal)).rejects.toThrow("login");
+    await expect(route(generate, controller.signal)).rejects.toBe(stopped);
+    expect(generate.mock.calls.flat()).toEqual([gemini, gemini]);
+  });
+});
 
 describe("campus mail analysis", () => {
   it("promotes a grounded action to a pending task and alerts with its deadline", () => {

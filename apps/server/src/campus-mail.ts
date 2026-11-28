@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { analyzeMail, isVoluntaryPetition, MailResultError, openMailGenerator, translateMailPart, translationChunks, type Importance, type MailSummary } from "./mail-analysis.js";
+import { analyzeMail, createAntigravityMailRouter, isVoluntaryPetition, MailQuotaError, MailResultError,
+  openMailGenerator, translateMailPart, translationChunks, type Importance, type MailSummary } from "./mail-analysis.js";
 
 const mailHelper = fileURLToPath(new URL("../windows/campus_mail.py", import.meta.url));
 const retained = 150;
@@ -94,7 +95,8 @@ export class CampusMail {
   private writeTail = Promise.resolve();
 
   constructor(private readonly configFile: string, private readonly publish: (alerts: MailAlert[]) => void,
-    private readonly scheduleAnalysis: ScheduleAnalysis = task => task(), private readonly expectedAccountId?: string) {}
+    private readonly scheduleAnalysis: ScheduleAnalysis = task => task(), private readonly expectedAccountId?: string,
+    private readonly routeAntigravity = createAntigravityMailRouter()) {}
 
   start() {
     void this.sync();
@@ -131,7 +133,7 @@ export class CampusMail {
       mailboxId: this.accountKey,
       syncing: Boolean(this.polling), status: this.status,
       model: this.settings?.model ?? null, modelReady: this.modelReady, lastSyncAt: this.cache?.lastSyncAt ?? null,
-      smartMail: true, provider: this.provider, prioritySenders: this.prioritySenders,
+      smartMail: true, antigravityModelFallback: true, provider: this.provider, prioritySenders: this.prioritySenders,
       analysisStatus: this.analysisStatus, analyzingId: this.analyzingId,
       pendingAnalysis: this.provider === "off" ? 0 : this.cache?.rows.filter(row =>
         !row.summary?.importance || row.summary.needsTranslation && !row.translation).length ?? 0,
@@ -319,7 +321,7 @@ export class CampusMail {
   }
 
   private async processAnalysis(config: MailConfig, provider: Exclude<Provider, "off">, signal: AbortSignal) {
-    const run = await openMailGenerator(provider, config.model, config.dataDir, signal).catch(() => undefined);
+    const run = await openMailGenerator(provider, config.model, config.dataDir, signal, this.routeAntigravity).catch(() => undefined);
     if (signal.aborted) return;
     this.modelReady = !!run;
     if (!run) {
@@ -365,9 +367,9 @@ export class CampusMail {
           continue;
         }
         const reason = error instanceof Error ? error.message : "";
-        this.analysisStatus = reason === "quota" ? "Antigravity 额度暂不可用，邮件会保留并稍后补分析。"
+        this.analysisStatus = error instanceof MailQuotaError ? "Gemini 和 Claude 的额度暂不可用，邮件会保留并稍后补分析。"
           : reason === "login" ? "请在电脑上登录 Antigravity CLI，邮件已保留。" : "邮件模型暂时无法处理，稍后会重试。";
-        const retryAt = Date.now() + (reason === "quota" ? 15 * 60_000 : 120_000);
+        const retryAt = error instanceof MailQuotaError ? error.retryAt : Date.now() + 120_000;
         this.nextAnalysisAt = retryAt;
         await this.changeCache(cache => ({ ...cache, rows: cache.rows.map(entry => entry.id === row.id
           ? { ...entry, summaryFailed: true, retryAt } : entry) }), signal);

@@ -16,13 +16,14 @@ type SheetDrag = {
 
 const slide = (offset: number) => `translate3d(0, ${offset}px, 0)`;
 
-export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, onClosed, children }: {
+export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, onClosed, children, className }: {
   dialogRef: RefObject<HTMLDialogElement | null>;
   titleId: string;
   title: string;
   closeLabel: string;
   onClosed: () => void;
   children: ReactNode;
+  className?: string;
 }) {
   const drag = useRef<SheetDrag | null>(null);
   const frame = useRef<number | null>(null);
@@ -90,7 +91,7 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
     if (dismiss) dialog.close();
   }
 
-  return <dialog className="session-dialog assistant-sheet" ref={dialogRef} aria-labelledby={titleId}
+  return <dialog className={['session-dialog assistant-sheet', className].filter(Boolean).join(' ')} ref={dialogRef} aria-labelledby={titleId}
     onClose={event => {
       const dialog = event.currentTarget;
       if (dialog.open) return;

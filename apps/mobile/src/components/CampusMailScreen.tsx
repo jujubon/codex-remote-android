@@ -3,7 +3,7 @@ import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
 import { cacheScope } from '../lib/remoteCache';
 import { AssistantSettingsSheet } from './AssistantSettingsSheet';
-import { ChevronDownIcon, ChevronRightIcon, MailIcon, SettingsIcon, UpdateIcon } from './Icons';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardIcon, MailIcon, MonitorIcon, PowerIcon, SettingsIcon, UpdateIcon } from './Icons';
 import { SearchField } from './SearchField';
 
 type Importance = 'important' | 'normal' | 'promotion';
@@ -18,11 +18,17 @@ type Detail = Omit<Row, 'summary'> & { mailboxId?: string; address: string; body
 type Inbox = { configured: boolean; mailbox?: 'csu' | 'qq'; mailboxId?: string; syncing: boolean; status: string;
   mailboxes?: Mailbox[];
   lastSyncAt: number | null; model: string | null; modelReady: boolean | null;
-  smartMail?: boolean; provider?: Provider; prioritySenders?: string[]; analysisStatus?: string; analyzingId?: string; pendingAnalysis?: number; rows: Row[] };
+  smartMail?: boolean; antigravityModelFallback?: boolean; provider?: Provider; prioritySenders?: string[];
+  analysisStatus?: string; analyzingId?: string; pendingAnalysis?: number; rows: Row[] };
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const dateLabel = (date: number) => dateFormat.format(date);
 const mailboxName = (kind: Mailbox['kind']) => kind === 'qq' ? 'QQ 邮箱' : '学校邮箱';
 const mailboxPath = (id?: string) => id ? `mail/account/${id}` : 'mail';
+const analysisOptions = [
+  { id: 'antigravity', name: 'Antigravity', icon: UpdateIcon },
+  { id: 'ollama', name: '本地模型', icon: MonitorIcon },
+  { id: 'off', name: '关闭自动分析', icon: PowerIcon },
+] as const;
 
 function savedMailbox(key: string) {
   try {
@@ -121,7 +127,9 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
     setActionError('');
     setBodyVersion('original');
     setSelected(id);
-    if (!detailSheet.current?.open) detailSheet.current?.showModal();
+    const dialog = detailSheet.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    dialog?.querySelector('.assistant-sheet-body')?.scrollTo(0, 0);
   }, []);
 
   useEffect(() => {
@@ -202,6 +210,12 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const mailboxLabel = inbox?.mailbox ? mailboxName(inbox.mailbox) : '邮件';
   const accounts = inbox?.mailboxes ?? [];
   const account = accounts.find(item => item.id === inbox?.mailboxId);
+  const provider = inbox?.provider ?? (inbox?.model ? 'ollama' : 'off');
+  const allowSettings = connected && !settingsBusy;
+  const senderList = [...new Set(senders.trim().toLowerCase().split(/[\s,，;；]+/).filter(Boolean))];
+  const savedSenders = inbox?.prioritySenders ?? [];
+  const sendersChanged = senderList.length !== savedSenders.length || senderList.some(address => !savedSenders.includes(address));
+  const senderAddress = detail?.address && detail.address.toLowerCase() !== detail.sender.trim().toLowerCase() ? detail.address : '';
 
   return <main className="app-screen computer-screen campus-mail-screen">
     <header className="top-bar computer-top-bar">
@@ -280,21 +294,22 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
         </button>
       </li>)}</ul>
     </AssistantSettingsSheet>
-    <AssistantSettingsSheet dialogRef={detailSheet} title="邮件详情" titleId="mail-detail-title" closeLabel="关闭邮件详情" onClosed={() => {
+    <AssistantSettingsSheet className="mail-sheet mail-reader-sheet" dialogRef={detailSheet} title="邮件详情" titleId="mail-detail-title" closeLabel="关闭邮件详情" onClosed={() => {
       setSelected(undefined); onTargetClosed();
     }}>
       {detail ? <article className="mail-detail" key={detail.id}>
         <header className="mail-detail-heading">
           <h3>{detail.subject}</h3>
           <div className="mail-detail-byline">
+            <span className="mail-row-icon"><MailIcon /></span>
             <span className="mail-detail-sender"><strong>{detail.sender}</strong>
-              {detail.address && detail.address.toLowerCase() !== detail.sender.trim().toLowerCase() && <small>{detail.address}</small>}
+              {senderAddress && <small>{senderAddress}</small>}
             </span>
             <time dateTime={new Date(detail.receivedAt).toISOString()}>{dateLabel(detail.receivedAt)}</time>
           </div>
         </header>
         {detail.summary ? <section className="mail-summary">
-          <div className="mail-summary-heading"><h4>AI 摘要</h4>
+          <div className="mail-summary-heading"><h4><ClipboardIcon />AI 摘要</h4>
             {detail.importance === 'important' && <span className="mail-classification">重要</span>}</div>
           <p>{detail.summary.overview}</p>
           {detail.importance !== 'promotion' && (detail.summary.action || detail.summary.deadline) && <dl className="mail-summary-facts">
@@ -310,7 +325,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
             : inbox.analyzingId === detail.id ? '正在分析邮件…' : '等待生成摘要…'}</p>)}
         {inbox?.smartMail && detail.task && <section className="mail-detail-actions" aria-label="处理待办">
           <div className="mail-action-buttons">
-            <button className="secondary-button" type="button" disabled={!canChange}
+            <button className="mail-task-primary" type="button" disabled={!canChange}
               onClick={() => void mailAction(detail.task?.state === 'pending' ? 'complete' : detail.task?.state === 'done' ? 'reopen' : 'add')}>
               {detail.task?.state === 'pending' ? '标为完成' : detail.task?.state === 'done' ? '恢复待办' : '加入待办'}</button>
             {detail.task?.state === 'pending' && <button className="secondary-button" type="button" disabled={!canChange}
@@ -336,47 +351,66 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
         </details>}
         {actionError && <p className="computer-feedback" role="alert" data-tone="error">{actionError}</p>}
         <section className="mail-body">
-          {detail.translation ? <div className="mail-filters mail-body-tabs" aria-label="正文语言">
+          <h4>{detail.translation ? '正文' : '原文'}</h4>
+          {detail.translation && <div className="segmented-controls mail-body-tabs" data-selected={bodyVersion === 'original' ? 0 : 1} aria-label="正文语言">
             <button type="button" aria-pressed={bodyVersion === 'original'} onClick={() => setBodyVersion('original')}>原文</button>
             <button type="button" aria-pressed={bodyVersion === 'translated'} onClick={() => setBodyVersion('translated')}>中文译文</button>
-          </div> : <h4>原文</h4>}
+          </div>}
           {!detail.translation && detail.summary?.needsTranslation && <small>{inbox?.provider === 'off' ? '开启自动摘要后可生成中文译文'
             : detail.summaryFailed ? '译文暂未完成，稍后会重试。' : '中文译文生成中…'}</small>}
-          <p>{(bodyVersion === 'translated' ? detail.translation : detail.body) || '这封邮件没有可预览的正文。'}</p>
+          <p><span key={bodyVersion}>{(bodyVersion === 'translated' ? detail.translation : detail.body) || '这封邮件没有可预览的正文。'}</span></p>
         </section>
-        {detail.truncated && <p className="computer-feedback">内容较长或含大附件，可到学校网页邮箱查看完整版。</p>}
+        {detail.truncated && <p className="computer-feedback">内容较长或含大附件，可到原邮箱查看完整版。</p>}
       </article> : <p className="computer-feedback" role="status">{detailError || (!connected ? '电脑未连接，等待重连。' : '正在读取邮件…')}</p>}
     </AssistantSettingsSheet>
-    <AssistantSettingsSheet dialogRef={settingsSheet} title="邮箱设置" titleId="mail-settings-title" closeLabel="关闭邮箱设置" onClosed={() => undefined}>
+    <AssistantSettingsSheet className="mail-sheet" dialogRef={settingsSheet} title="邮箱设置" titleId="mail-settings-title" closeLabel="关闭邮箱设置" onClosed={() => undefined}>
       <section className="mail-settings-card">
         {inbox?.smartMail && inbox.configured ? <>
-          <h3>当前邮箱 · {mailboxLabel}</h3>
-          <details className="mail-detail-disclosure mail-source-help">
-            <summary>在电脑添加邮箱<ChevronRightIcon aria-hidden="true" /></summary>
-            <p>QQ 邮箱使用 IMAP 授权码。在电脑运行 <code>Set-CampusMail.cmd -Provider qq</code>。</p>
-            <p>添加学校邮箱，运行 <code>Set-CampusMail.cmd -Provider csu</code>。添加同类的另一个地址时，可用 <code>-Address</code> 指定完整邮箱地址。</p>
-            <p>两个账号会同时同步，点邮件页顶部的邮箱名称即可切换。</p>
-          </details>
-          <h3>自动摘要与分类</h3>
-          <p>{inbox.provider === 'antigravity' ? 'Antigravity 已开启' : inbox.provider === 'ollama' ? `本地模型 · ${inbox.model ?? 'Ollama'}` : '未开启'}</p>
-          <div className="mail-action-buttons">
-            {inbox.provider !== 'antigravity' && <button className="primary-button" type="button" disabled={!connected || settingsBusy}
-              onClick={() => { setSettingsError(''); consentSheet.current?.showModal(); }}>开启 Antigravity</button>}
-            {inbox.model && inbox.provider !== 'ollama' && <button className="secondary-button" type="button" disabled={!connected || settingsBusy}
-              onClick={() => void saveSettings({ provider: 'ollama' })}>使用本地模型</button>}
-            {inbox.provider !== 'off' && <button className="secondary-button" type="button" disabled={!connected || settingsBusy}
-              onClick={() => void saveSettings({ provider: 'off' })}>关闭自动分析</button>}
-          </div>
-          <form className="mail-contact-form" onSubmit={event => {
+          <header className="mail-settings-account">
+            <span className="mail-symbol"><MailIcon /></span>
+            <div><h3>{mailboxLabel}</h3>{account && <p>{account.address}</p>}</div>
+          </header>
+          <section className="mail-settings-panel" aria-labelledby="mail-analysis-heading">
+            <h3 id="mail-analysis-heading">自动摘要与分类</h3>
+            <div className="mail-analysis-options" role="group" aria-labelledby="mail-analysis-heading">
+              {analysisOptions.map(({ id, name, icon: Icon }) => <button type="button" className="mail-analysis-option" key={id}
+                aria-pressed={provider === id} disabled={!allowSettings || (id === 'ollama' && !inbox.model && provider !== id)}
+                onClick={() => {
+                  if (provider === id) return;
+                  if (id === 'antigravity') { setSettingsError(''); consentSheet.current?.showModal(); }
+                  else void saveSettings({ provider: id });
+                }}>
+                <span className="mail-row-icon"><Icon /></span>
+                <span className="mail-analysis-copy"><strong>{name}</strong>
+                  {id === 'antigravity' && <small>{inbox.antigravityModelFallback
+                    ? 'Gemini 优先 · 额度用完切换 Claude' : '使用 CLI 模型 · 额度不足时稍后重试'}</small>}
+                  {id === 'ollama' && <small>{inbox.model ?? '电脑尚未配置 Ollama'}</small>}
+                </span>
+                <span className="mail-option-check" aria-hidden="true">{provider === id && <CheckIcon />}</span>
+              </button>)}
+            </div>
+          </section>
+          <form className="mail-settings-panel mail-contact-form" onSubmit={event => {
             event.preventDefault();
-            void saveSettings({ prioritySenders: senders.split(/[\s,，;；]+/).filter(Boolean) });
+            if (allowSettings && sendersChanged) void saveSettings({ prioritySenders: senderList });
           }}>
-            <label htmlFor="mail-priority-senders">重点联系人</label>
+            <div className="mail-contact-heading">
+              <label htmlFor="mail-priority-senders">重点联系人</label>
+              {savedSenders.length > 0 && <small>{savedSenders.length} 位</small>}
+            </div>
             <textarea id="mail-priority-senders" rows={3} value={senders} placeholder="输入邮箱地址，每行一个"
-              onChange={event => setSenders(event.target.value)} />
-            <button className="secondary-button" type="submit" disabled={!connected || settingsBusy}>保存联系人</button>
+              autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={event => setSenders(event.target.value)} />
+            <button className="secondary-button" type="submit" disabled={!allowSettings || !sendersChanged}>保存联系人</button>
           </form>
           {settingsError && <p className="computer-feedback" role="alert" data-tone="error">{settingsError}</p>}
+          <details className="mail-detail-disclosure mail-source-help">
+            <summary>在电脑添加邮箱<ChevronRightIcon aria-hidden="true" /></summary>
+            <div>
+              <p>QQ 邮箱使用 IMAP 授权码。在电脑运行 <code>Set-CampusMail.cmd -Provider qq</code>。</p>
+              <p>添加学校邮箱，运行 <code>Set-CampusMail.cmd -Provider csu</code>。添加同类的另一个地址时，可用 <code>-Address</code> 指定完整邮箱地址。</p>
+              <p>各账号会同时同步，点邮件页顶部的邮箱名称即可切换。</p>
+            </div>
+          </details>
         </> : <><h3>{inbox?.configured ? '邮箱已配置' : '在 Windows 上配置'}</h3>
           <ol><li>登录中南大学网页邮箱，在「个人信息 → 邮箱密码」生成客户端专用密码。</li>
           <li>在 Windows 配套服务目录运行 <code>Set-CampusMail.cmd</code>，按提示填写邮箱和专用密码。</li>
@@ -386,7 +420,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
           {inbox?.model && <p>摘要模型 <strong>{inbox.model}</strong>{inbox.modelReady === false ? ' · 未连接' : ''}</p>}</>}
       </section>
     </AssistantSettingsSheet>
-    <AssistantSettingsSheet dialogRef={consentSheet} title="开启 Antigravity 自动分析" titleId="mail-consent-title" closeLabel="关闭授权确认" onClosed={() => undefined}>
+    <AssistantSettingsSheet className="mail-sheet" dialogRef={consentSheet} title="开启 Antigravity 自动分析" titleId="mail-consent-title" closeLabel="关闭授权确认" onClosed={() => undefined}>
       <section className="mail-settings-card">
         <p>开启后，电脑会把已同步邮件的标题和所需正文发送给 Google Antigravity，用于摘要、分类、提取待办和中文翻译，并使用你已登录账号的额度。</p>
         <p>邮箱凭据与附件留在电脑上。你随时可以在邮箱设置里关闭自动分析。</p>

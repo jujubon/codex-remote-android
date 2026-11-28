@@ -12,6 +12,34 @@ export type MailSummary = {
 export type MailText = { subject: string; body: string; receivedAt: number; priority?: boolean; address?: string };
 type Generate = (prompt: string, schema: object) => Promise<unknown>;
 export class MailResultError extends Error {}
+export class MailQuotaError extends Error {
+  constructor(readonly retryAt = Date.now() + 15 * 60_000) { super("quota"); }
+}
+
+const mailModels = ["gemini-4-hydrogen-high", "claude-opus-4-6-thinking"] as const;
+type MailModel = typeof mailModels[number];
+
+export function createAntigravityMailRouter() {
+  const retryTimes = new Map<MailModel, number>();
+
+  // The quotas belong to the CLI account. Share this router across its mailboxes.
+  return async (generate: (model: MailModel) => Promise<unknown>, signal: AbortSignal) => {
+    for (const model of mailModels) {
+      signal.throwIfAborted();
+      if ((retryTimes.get(model) ?? 0) > Date.now()) continue;
+      try {
+        const result = await generate(model);
+        retryTimes.delete(model);
+        return result;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!(error instanceof MailQuotaError)) throw error;
+        retryTimes.set(model, error.retryAt);
+      }
+    }
+    throw new MailQuotaError(Math.min(...retryTimes.values()));
+  };
+}
 
 const summarySchema = {
   type: "object",
@@ -106,10 +134,13 @@ export async function translateMailPart(generate: Generate, text: string) {
   return translated;
 }
 
-export async function openMailGenerator(provider: "antigravity" | "ollama", model: string | undefined, dataDir: string, signal: AbortSignal): Promise<Generate | undefined> {
+export async function openMailGenerator(provider: "antigravity" | "ollama", model: string | undefined, dataDir: string, signal: AbortSignal,
+  routeAntigravity: ReturnType<typeof createAntigravityMailRouter>): Promise<Generate | undefined> {
   if (provider === "antigravity") {
     const executable = await findAntigravityCli();
-    return executable ? (prompt, schema) => askAntigravity(executable, dataDir, prompt, schema, signal) : undefined;
+    return executable ? (prompt, schema) => routeAntigravity(
+      selected => askAntigravity(executable, selected, dataDir, prompt, schema, signal), signal,
+    ) : undefined;
   }
   if (!model || !/^[A-Za-z0-9_./:-]{1,100}$/.test(model) || /cloud/i.test(model)) return undefined;
   const tags = await fetch("http://127.0.0.1:11434/api/tags", { redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(4_000)]) });
@@ -138,13 +169,13 @@ const restricted = JSON.stringify({
   toolPermission: "request-review", historySize: 0,
 });
 
-async function askAntigravity(executable: string, dataDir: string, prompt: string, schema: object, signal: AbortSignal) {
+async function askAntigravity(executable: string, model: MailModel, dataDir: string, prompt: string, schema: object, signal: AbortSignal) {
   signal.throwIfAborted();
   const workspace = await mkdtemp(join(dataDir, "mail-ai-"));
   try {
     const result = await new Promise<{ output: string; diagnostics: string; code: number | null }>((resolve, reject) => {
       const child = spawn(executable, [
-        "--mode", "plan", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json",
+        "--model", model, "--mode", "plan", "--disable-slash-commands", "--input-format", "stream-json", "--output-format", "stream-json",
         "--print-timeout", "70s", "--settings", restricted, "--json-schema", JSON.stringify(schema),
       ], {
         cwd: workspace, env: antigravityCliEnvironment(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
@@ -171,8 +202,8 @@ async function askAntigravity(executable: string, dataDir: string, prompt: strin
       if (event.event === "result") final = object(event.result);
     }
     if (result.code !== 0 || final?.status !== "SUCCESS") {
-      const details = `${String(final?.error ?? "")} ${result.diagnostics}`;
-      if (/quota|resource.exhausted|rate.limit|capacity|\b429\b/i.test(details)) throw new Error("quota");
+      const details = `${JSON.stringify(final?.error ?? "")} ${result.diagnostics}`;
+      if (/quota|resource.exhausted|rate.limit|\b429\b/i.test(details)) throw new MailQuotaError();
       if (/authenticat|sign.in|log.in|not logged|\b401\b/i.test(details)) throw new Error("login");
       throw new Error("Antigravity unavailable");
     }

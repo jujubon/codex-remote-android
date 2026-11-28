@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CampusMail, mailAccountId, mailKind, parseMailConfig, type MailAlert } from "./campus-mail.js";
+import { createAntigravityMailRouter } from "./mail-analysis.js";
 
 const legacyFiles = ["campus-mail.json", "campus-mail-csu.json", "campus-mail-qq.json"];
 const accountFile = /^([a-f0-9]{64})\.json$/;
@@ -12,6 +13,7 @@ type Settings = Parameters<CampusMail["configure"]>[0];
 export class Mailboxes {
   private readonly folder: string;
   private readonly accounts = new Map<string, Account>();
+  private readonly routeAntigravity = createAntigravityMailRouter();
   private analysisTail = Promise.resolve();
   private refresh?: Promise<void>;
   private interval?: NodeJS.Timeout;
@@ -78,7 +80,7 @@ export class Mailboxes {
     }
     for (const account of entries.values()) {
       if (this.accounts.has(account.id)) continue;
-      const mail = new CampusMail(join(this.folder, `${account.id}.json`), this.update, this.scheduleAnalysis, account.id);
+      const mail = new CampusMail(join(this.folder, `${account.id}.json`), this.update, this.scheduleAnalysis, account.id, this.routeAntigravity);
       this.accounts.set(account.id, { ...account, mail });
       mail.start();
       changed = true;

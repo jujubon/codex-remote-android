@@ -444,7 +444,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
           </div>
           <div className="project-list-actions">
             {desktopAction}
-            {quota && <button type="button" className="nav-icon-button quota-button" aria-label={`查看 ${quotaTitle}${quotaPercent === undefined ? '' : `，最低剩余 ${quotaPercent}%`}`}
+            {quota && <button type="button" className="nav-icon-button quota-button" aria-label={`查看 ${quotaTitle}，${assistant === 'antigravity' ? 'Gemini ' : ''}5 小时${quotaPercent === undefined ? '额度暂不可用' : `剩余 ${quotaPercent}%`}`}
               aria-haspopup="dialog" onClick={() => { setQuotaOpen(true); quotaRef.current?.showModal(); onOpenQuota?.(); }}>
               <span className="quota-ring" data-known={quotaPercent !== undefined} aria-hidden="true" style={{ '--quota-fill': `${quotaPercent ?? 0}%` } as CSSProperties}>
                 <span>{quotaPercent === undefined ? '–' : `${quotaPercent}%`}</span>
