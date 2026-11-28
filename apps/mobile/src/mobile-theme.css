@@ -26,14 +26,16 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-:where(button:not(.swipe-action), summary, .new-thread-attachments > label) {
+:where(button, summary, .new-thread-attachments > label) {
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   transition: background-color var(--motion-press) var(--ease-out), color var(--motion-press) var(--ease-out),
     border-color var(--motion-press) var(--ease-out), scale var(--motion-fade) var(--ease-spring);
 }
-:where(.primary-button, .secondary-button, .nav-icon-button, .home-nav button, .segmented-controls button,
+:where(.primary-button, .secondary-button, .nav-icon-button, .top-actions .icon-button, .home-nav button, .segmented-controls button,
   .project-heading button, .new-thread-button, .manage-button, .attach-button, .send-button, .new-content-button,
-  .delivery-mode-picker button, .command-palette button, .management-restore, .session-summary, .conversation-action-row):active:not(:disabled) {
+  .delivery-mode-picker button, .command-palette button, .management-restore, .session-summary, .search-field button,
+  .swipe-action, .conversation-action-row, .new-thread-attachments > label):active:not(:disabled) {
   scale: .965;
   transition-duration: 85ms;
 }
@@ -65,7 +67,7 @@
 .app-identity strong { color: var(--ink); font-size: clamp(14px, 4.2vw, 19px); font-weight: 750; letter-spacing: -.035em; }
 .app-identity span { font-size: 11px; }
 .top-actions { flex: 0 0 auto; gap: 5px; }
-.top-actions .icon-button { width: 42px; height: 44px; border-color: transparent; border-radius: 13px; background: transparent; color: var(--muted); }
+.top-actions .icon-button { width: 44px; height: 44px; border-color: transparent; border-radius: 13px; background: transparent; color: var(--muted); }
 .top-actions .icon-button:active { background: var(--surface-pressed); }
 .new-thread-button {
   min-height: 44px;
@@ -107,7 +109,7 @@
   font-size: 13px;
 }
 .search-field input::-webkit-search-cancel-button { display: none; }
-.search-field button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; }
+.search-field button { display: grid; flex: none; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; }
 .segmented-controls {
   --segments: 2;
   --selected-segment: 0;
@@ -164,8 +166,8 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
   opacity: 1;
-  transition: grid-template-rows var(--motion-panel) var(--ease-out), opacity var(--motion-fade) var(--ease-out);
 }
+.project-disclosure[data-compact=true] { transition: grid-template-rows var(--motion-panel) var(--ease-out), opacity var(--motion-fade) var(--ease-out); }
 .project-disclosure[inert] { grid-template-rows: 0fr; opacity: 0; }
 .project-disclosure > .project-threads { min-width: 0; min-height: 0; overflow: clip; }
 .project-threads > .swipe-shell:not(:last-child) { border-bottom: 1px solid var(--line); }
@@ -474,7 +476,6 @@
   overscroll-behavior: contain;
   padding: 12px max(14px, var(--app-safe-right)) calc(var(--app-safe-bottom) + 14px) max(14px, var(--app-safe-left));
 }
-.session-dialog[data-handoff], .session-dialog[data-handoff]::backdrop { animation: none; transition: none; }
 .sheet-title-row h2 { color: var(--ink); }
 .sheet-handle { background: #cbc2db; }
 .new-thread-dialog { width: min(100%, 520px); }
@@ -508,7 +509,7 @@
 .setup-screen .primary-button { border-radius: 12px; }
 
 @keyframes screen-enter {
-  from { opacity: .72; transform: translateY(8px); }
+  from { opacity: .91; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes conversation-enter {
@@ -536,17 +537,13 @@
   from { opacity: .55; transform: translateY(22px) scale(.984); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes nav-highlight-in {
-  from { opacity: .6; scale: .87; }
-  to { opacity: 1; scale: 1; }
-}
 @keyframes shade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .thread-screen, .computer-screen, .setup-screen { animation: screen-enter 220ms var(--ease-settle) backwards; }
+  .thread-screen, .computer-screen, .setup-screen { animation: screen-enter var(--motion-fade) var(--ease-settle) backwards; }
   .thread-screen[data-returning-from-thread] { animation: thread-list-return 180ms var(--ease-settle) backwards; }
   .conversation-screen { animation: conversation-enter 210ms var(--ease-settle) backwards; }
   .message-row[data-sending='true'] .message-bubble {
@@ -554,10 +551,9 @@
     animation: outgoing-message-enter 175ms var(--ease-settle) backwards;
   }
   .composer-send-indicator { animation: composer-send-spin .72s linear infinite; }
-  .home-nav button[aria-current=page]::before { animation: nav-highlight-in 240ms var(--ease-spring) both; }
   .command-palette, .attachment-strip, .activity-copy, .new-content-button, .inbox-body:not([hidden]),
-  .computer-reveal:not([hidden]), .computer-disclosure[open] .computer-receive-settings, .cockpit-accounts-body,
-  .context-content, .prompt-queue-list, .queue-paused-banner {
+  .computer-reveal:not([hidden]), .cockpit-accounts-body,
+  .context-content, .prompt-queue-list, .queue-paused-banner, .project-disclosure[data-compact=false]:not([inert]) {
     animation: reveal-content var(--motion-fade) var(--ease-settle) backwards;
   }
   .activity-wave i { animation: activity-dot 1.15s ease-in-out infinite paused; }
@@ -596,25 +592,17 @@
       :is(.session-dialog, .inbox-preview, .usage-reset-dialog)[open]::backdrop { opacity: 0; }
     }
   }
-  @supports (interpolate-size: allow-keywords) and (transition-behavior: allow-discrete) {
-    :is(.account-usage, .tool-call-group, .turn-process, .git-diff-panel > details, .diff-file, .computer-disclosure,
-      .raw-event, .inbox-preview details, .mail-detail-disclosure)::details-content {
-      interpolate-size: allow-keywords;
-      block-size: 0;
-      overflow: clip;
-      opacity: 0;
-      transition: block-size var(--motion-panel) var(--ease-out), opacity var(--motion-fade) var(--ease-out),
-        content-visibility var(--motion-panel) allow-discrete;
-    }
+  @supports selector(details::details-content) {
     :is(.account-usage, .tool-call-group, .turn-process, .git-diff-panel > details, .diff-file, .computer-disclosure,
       .raw-event, .inbox-preview details, .mail-detail-disclosure)[open]::details-content {
-      block-size: auto;
-      opacity: 1;
+      animation: shade-in 140ms var(--ease-out) backwards;
     }
   }
 }
+.session-dialog[data-handoff], .session-dialog[data-handoff]::backdrop { animation: none; transition: none; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  *, *::before, *::after, *::backdrop { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  :where(button, summary, .new-thread-attachments > label):active:not(:disabled) { scale: none; }
 }
 @media (max-width: 360px) {
   .thread-top-bar, .computer-top-bar { padding-inline: calc(var(--app-safe-left) + 12px) calc(var(--app-safe-right) + 12px); }
@@ -906,7 +894,7 @@
 .management-item-copy > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .management-item-copy strong { font-size: 13px; }
 .management-item-copy small { color: var(--muted); font-size: 11px; }
-.management-restore { min-height: 40px; padding-inline: 10px; border: 0; border-radius: 9px; background: var(--surface-subtle); color: var(--accent); font-size: 12px; font-weight: 600; }
+.management-restore { min-height: 44px; padding-inline: 10px; border: 0; border-radius: 9px; background: var(--surface-subtle); color: var(--accent); font-size: 12px; font-weight: 600; }
 .management-row:active, .management-restore:active { background: var(--surface-pressed); }
 .archive-browser { background: var(--surface-subtle); }
 .archive-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -1014,19 +1002,33 @@
 .agy-model-note { color: var(--muted); font-size: .75rem; line-height: 1.4; }
 .assistant-model-fields .permission-mode-status { grid-column: 1 / -1; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
 
-.home-nav {
+.home-shell {
   display: grid;
-  flex: 0 0 auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100dvh;
+  margin-inline: auto;
+}
+.home-shell > .app-screen { height: 100%; min-height: 0; }
+@media (min-width: 700px) {
+  .home-shell { max-width: 720px; border-inline: 1px solid var(--line); }
+  .home-shell > .app-screen { border-inline: 0; }
+}
+.home-nav {
+  --nav-gap: 4px;
+  --nav-left: calc(var(--app-safe-left) + 10px);
+  --nav-right: calc(var(--app-safe-right) + 10px);
+  display: grid;
+  position: relative;
+  isolation: isolate;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-  padding: 6px calc(var(--app-safe-right) + 10px) calc(var(--app-safe-bottom) + 6px) calc(var(--app-safe-left) + 10px);
+  gap: var(--nav-gap);
+  padding: 6px var(--nav-right) calc(var(--app-safe-bottom) + 6px) var(--nav-left);
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
 .home-nav button {
   display: grid;
-  position: relative;
-  isolation: isolate;
   min-height: 52px;
   min-width: 0;
   padding: 6px;
@@ -1042,12 +1044,16 @@
 }
 .home-nav button svg { width: 19px; height: 19px; }
 .home-nav button[aria-current=page] { color: var(--accent); }
-.home-nav button[aria-current=page]::before {
+.home-nav::before {
   position: absolute;
-  inset: 0;
+  inset: 6px auto calc(var(--app-safe-bottom) + 6px) var(--nav-left);
+  width: calc((100% - var(--nav-left) - var(--nav-right) - 3 * var(--nav-gap)) / 4);
   z-index: -1;
-  border-radius: inherit;
+  border-radius: 13px;
   background: var(--accent-soft);
+  transform: translateX(calc(var(--nav-index) * (100% + var(--nav-gap))));
+  transition: transform 230ms var(--ease-settle);
+  pointer-events: none;
   content: '';
 }
 .mail-header-actions { display: flex; flex: none; align-items: center; }
@@ -1544,7 +1550,7 @@
 @media (prefers-reduced-motion: no-preference) {
   .update-check-spinner { animation: update-spin .8s linear infinite; }
   .update-toast { animation: update-toast-in 230ms var(--ease-out) both; }
-  .update-toast[data-leaving] { animation: update-toast-out 150ms ease-in both; }
+  .update-toast[data-leaving] { animation: update-toast-out 150ms var(--ease-out) both; }
   .update-download-track[data-indeterminate] span { animation: update-download-slide 1.4s ease-in-out infinite; }
 }
 @keyframes update-spin { to { transform: rotate(360deg); } }

@@ -403,7 +403,7 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 
 .compaction-status { flex: 0 0 auto; width: 100%; min-height: 36px; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 6px max(calc(var(--app-safe-right) + 13px), calc((100% - 760px) / 2)) 6px max(calc(var(--app-safe-left) + 13px), calc((100% - 760px) / 2)); border-top: 1px solid #e8e8e3; background: #f8f8f5; color: #5f5f59; }
 .compaction-symbol { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 1.5px; color: #65756a; font-size: 10px; font-weight: 700; }
-.compaction-symbol i { width: 2px; height: 4px; border-radius: 2px; background: currentColor; animation: compaction-wave .9s ease-in-out infinite; }
+.compaction-symbol i { width: 2px; height: 11px; border-radius: 2px; background: currentColor; animation: compaction-wave .9s ease-in-out infinite; }
 .compaction-symbol i:nth-child(2) { animation-delay: .15s; }
 .compaction-symbol i:nth-child(3) { animation-delay: .3s; }
 .compaction-copy { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
@@ -418,7 +418,7 @@ input:focus, textarea:focus { border-color: #71716c; box-shadow: 0 0 0 2px rgba(
 .compaction-failed { border-top-color: #ead4d1; background: #fbf4f3; }
 .compaction-failed .compaction-symbol, .compaction-failed .compaction-copy strong { color: #9a443e; }
 
-@keyframes compaction-wave { 0%, 100% { height: 3px; opacity: .45; } 50% { height: 11px; opacity: 1; } }
+@keyframes compaction-wave { 0%, 100% { transform: scaleY(.27); opacity: .45; } 50% { transform: scaleY(1); opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
   .activity-wave i, .compaction-symbol i { animation: none; height: 6px; opacity: .8; }

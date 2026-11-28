@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
 import { cacheScope } from '../lib/remoteCache';
@@ -37,9 +37,9 @@ function savedMailbox(key: string) {
   } catch { return undefined; }
 }
 
-export function CampusMailScreen({ config, connectionUrl, connected, revision, target, onTargetClosed, footer }: {
+export function CampusMailScreen({ config, connectionUrl, connected, revision, target, onTargetClosed }: {
   config: RemoteConfig; connectionUrl?: string; connected: boolean; revision: number; target?: string;
-  onTargetClosed: () => void; footer: ReactNode;
+  onTargetClosed: () => void;
 }) {
   const endpoint = useMemo(() => ({ ...config, serverUrl: connectionUrl || config.serverUrl }), [config, connectionUrl]);
   const accountKey = `codex-mobile.mailbox.${cacheScope(config.serverUrl, config.pairingToken)}`;
@@ -282,7 +282,6 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
         </li>)}</ul>
       </>}
     </div>
-    {footer}
     <AssistantSettingsSheet dialogRef={accountSheet} title="选择邮箱" titleId="select-mailbox-title" closeLabel="关闭邮箱选择" onClosed={() => undefined}>
       <ul className="mail-account-list">{accounts.map(item => <li key={item.id}>
         <button type="button" aria-current={inbox?.mailboxId === item.id ? 'true' : undefined}

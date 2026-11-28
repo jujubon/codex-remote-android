@@ -150,7 +150,6 @@ interface ThreadListProps {
   hidden: ReturnType<typeof useHiddenProjects>;
   hiddenThreads: ReturnType<typeof useHiddenProjects>;
   removed: ReturnType<typeof useHiddenProjects>;
-  footer: React.ReactNode;
   threads: RemoteThread[];
   attention: Record<string, AttentionTarget>;
   phase: ConnectionPhase;
@@ -290,11 +289,13 @@ function ThreadRow({
   );
 }
 
-function ProjectThreads({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
+function ProjectThreads({ collapsed, count, children }: { collapsed: boolean; count: number; children: React.ReactNode }) {
+  // Large groups settle at their final height immediately to avoid laying out the whole list per frame.
+  const compact = count <= 8;
   const [opened, setOpened] = useState(!collapsed);
   if (!collapsed && !opened) setOpened(true);
-  return <div className="project-disclosure" inert={collapsed} aria-hidden={collapsed}>
-    <div className="project-threads">{opened || !collapsed ? children : null}</div>
+  return <div className="project-disclosure" data-compact={compact} inert={collapsed} aria-hidden={collapsed}>
+    <div className="project-threads">{!collapsed || (compact && opened) ? children : null}</div>
   </div>;
 }
 
@@ -327,7 +328,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ assistant, returningFromThread, canCreate, desktopAction, position, onArchives, onArchive, onRename, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ assistant, returningFromThread, canCreate, desktopAction, position, onArchives, onArchive, onRename, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -558,7 +559,7 @@ export function ThreadList({ assistant, returningFromThread, canCreate, desktopA
                 <button className="project-new nav-icon-button" type="button" aria-label={`在 ${projectName(cwd)} 新建对话`} disabled={!canCreate} onClick={() => onCreate(cwd === NO_PROJECT ? undefined : cwd)}><PlusIcon /></button>
                 {cwd !== NO_PROJECT && <button className="project-hide nav-icon-button" type="button" data-swipe-toggle aria-label={`${projectName(cwd)} 的项目菜单`} aria-expanded={swipe === id} onClick={() => setSwipe(swipe === id ? null : id)}><MoreIcon /></button>}
               </header>
-              <ProjectThreads collapsed={collapsed}>
+              <ProjectThreads collapsed={collapsed} count={items.length}>
                 {roots.map((thread) => (
                   <ThreadRow key={thread.id} thread={thread} childrenByParent={childrenByParent} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} onRename={onRename} wrap={wrapThread} />
                 ))}
@@ -573,7 +574,6 @@ export function ThreadList({ assistant, returningFromThread, canCreate, desktopA
         })}
       </section>
       {notice && <div className="home-notice">{notice}</div>}
-      {footer}
     </main>
   );
 }

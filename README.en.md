@@ -25,6 +25,8 @@ Check a task's progress, answer a question, attach a screenshot, or start someth
 | **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
 | **Mail** | Read messages from CSU and personal QQ Mail accounts synced in parallel, and switch between inboxes and to-dos. Use Antigravity or local Ollama for summaries, importance, action items, and Chinese translations. |
 
+Switch between all four tabs from the bottom bar. Swipe project and conversation cards left for actions, or drag down to dismiss the model, usage, and mail detail sheets. The app respects the system's reduced-motion setting.
+
 ## Quick start
 
 You'll need a phone running **Android 7.0 or later** and a Windows PC with **Codex Desktop** installed and signed in.

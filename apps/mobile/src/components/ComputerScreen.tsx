@@ -12,7 +12,7 @@ import { ConnectionDiagnostics, UpdatePanel } from './ComputerUtilities';
 import { InboxPanel } from './InboxPanel';
 import { ComputerCardHeading } from './ComputerCardHeading';
 
-export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, requestedUpdate, onUpdateStarted, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, footer, notice }: {
+export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersion, requestedUpdate, onUpdateStarted, checkSync, onUseInbox, deleteAttachmentsAfterTurn, onChangeAttachmentCleanup, onReconnect, onSettings, notice }: {
   config: RemoteConfig;
   connectionUrl?: string;
   phase: ConnectionPhase;
@@ -26,7 +26,6 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
   onSettings: () => void;
   deleteAttachmentsAfterTurn?: boolean;
   onChangeAttachmentCleanup: (enabled: boolean) => Promise<void>;
-  footer: ReactNode;
   notice: ReactNode;
 }) {
   const active = connectionUrl || config.serverUrl;
@@ -62,6 +61,5 @@ export function ComputerScreen({ config, connectionUrl, phase, detail, hostVersi
         hostUpdateSupported={status?.hostUpdateSupported} requestedUpdate={requestedUpdate} onUpdateStarted={onUpdateStarted} />
     </div>
     {notice && <div className="home-notice">{notice}</div>}
-    {footer}
   </main>;
 }

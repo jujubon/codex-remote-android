@@ -320,7 +320,6 @@ export function App() {
   </>;
 
   const phaseDetail = remote.phaseDetail || (homePage === 'codex' && remote.phase === 'connected' && !remote.codexReady ? '已连接电脑，Codex 服务正在等待就绪' : '');
-  const homeNav = <HomeNav page={homePage} onNavigate={goToPage} />;
   const draftKey = composerDraftKey(cacheScope(config.serverUrl, config.pairingToken), remote.selectedThread?.id ?? '');
 
   return (
@@ -384,64 +383,65 @@ export function App() {
           onDownloadAttachment={remote.downloadHostAttachment}
           onDiscardLocalMessage={remote.discardLocalMessage}
         />
-      ) : homePage === 'mail' ? (
-        <Suspense fallback={<main className="app-screen computer-screen"><div className="computer-scroll">
-          <p className="computer-feedback" role="status">正在打开邮件…</p></div>{homeNav}</main>}>
-          <CampusMailScreen config={config} connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'}
-            revision={remote.mailRevision} target={mailTarget} onTargetClosed={() => setMailTarget(undefined)} footer={homeNav} />
-        </Suspense>
-      ) : homePage === 'computer' ? (
-        <ComputerScreen config={config}
-          hostVersion={remote.hostVersion}
-          requestedUpdate={requestedUpdate}
-          onUpdateStarted={() => setRequestedUpdate(undefined)}
-          deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
-          onChangeAttachmentCleanup={async (enabled) => {
-            await saveAttachmentCleanupPreference(enabled);
-            setDeleteAttachmentsAfterTurn(enabled);
-          }}
-          checkSync={remote.checkConversationSync}
-          onUseInbox={file => {
-            setInboxSelection({ file });
-            goToPage(lastAssistantPage.current);
-          }}
-          connectionUrl={remote.connectionUrl}
-          phase={remote.phase}
-          detail={phaseDetail}
-          onReconnect={remote.reconnect}
-          onSettings={() => setShowSettings(true)}
-          footer={homeNav}
-          notice={notice} />
-      ) : (
-        <ThreadList key={homePage}
-          assistant={homePage}
-          returningFromThread={returningToList}
-          canCreate={remote.phase === 'connected' && (homePage === 'codex' || remote.antigravityAvailable)}
-          desktopAction={config && <AssistantDesktopAction assistant={homePage} config={config}
-            connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'} />}
-          attention={remote.threadAttention}
-          position={homePage === 'codex' ? codexPosition : antigravityPosition}
-          onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
-          quota={accountPanel}
-          quotaPercent={quotaPercent}
-          onOpenQuota={activeUsage.refresh}
-          onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
-          onRename={(compareReleaseVersions(remote.hostVersion, '1.0.8') ?? -1) >= 0 ? setRenameTarget : undefined}
-          onDelete={homePage === 'antigravity' ? thread => setDeleteAntigravityTarget({ id: thread.id, title: thread.title }) : undefined}
-          hidden={hidden}
-          hiddenThreads={hiddenThreads}
-          removed={removed}
-          threads={pageThreads}
-          phase={remote.phase}
-          phaseDetail={phaseDetail}
-          onSelect={openRootThread}
-          onCreate={cwd => { setNewDirectory(cwd); setNewAssistant(homePage); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
-          footer={homeNav}
-          notice={notice}
-          onSettings={() => setShowSettings(true)}
-          onReconnect={remote.reconnect}
-        />
-      )}
+      ) : <div className="home-shell">
+        {homePage === 'mail' ? (
+          <Suspense fallback={<main className="app-screen computer-screen"><div className="computer-scroll">
+            <p className="computer-feedback" role="status">正在打开邮件…</p></div></main>}>
+            <CampusMailScreen config={config} connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'}
+              revision={remote.mailRevision} target={mailTarget} onTargetClosed={() => setMailTarget(undefined)} />
+          </Suspense>
+        ) : homePage === 'computer' ? (
+          <ComputerScreen config={config}
+            hostVersion={remote.hostVersion}
+            requestedUpdate={requestedUpdate}
+            onUpdateStarted={() => setRequestedUpdate(undefined)}
+            deleteAttachmentsAfterTurn={deleteAttachmentsAfterTurn}
+            onChangeAttachmentCleanup={async (enabled) => {
+              await saveAttachmentCleanupPreference(enabled);
+              setDeleteAttachmentsAfterTurn(enabled);
+            }}
+            checkSync={remote.checkConversationSync}
+            onUseInbox={file => {
+              setInboxSelection({ file });
+              goToPage(lastAssistantPage.current);
+            }}
+            connectionUrl={remote.connectionUrl}
+            phase={remote.phase}
+            detail={phaseDetail}
+            onReconnect={remote.reconnect}
+            onSettings={() => setShowSettings(true)}
+            notice={notice} />
+        ) : (
+          <ThreadList key={homePage}
+            assistant={homePage}
+            returningFromThread={returningToList}
+            canCreate={remote.phase === 'connected' && (homePage === 'codex' || remote.antigravityAvailable)}
+            desktopAction={config && <AssistantDesktopAction assistant={homePage} config={config}
+              connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'} />}
+            attention={remote.threadAttention}
+            position={homePage === 'codex' ? codexPosition : antigravityPosition}
+            onArchives={homePage === 'codex' && remote.archiveSupported ? () => setArchiveTarget('list') : undefined}
+            quota={accountPanel}
+            quotaPercent={quotaPercent}
+            onOpenQuota={activeUsage.refresh}
+            onArchive={homePage === 'codex' && remote.archiveSupported ? thread => setArchiveTarget({ id: thread.id, title: thread.title }) : undefined}
+            onRename={(compareReleaseVersions(remote.hostVersion, '1.0.8') ?? -1) >= 0 ? setRenameTarget : undefined}
+            onDelete={homePage === 'antigravity' ? thread => setDeleteAntigravityTarget({ id: thread.id, title: thread.title }) : undefined}
+            hidden={hidden}
+            hiddenThreads={hiddenThreads}
+            removed={removed}
+            threads={pageThreads}
+            phase={remote.phase}
+            phaseDetail={phaseDetail}
+            onSelect={openRootThread}
+            onCreate={cwd => { setNewDirectory(cwd); setNewAssistant(homePage); setShowNewThread(true); if (remote.desktopProjectMenus) remote.refreshProjects(); }}
+            notice={notice}
+            onSettings={() => setShowSettings(true)}
+            onReconnect={remote.reconnect}
+          />
+        )}
+        <HomeNav page={homePage} onNavigate={goToPage} />
+      </div>}
 
       {startupUpdate && !startupUpdateHandled && !remote.selectedThreadId && !showNewThread && !archiveTarget && !renameTarget && !deleteAntigravityTarget &&
         <StartupUpdateDialog update={startupUpdate} onLater={() => setStartupUpdateHandled(true)} onUpdate={update => {

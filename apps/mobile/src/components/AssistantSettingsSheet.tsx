@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent, type ReactNode, type RefObject } from 'react';
-import { afterDialogClose } from '../lib/dialogMotion';
+import { afterDialogClose, closeDialogForHandoff } from '../lib/dialogMotion';
 import { CloseIcon } from './Icons';
 
 type SheetDrag = {
@@ -38,7 +38,7 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
   function startDrag(event: PointerEvent<HTMLDivElement>) {
     const dialog = dialogRef.current;
     if (!dialog?.open || !event.isPrimary || event.button !== 0) return;
-    const transform = settling.current?.playState === 'running' ? getComputedStyle(dialog).transform : 'none';
+    const transform = settling.current ? getComputedStyle(dialog).transform : 'none';
     const offset = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
     if (offset) dialog.style.transform = slide(offset);
     settling.current?.cancel();
@@ -86,13 +86,23 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
     const flick = gesture.offset >= 28 && event.timeStamp - gesture.lastAt < 80 && gesture.velocity > .58;
     const dismiss = gesture.dragging && !cancelled && (gesture.offset >= threshold || flick);
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && typeof dialog.animate === 'function') {
-      settling.current = dialog.animate([
+      const animation = dialog.animate([
         { transform: slide(gesture.offset) }, { transform: slide(dismiss ? gesture.height + 12 : 0) },
       ], {
         duration: dismiss ? 190 : 230,
         easing: dismiss ? 'cubic-bezier(.26,.7,.35,1)' : 'cubic-bezier(.21,1.18,.37,1)',
         fill: dismiss ? 'forwards' : 'none',
       });
+      settling.current = animation;
+      void animation.finished.then(() => {
+        if (settling.current !== animation) return;
+        settling.current = null;
+        if (dismiss) {
+          closeDialogForHandoff(dialog);
+          animation.cancel();
+        }
+      }, () => undefined);
+      return;
     }
     if (dismiss) dialog.close();
   }

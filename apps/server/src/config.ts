@@ -7,7 +7,7 @@ import {
   type PackagedNodeReplRuntime,
 } from "./codex-runtime.js";
 
-export const HOST_VERSION = "1.6.2";
+export const HOST_VERSION = "1.6.3";
 
 export interface ServerConfig {
   host: string;
