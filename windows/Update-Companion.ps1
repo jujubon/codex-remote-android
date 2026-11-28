@@ -3,14 +3,20 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'CodexMobileRemote'
 $root = Join-Path $stateDir 'DesktopLifecycle'
 $configPath = Join-Path $root 'settings.json'
 $updatePath = Join-Path $root 'update.json'
-$versions = Join-Path $root 'versions'
 $repository = 'jujubon/codex-remote-android'
-$stageDir = $null
-$archive = Join-Path $root "update-$PID.zip"
+$archive = $null
 $marker = $null
 
 function Read-Json([string]$Path) {
     Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+
+function Get-UpdateRoot($Config) {
+    if (!$Config.updateRoot) { return $root }
+    if ($Config.updateRoot -isnot [string] -or $Config.updateRoot -notmatch '^[A-Za-z]:\\') {
+        throw 'The Windows update folder must be an absolute local path.'
+    }
+    return [IO.Path]::GetFullPath($Config.updateRoot)
 }
 
 function Save-Json([string]$Path, $Value) {
@@ -118,6 +124,15 @@ try {
     if ($marker.stage -notin @('pending', 'downloading', 'switching')) { return }
     if ($marker.version -cnotmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}$') { throw 'Invalid version.' }
     if ($marker.stage -ne 'switching') {
+        $expectedCompanion = Join-Path $PSScriptRoot 'Start-CodexMobile.ps1'
+        $config = Read-Json $configPath
+        if (!$config.enabled -or $config.companion -ne $expectedCompanion) {
+            throw 'The Windows lifecycle settings changed before download.'
+        }
+        $updateRoot = Get-UpdateRoot $config
+        $versions = Join-Path $updateRoot 'versions'
+        New-Item -ItemType Directory -Path $versions -Force | Out-Null
+        $archive = Join-Path $updateRoot "update-$PID.zip"
         $marker.stage = 'downloading'
         $marker | Add-Member -NotePropertyName downloadedBytes -NotePropertyValue 0 -Force
         $marker | Add-Member -NotePropertyName totalBytes -NotePropertyValue $null -Force
@@ -149,7 +164,7 @@ try {
             throw 'The package version does not match.'
         }
         $config = Read-Json $configPath
-        if (!$config.enabled -or $config.companion -ne (Join-Path $PSScriptRoot 'Start-CodexMobile.ps1')) {
+        if (!$config.enabled -or $config.companion -ne $expectedCompanion -or (Get-UpdateRoot $config) -ne $updateRoot) {
             throw 'The Windows lifecycle settings changed during download.'
         }
         $marker | Add-Member -NotePropertyName previousCompanion -NotePropertyValue $config.companion -Force
@@ -194,7 +209,7 @@ try {
     } else { throw }
 } finally {
     try {
-        if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive }
+        if ($archive -and (Test-Path -LiteralPath $archive)) { Remove-Item -LiteralPath $archive }
     } finally {
         if ($owned) { $mutex.ReleaseMutex() }
         $mutex.Dispose()

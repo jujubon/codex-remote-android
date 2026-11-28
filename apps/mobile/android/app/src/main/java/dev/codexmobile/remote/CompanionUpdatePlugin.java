@@ -1,6 +1,9 @@
 package dev.codexmobile.remote;
 
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -19,12 +22,16 @@ import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.net.ssl.HttpsURLConnection;
 
 @CapacitorPlugin(name = "CompanionUpdate")
 public class CompanionUpdatePlugin extends Plugin {
     private static final String RELEASE = "https://github.com/jujubon/codex-remote-android/releases/download/";
     private static final long MAX_BYTES = 100L * 1024 * 1024;
+    private static final String VERSION_PATTERN = "\\d{1,5}\\.\\d{1,5}\\.\\d{1,5}";
+    private static final Pattern RELEASE_APK = Pattern.compile("Codex-Remote-(" + VERSION_PATTERN + ")\\.apk");
     private final AtomicBoolean updating = new AtomicBoolean();
     private volatile JSObject progress;
 
@@ -39,7 +46,7 @@ public class CompanionUpdatePlugin extends Plugin {
         String version = call.getString("version", "");
         String sha = call.getString("sha256", "");
         long expected = call.getInt("bytes", 0);
-        if (!version.matches("\\d{1,5}\\.\\d{1,5}\\.\\d{1,5}") || !sha.matches("[0-9a-f]{64}")) {
+        if (!version.matches(VERSION_PATTERN) || !sha.matches("[0-9a-f]{64}")) {
             call.reject("发布包缺少有效的校验值。");
             return;
         }
@@ -49,7 +56,7 @@ public class CompanionUpdatePlugin extends Plugin {
         }
         publishProgress(version, "preparing", 0, 0);
         new Thread(() -> {
-            File folder = new File(getContext().getCacheDir(), "companion-update");
+            File folder = updateCache(getContext());
             File apk = new File(folder, "Codex-Remote-" + version + ".apk");
             File part = new File(folder, "download.part");
             try {
@@ -60,7 +67,7 @@ public class CompanionUpdatePlugin extends Plugin {
                     if (!sha.equals(fileDigest(part))) throw new IOException("APK 校验失败，请重试。");
                     if (!part.renameTo(apk)) throw new IOException("无法保存已下载的 APK。");
                 }
-                android.content.pm.PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(apk.getPath(), 0);
+                PackageInfo info = getContext().getPackageManager().getPackageArchiveInfo(apk.getPath(), 0);
                 if (info == null || !getContext().getPackageName().equals(info.packageName) || !version.equals(info.versionName)) {
                     apk.delete();
                     throw new IOException("APK 的应用标识或版本不匹配。");
@@ -79,6 +86,36 @@ public class CompanionUpdatePlugin extends Plugin {
                 return;
             }
         }, "companion-update").start();
+    }
+
+    private static File updateCache(Context context) {
+        return new File(context.getCacheDir(), "companion-update");
+    }
+
+    static void clearInstalledArchives(Context context) {
+        try {
+            PackageInfo installed = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            clearInstalledArchives(updateCache(context), installed.versionName);
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // Without an installed version, leave the cached APKs available for retry.
+        }
+    }
+
+    static void clearInstalledArchives(File folder, String installedVersion) {
+        if (installedVersion == null || !installedVersion.matches(VERSION_PATTERN)) return;
+        File[] cached = folder.listFiles();
+        if (cached == null) return;
+        String[] installed = installedVersion.split("\\.");
+        for (File file : cached) {
+            Matcher match = RELEASE_APK.matcher(file.getName());
+            if (!file.isFile() || !match.matches()) continue;
+            String[] candidate = match.group(1).split("\\.");
+            int order = 0;
+            for (int part = 0; part < installed.length && order == 0; part++) {
+                order = Integer.compare(Integer.parseInt(candidate[part]), Integer.parseInt(installed[part]));
+            }
+            if (order <= 0) file.delete();
+        }
     }
 
     private void openInstaller(PluginCall call, File apk) {

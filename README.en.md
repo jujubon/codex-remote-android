@@ -68,8 +68,8 @@ Cockpit manages account credentials on Windows. The phone receives masked labels
 ## Background operation and updates
 
 - **Start at Windows sign-in.** Run `Enable-Autostart.cmd` after pairing to run the companion as a background scheduled task. A standalone Cloudflare connector runs as its own service. A tunnel configured for Codex Remote to manage starts with the companion. Use `Disable-Autostart.cmd` to turn off the companion's sign-in launch.
-- **Update Android in the app.** A cold start checks for updates quietly. When an update is available, you can install it or defer it. You can also check manually under **Computer → Version & Updates**. The app verifies the APK and Android asks you to confirm installation.
-- **Update Windows from your phone.** Since 0.9.47, the background companion can download, verify, and switch to a new Windows package. If startup fails, it restores the previous version. Your phone reconnects with the same pairing token. With 1.0.1 or later on both devices, in-app downloads show their size and percentage. For older or manually started installations, extract the new ZIP and start the companion from its new folder. [Release history (Chinese)](docs/releases.md)
+- **Update Android in the app.** A cold start checks for updates quietly. When an update is available, you can install it or defer it. You can also check manually under **Computer → Version & Updates**. The app verifies the APK and Android asks you to confirm installation. After installation succeeds, the app removes the installer from its update cache.
+- **Update Windows from your phone.** The background updater downloads and extracts the Windows package in the configured update directory and removes the temporary ZIP afterward. It restores the previous version if startup fails. Starting in 1.1.3, new background setups use `companion-updates` under the extracted package by default. Your phone reconnects with the same pairing token. [Release history (Chinese)](docs/releases.md)
 
 | Symptom | Check |
 | --- | --- |

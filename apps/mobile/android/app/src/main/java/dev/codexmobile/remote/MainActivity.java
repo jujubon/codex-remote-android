@@ -1,5 +1,6 @@
 package dev.codexmobile.remote;
 
+import android.content.Context;
 import android.os.Bundle;
 
 import com.getcapacitor.BridgeActivity;
@@ -17,5 +18,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CompanionUpdatePlugin.class);
         super.onCreate(savedInstanceState);
         getBridge().getWebView().setWebChromeClient(new MultiFileChromeClient(getBridge()));
+        Context app = getApplicationContext();
+        new Thread(() -> CompanionUpdatePlugin.clearInstalledArchives(app), "companion-update-cleanup").start();
     }
 }

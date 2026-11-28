@@ -97,6 +97,9 @@ if (!$task) {
 }
 $config | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
 $config | Add-Member -NotePropertyName companion -NotePropertyValue (Join-Path $PSScriptRoot 'Start-CodexMobile.ps1') -Force
+if (!$config.updateRoot) {
+    $config | Add-Member -NotePropertyName updateRoot -NotePropertyValue (Join-Path $PSScriptRoot 'companion-updates') -Force
+}
 Save-Settings $config
 if ((Get-ScheduledTask -TaskName $taskName).State -eq 'Disabled') { Enable-ScheduledTask -TaskName $taskName | Out-Null }
 Move-LegacyShortcut
