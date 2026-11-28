@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-595667" alt="MIT 许可证"></a>
 </p>
 
-<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">下载 APK 和 Windows 配套服务</a></strong> · <a href="#快速开始">快速开始</a> · <a href="#异地连接使用-cloudflare-tunnel">异地连接</a> · <a href="#cockpit-tools-切换-codex-账号">切换账号</a></p>
+<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">下载 APK 和 Windows 配套服务</a></strong> · <a href="#快速开始">快速开始</a> · <a href="#异地连接使用-cloudflare-tunnel">异地连接</a> · <a href="#cockpit-tools-切换-codex-账号">切换账号</a> · <a href="#邮箱">邮箱</a></p>
 
 <p align="center"><img src="docs/images/app-preview.webp" alt="Codex Remote 的 Codex、Antigravity 和电脑三页界面，使用演示数据" width="840"></p>
 
@@ -23,7 +23,7 @@
 | **Codex** | 浏览项目和对话、发起任务、查看额度。支持的会话可以答复提问、处理审批、引导或停止。配合 Cockpit Tools，可以比较各账号额度、切换账号，并自动打开 Codex Desktop。 |
 | **Antigravity** | 用电脑上已登录的 CLI 新建和继续对话、查看额度。需要接手桌面对话时，从「启动」进入 Google 官方远程面板。 |
 | **电脑** | 自检连接、互传文件和剪贴板、锁屏、熄屏挂机、静音与关机，也可预览收件箱图片、使用手机阅读窗和安装更新。 |
-| **邮件** | 只读查看中南大学邮箱，按重点发件人筛选，并通过 Windows 上的本地模型查看摘要和待办。 |
+| **邮件** | 并行只读同步学校邮箱和个人 QQ 邮箱，随时切换收件箱与待办。使用 Antigravity 或本地 Ollama 生成摘要、标记重要邮件、提取待办与翻译正文。 |
 
 ## 快速开始
 
@@ -55,6 +55,7 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 
 - **离开电脑后继续任务。** 手机上可以搜索项目、对话和消息。点「用时」展开执行过程，向上翻历史时暂停自动跟随，点「回到最新」继续看。已有桌面对话的实时操作取决于 Codex Desktop 的本地连接能力和会话状态。[桌面连接说明](docs/desktop-ipc.md)
 - **启动或关闭两位助手的桌面。** 在各自的页面点「启动」。绿点表示窗口已打开，橙点表示正在启停。搜索框旁的「⋯」可管理项目和对话。Antigravity 的「进入桌面对话」需要在桌面设置中启用 Remote Control，并在官方面板使用同一 Google 账号。
+- **查看额度。** Codex 首页显示 5 小时剩余额度，Antigravity 首页显示 Gemini 分组的 5 小时剩余额度。点开圆环可查看各额度窗口和重置时间。
 - **发截图和文件。** 从 Android 分享菜单选「发送到电脑」，或在聊天输入框添加多个附件。图片可在手机收件箱预览。文件接收位置和附件清理可分别配置。[文件传输说明](docs/file-transfer.md)
 - **用电脑看手机。** 在「电脑 → 手机投屏」选择本地 Wi-Fi 或跨网方式。本地投屏需配对 scrcpy，跨网共享由 Android 确认。电脑端翻页的权限和步骤见阅读窗说明。[手机阅读窗说明](docs/phone-reader.md)
 
@@ -68,15 +69,17 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 
 ## 邮箱
 
-1. 将手机和 Windows 配套服务均更新到 **1.3.0**。首次连接时，在[中南大学网页邮箱](https://mail.csu.edu.cn/)的「个人信息 → 邮箱密码」生成客户端专用密码。
-2. 在正在使用的 Windows 配套服务目录运行 `Set-CampusMail.cmd`，按提示填入完整邮箱和客户端专用密码。凭据由 Windows 当前用户加密保存。默认邮件缓存位于已配置的更新目录下的 `mail` 子目录，也可用 `-DataDirectory` 指定位置。
-3. 在手机打开「邮件」。首次同步最近 20 封，之后自动增量同步。重连可补发最近 24 小时符合条件的提醒。
+1. **获取邮箱授权。** 在中南大学网页邮箱的「个人信息 → 邮箱密码」生成客户端专用密码。在 QQ 邮箱设置中启用 IMAP 并生成授权码。 [中南大学邮箱](https://mail.csu.edu.cn/) · [QQ 邮箱](https://mail.qq.com/)
+2. **在电脑添加账号。** 在当前使用的 Windows 配套服务目录运行 `Set-CampusMail.cmd -Provider csu` 或 `Set-CampusMail.cmd -Provider qq`，按提示输入完整地址和专用密码或授权码。添加同类的另一个账号时，可通过 `-Address` 指定完整地址。Windows 为当前用户加密凭据，邮件缓存默认位于更新目录下的 `mail` 子目录，也可通过 `-DataDirectory` 指定。
+3. **在手机查看。** 打开「邮件」，点顶部邮箱名称切换收件箱和待办。每个账号首次同步最近 20 封，之后在后台独立增量同步。重连可补发最近 24 小时符合条件的提醒。
 
-在「邮件 → 设置」确认开启 Antigravity 自动分析。配套服务通过已登录的 Antigravity CLI 将标题和所需正文交给 Google，逐封生成摘要、分类、待办和中文译文，凭据和附件留在电脑上。也可运行 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)，下载本地模型后用 `Set-CampusMail.cmd -Model 模型名` 配置。提示输入专用密码时回车可沿用现有授权。
+在「邮件 → 设置」为当前账号选择分析方式，并管理重点联系人。Antigravity 通过电脑上已登录的 CLI 把邮件标题和所需正文发给 Google，生成摘要、分类、待办和中文译文。邮箱凭据和附件留在电脑上。
 
-普通和推广邮件保留在收件箱。重要邮件可提醒，有明确行动要求的邮件进入「待办」。可手动调整分类、完成待办或延后一小时提醒。在邮箱设置中管理重点联系人或关闭自动分析。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
+Windows 配套服务 **1.6.0** 起，优先使用 **Gemini 4 Hydrogen（High）**，遇到额度限制时切换 **Claude Opus 4.6（Thinking）**。Gemini 暂停约 15 分钟后优先重试。两组都受限时继续收信，稍后补分析。 [1.6.0 发布记录](docs/releases.md#160)
 
-手机和 Windows 配套服务均升级到 **1.5.0** 后，可以同时同步多个学校邮箱和个人 QQ 邮箱。在 [QQ 邮箱](https://mail.qq.com/) 的设置中开启 IMAP 并生成授权码，然后在 Windows 配套服务目录运行 `Set-CampusMail.cmd -Provider qq`。可通过 `-Address` 指定要添加的完整地址。已授权账号会在升级时导入。在手机邮件页顶部切换账号查看收件箱与待办，在设置中分别管理每个账号的分析方式和重点联系人。
+如果选择本地处理，可先安装 Ollama 本地模型，再用 `Set-CampusMail.cmd -Address 邮箱地址 -Model 模型名` 配置。在专用密码提示处按回车可沿用现有授权，然后在手机邮箱设置中选择「本地模型」。 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)
+
+普通和推广邮件保留在收件箱。重要邮件可提醒，有明确行动要求的邮件进入「待办」。详情页可切换原文和中文译文，也可手动调整分类、完成待办或延后一小时提醒。用 `Set-CampusMail.cmd -Address 邮箱地址 -Disconnect` 断开指定账号。
 
 ## 后台运行与更新
 

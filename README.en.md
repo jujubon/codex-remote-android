@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-595667" alt="MIT license"></a>
 </p>
 
-<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">Download the Android APK and Windows companion</a></strong> · <a href="#quick-start">Quick start</a> · <a href="#connect-remotely-with-cloudflare-tunnel">Connect remotely</a> · <a href="#switch-codex-accounts-with-cockpit-tools">Switch accounts</a></p>
+<p align="center"><strong><a href="https://github.com/jujubon/codex-remote-android/releases/latest">Download the Android APK and Windows companion</a></strong> · <a href="#quick-start">Quick start</a> · <a href="#connect-remotely-with-cloudflare-tunnel">Connect remotely</a> · <a href="#switch-codex-accounts-with-cockpit-tools">Switch accounts</a> · <a href="#mail">Mail</a></p>
 
 <p align="center"><img src="docs/images/app-preview.webp" alt="The Codex, Antigravity, and Computer tabs, shown with sample data" width="840"></p>
 
@@ -23,7 +23,7 @@ Check a task's progress, answer a question, attach a screenshot, or start someth
 | **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a turn, or stop it. Use Cockpit Tools to compare account quotas, switch accounts, and open Codex Desktop automatically. |
 | **Antigravity** | Start and resume chats through the signed-in Windows CLI and check usage. Open the official Google remote panel from the desktop controls for desktop conversations. |
 | **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
-| **Mail** | Read Central South University mail, filter priority senders, and view summaries from a local model running on Windows. |
+| **Mail** | Read messages from CSU and personal QQ Mail accounts synced in parallel, and switch between inboxes and to-dos. Use Antigravity or local Ollama for summaries, importance, action items, and Chinese translations. |
 
 ## Quick start
 
@@ -55,6 +55,7 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 
 - **Pick up a Codex task.** Search projects, conversations, and messages. Open the elapsed-time row to see a turn's tool activity. Live controls in desktop-created chats depend on the available Codex Desktop connection and the session state. [Desktop connection details (Chinese)](docs/desktop-ipc.md)
 - **Launch or close a desktop app.** Tap **Launch** (`启动`) in the relevant assistant tab. Green means the window is open and amber means it is opening or closing. The **⋯** next to search opens project and conversation management. For the Antigravity desktop panel, enable Remote Control on the PC and sign in to the panel with the same Google account.
+- **Check your quota.** The Codex home badge shows the remaining 5-hour quota. The Antigravity badge shows the Gemini group's remaining 5-hour quota. Tap either badge for other windows and reset times.
 - **Send screenshots and files.** Use the Android share sheet to send a file to your PC or attach multiple files to a chat. Preview pictures in the phone inbox. Storage locations and attachment cleanup are configurable. [File transfers (Chinese)](docs/file-transfer.md)
 - **See your phone on your PC.** Open phone mirroring from the Computer tab. Local mirroring uses scrcpy and wireless debugging. Android asks for permission when you start cross-network screen sharing. [Phone mirroring setup (Chinese)](docs/phone-reader.md)
 
@@ -68,15 +69,17 @@ Cockpit manages account credentials on Windows. The phone receives masked labels
 
 ## Mail
 
-1. Update Android and the Windows companion to **1.3.0**. For a new mailbox connection, create a mail client password in [CSU webmail](https://mail.csu.edu.cn/).
-2. Run `Set-CampusMail.cmd` from the active Windows companion folder and enter your full address and client password. Windows encrypts the credentials for your user. The mail cache defaults to the `mail` subfolder of the configured update directory. Use `-DataDirectory` to choose a different location.
-3. Open **Mail** (`邮件`) on the phone. The first sync imports up to 20 recent messages, followed by incremental sync. On reconnect, the app can deliver eligible notifications from the past 24 hours.
+1. **Get mailbox credentials.** Create a mail client password in CSU webmail. For QQ Mail, enable IMAP and generate an authorization code. [CSU webmail](https://mail.csu.edu.cn/) · [QQ Mail](https://mail.qq.com/)
+2. **Add the account on Windows.** Run `Set-CampusMail.cmd -Provider csu` or `Set-CampusMail.cmd -Provider qq` from the active Windows companion folder. Enter the full address and the client password or authorization code when prompted. Use `-Address` when adding another account from the same provider. Windows encrypts the credentials for your user. The cache defaults to the `mail` subfolder of the configured update directory. Use `-DataDirectory` to choose a different location.
+3. **Open Mail on Android.** Tap the mailbox name at the top to switch inboxes and to-dos. Each account first imports up to 20 recent messages and then syncs independently in the background. On reconnect, the app can deliver eligible notifications from the past 24 hours.
 
-With Android and the Windows companion on **1.3.0**, open Mail settings and confirm to enable Antigravity processing. The signed-in CLI sends the subject and relevant body text to Google for summaries, importance, to-dos, and Chinese translations. Credentials and attachments stay on the PC. For local processing, run [Ollama in local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features), install a model, and run `Set-CampusMail.cmd -Model model-name`. Press Enter to reuse a saved client password.
+Open Mail settings to choose an analysis provider and manage priority contacts for the selected account. Antigravity uses the signed-in Windows CLI to send the subject and relevant body text to Google for summaries, importance, to-dos, and Chinese translations. Mail credentials and attachments stay on the PC.
 
-Routine and promotional messages stay in your inbox. Important mail can notify you, and explicit action requests appear under To-dos. Change a classification, complete or snooze a task, and manage priority contacts from the Mail tab. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
+Starting with Windows companion **1.6.0**, analysis uses **Gemini 4 Hydrogen (High)** first and switches to **Claude Opus 4.6 (Thinking)** when Gemini reports a quota limit. The companion retries Gemini after about 15 minutes. If both groups are limited, mail keeps syncing and analysis resumes later. [1.6.0 release notes](docs/releases.md#160)
 
-Version **1.5.0** syncs multiple CSU and personal [QQ Mail](https://mail.qq.com/) accounts concurrently. Enable IMAP and generate an authorization code in QQ Mail, then run `Set-CampusMail.cmd -Provider qq` from the active Windows companion folder. Use `-Address` to add a specific address. Saved accounts are imported during the upgrade. Switch between inboxes and to-dos from the Mail header. Each mailbox keeps its own analysis settings and priority contacts.
+For local processing, install an Ollama model and run `Set-CampusMail.cmd -Address you@example.com -Model model-name`. Press Enter at the client password prompt to reuse your saved credentials, then choose the local model in Mail settings on Android. [Ollama local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)
+
+Routine and promotional messages stay in your inbox. Important mail can notify you, and explicit action requests appear under To-dos. Open a message to switch between the original and its Chinese translation, adjust its classification, or complete or snooze a to-do. Run `Set-CampusMail.cmd -Address you@example.com -Disconnect` to stop syncing that account.
 
 ## Background operation and updates
 
