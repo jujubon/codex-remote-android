@@ -631,6 +631,7 @@ function sameRemoteMessage(left: RemoteMessage, right: RemoteMessage): boolean {
     && left.turnDurationMs === right.turnDurationMs
     && left.assistantPhase === right.assistantPhase
     && left.deliveryAcknowledged === right.deliveryAcknowledged
+    && left.deliveryState === right.deliveryState
     && left.status === right.status
     && left.toolName === right.toolName
     && left.itemType === right.itemType
@@ -817,7 +818,7 @@ function matchPendingUsers(current: RemoteMessage[], incoming: RemoteMessage[], 
     if (canonical.role !== 'user' || pendingUser(canonical)) continue;
     const keys = messageCorrelationIds(canonical);
     const index = result.findIndex(local => {
-      if (!pendingUser(local)) return false;
+      if (!pendingUser(local) || local.deliveryState === 'uploading') return false;
       const localKeys = messageCorrelationIds(local);
       if (keys.length && localKeys.length) return localKeys.some(key => keys.includes(key));
       const text = local.content.trim().replace(/\s+/g, ' ');
@@ -2422,7 +2423,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
             ...current,
             [message.threadId]: (current[message.threadId] ?? []).map(item =>
               item.id === `local_${message.requestId}`
-                ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: displayedText ?? item.content } : item),
+                ? { ...item, deliveryAcknowledged: true, deliveryState: undefined, turnId: turnId ?? item.turnId, content: displayedText ?? item.content } : item),
           }));
           if (isTerminalTurnStatus(turn?.status) || (turnId && terminalMessageTurnsRef.current.has(`${message.threadId}\u0000${turnId}`))) break;
           if (message.threadId.startsWith('antigravity:') && !isActiveTurnStatus(turn?.status)) break;
@@ -2563,7 +2564,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
               const entry = Object.entries(current).find(([, items]) => items.some(item => item.id === localId && canDiscardLocalMessage(item)));
               if (!entry) return current;
               const [threadId, items] = entry;
-              return { ...current, [threadId]: items.map(item => item.id === localId ? { ...item, status: 'failed' } : item) };
+              return { ...current, [threadId]: items.map(item => item.id === localId ? { ...item, deliveryState: undefined, status: 'failed' } : item) };
             });
           }
           const historyThreadId = message.requestId && olderHistoryRequests.current.get(message.requestId);
@@ -2999,13 +3000,58 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       prompt = skillMatch[2]?.trim() || `请使用 ${skill.name} 技能处理当前任务。`;
     }
 
-    let attachments: MessageAttachment[];
-    try { attachments = await uploadAttachments(files, inboxId); }
-    catch (error) { setLastError(error instanceof Error ? error.message : '文件上传失败'); return false; }
-
+    const socket = socketRef.current;
+    if (!socket) {
+      setLastError('当前未连接，消息没有发送');
+      return false;
+    }
     const requestId = createRequestId('turn');
     const clientUserMessageId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : createRequestId('message');
-    const sent = socketRef.current?.send({
+    const localId = `local_${requestId}`;
+    const attachmentCount = files.length + Number(Boolean(inboxId));
+    const showInChat = deliveryMode !== 'queue';
+    const updateLocalMessage = (change: (item: RemoteMessage) => RemoteMessage | undefined) => {
+      if (!showInChat) return;
+      setMessagesByThread(current => {
+        const items = current[threadId];
+        const index = items?.findIndex(item => item.id === localId) ?? -1;
+        if (!items || index < 0) return current;
+        const original = items[index]!;
+        const next = change(original);
+        if (next === original) return current;
+        return { ...current, [threadId]: [...items.slice(0, index), ...(next ? [next] : []), ...items.slice(index + 1)] };
+      });
+    };
+    if (showInChat) {
+      const asyncAnswer = describeAsyncAnswer(prompt);
+      const localMessage: RemoteMessage = {
+        id: localId,
+        threadId,
+        turnId: expectedTurnId,
+        role: 'user',
+        content: asyncAnswer?.text ?? (prompt || `请查看我上传的 ${attachmentCount} 个文件。`),
+        ...(asyncAnswer ? { asyncAnswerIds: asyncAnswer.ids } : {}),
+        createdAt: Date.now(),
+        timestampSource: 'live',
+        status: 'complete',
+        deliveryState: attachmentCount ? 'uploading' : waitForReceipt ? 'sending' : undefined,
+        detail: { clientUserMessageId },
+      };
+      setMessagesByThread(current => ({
+        ...current, [threadId]: [...messagesForThread(threadId, current[threadId] ?? []), localMessage],
+      }));
+    }
+    let attachments: MessageAttachment[] = [];
+    if (attachmentCount) {
+      try {
+        attachments = await uploadAttachments(files, inboxId);
+      } catch (error) {
+        updateLocalMessage(() => undefined);
+        if (selectedThreadRef.current === threadId) setLastError(error instanceof Error ? error.message : '文件上传失败');
+        return false;
+      }
+    }
+    const sent = socketRef.current === socket && socket.send({
       type: 'turn.start',
       requestId,
       threadId,
@@ -3020,34 +3066,26 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       ...(!antigravity && !desktopOnly ? { summary: 'concise', permissionMode: selectedPermissionMode } : {}),
     });
     if (!sent) {
-      setLastError('当前未连接，消息没有发送');
+      updateLocalMessage(() => undefined);
+      if (selectedThreadRef.current === threadId) setLastError('当前未连接，消息没有发送');
       return false;
     }
-    const receipt = waitForReceipt ? waitForSendReceipt(requestId, () => {
-        if (selectedThreadRef.current === threadId) setLastError('未收到电脑发送回执，草稿已保留。请先查看对话再重发。');
-    }) : undefined;
-    if (deliveryMode !== 'queue') {
-      const asyncAnswer = describeAsyncAnswer(prompt);
-      const optimistic: RemoteMessage = {
-        id: `local_${requestId}`,
-        threadId,
-        turnId: deliveryMode === 'steer' ? turnIdsRef.current[threadId] : undefined,
-        role: 'user',
-        content: asyncAnswer?.text ?? (prompt || `请查看我上传的 ${attachments.length} 个文件。`),
-        ...(asyncAnswer ? { asyncAnswerIds: asyncAnswer.ids } : {}),
-        createdAt: Date.now(),
-        timestampSource: 'live',
-        status: 'complete',
-        ...(attachments.length ? { attachments: optimisticAttachmentsFromUploads(attachments) } : {}),
-        detail: { clientUserMessageId },
-      };
-      setMessagesByThread((current) => ({
-        ...current,
-        [threadId]: [...messagesForThread(threadId, current[threadId] ?? []), optimistic],
+    if (attachments.length) {
+      updateLocalMessage(item => ({
+        ...item, attachments: optimisticAttachmentsFromUploads(attachments), deliveryState: waitForReceipt ? 'sending' : undefined,
       }));
-      if (!waitForReceipt) updateThreadState(threadId, 'running');
     }
-    return receipt ?? true;
+    if (!waitForReceipt) {
+      if (showInChat) updateThreadState(threadId, 'running');
+      return true;
+    }
+    const accepted = await waitForSendReceipt(requestId, () => {
+      if (selectedThreadRef.current === threadId) setLastError('未收到电脑发送回执，草稿已保留。请先查看对话再重发。');
+    });
+    updateLocalMessage(item => item.deliveryState === 'sending'
+      ? { ...item, deliveryState: accepted ? undefined : 'unconfirmed' }
+      : item);
+    return accepted;
   }, [antigravityAttachments, changeModelSettings, desktopOnly, config, models, reportCompactionFailure, selectedEffort, selectedModel, selectedPermissionMode, skills, threads, updateCompactionStatus, updateThreadState, uploadAttachments, waitForSendReceipt]);
 
   const refreshGitDiff = useCallback(() => {

@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import type { ModelOption, SkillOption } from '../types/protocol';
-import { clearSentComposerDraft, onComposerDraftSent, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
+import { beginComposerSend, clearSentComposerDraft, composerDraftSending, onComposerDraftSent, onComposerSendChange, readComposerDraft, saveComposerDraft } from '../lib/composerDraft';
 import { CloseIcon, PlusIcon, SendIcon, StopIcon } from './Icons';
 import type { InboxFile } from '../lib/deviceTools';
 import { AttachmentDraftPreview, isImageFile, type AttachmentDraft } from './AttachmentDraftPreview';
@@ -51,15 +51,16 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
   const { files, inbox: inboxFile } = attachmentDraft;
   const [preview, setPreview] = useState<AttachmentDraft | null>(null);
   const hasAttachments = files.length > 0 || Boolean(inboxFile);
-  const [sending, setSending] = useState(false);
+  const subscribeToSend = useCallback((update: () => void) => onComposerSendChange(draftKey, update), [draftKey]);
+  const readSending = useCallback(() => composerDraftSending(draftKey), [draftKey]);
+  const sending = useSyncExternalStore(subscribeToSend, readSending);
+  const displayedContent = sending ? '' : content;
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [multiline, setMultiline] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const sendingRef = useRef(false);
-
-  useEffect(() => onComposerDraftSent(draftKey, () => setContent('')), [draftKey]);
+  useEffect(() => onComposerDraftSent(draftKey, () => setContent(readComposerDraft(draftKey))), [draftKey]);
   useEffect(() => {
     let active = true;
     const stop = onAttachmentDraftChange(draftKey, setAttachmentDraft);
@@ -93,15 +94,19 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         setMultiline(multiple);
         return;
       }
-      textarea.style.height = '0px';
       const maximum = parseFloat(getComputedStyle(textarea).maxHeight);
-      textarea.style.height = `${Math.min(textarea.scrollHeight, maximum)}px`;
+      if (!multiple) {
+        textarea.style.removeProperty('height');
+      } else {
+        textarea.style.height = '0px';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, maximum)}px`;
+      }
     };
     fit();
     const resize = new ResizeObserver(fit);
     resize.observe(measure);
     return () => resize.disconnect();
-  }, [content, multiline]);
+  }, [displayedContent, multiline]);
 
   const commandOptions = useMemo<CommandOption[]>(() => [
     { value: '/status', title: '/status', description: '查看状态、目录、模型与计时', group: '命令' },
@@ -142,24 +147,25 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!connected || waitingForTurn || modelSwitchPending || !draftReady || sendingRef.current || sending || (!content.trim() && !hasAttachments)) return;
-    sendingRef.current = true;
-    setSending(true);
+    if (!connected || waitingForTurn || modelSwitchPending || !draftReady || (!content.trim() && !hasAttachments)) return;
+    const finish = beginComposerSend(draftKey);
+    if (!finish) return;
     try {
       if (await onSend(content, files, deliveryMode, true, inboxFile?.id)) {
         clearSentComposerDraft(draftKey, content);
-        setContent('');
-        const latest = await readAttachmentDraft(draftKey).catch(() => attachmentDraft);
-        updateAttachments({
-          files: latest.files.filter(file => !files.includes(file)),
-          inbox: latest.inbox?.id === inboxFile?.id ? undefined : latest.inbox,
-        });
+        setContent(current => current === content ? '' : current);
+        if (hasAttachments) {
+          const latest = await readAttachmentDraft(draftKey).catch(() => attachmentDraft);
+          updateAttachments({
+            files: latest.files.filter(file => !files.includes(file)),
+            inbox: latest.inbox?.id === inboxFile?.id ? undefined : latest.inbox,
+          });
+        }
         if (deliveryMode === 'queue') setSelectedDeliveryMode('steer');
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     } finally {
-      sendingRef.current = false;
-      setSending(false);
+      finish();
     }
   }
 
@@ -207,7 +213,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         </div>
       )}
       {draftError && <p className="attachment-draft-status" role="status">{draftError}</p>}
-      {assistantName === 'Codex' && suggestions.length > 0 && (
+      {!sending && assistantName === 'Codex' && suggestions.length > 0 && (
         <div className="command-palette" role="listbox" aria-label="斜杠命令">
           {suggestions.map((option) => (
             <button key={option.value} type="button" onClick={() => chooseCommand(option.value)}>
@@ -217,7 +223,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           ))}
         </div>
       )}
-      {hasAttachments && (
+      {!sending && hasAttachments && (
         <div className="attachment-strip">
           {inboxFile && <div className="attachment-chip">
             <button className="attachment-chip-body" type="button" aria-label={`预览 ${inboxFile.fileName}`}
@@ -241,8 +247,9 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         </div>
       )}
       {preview && <AttachmentDraftPreview draft={preview} onClose={() => setPreview(null)} />}
-      <form className={`composer${multiline ? ' composer-multiline' : ''}${allowAttachments ? '' : ' composer-text-only'}`} onSubmit={(event) => void submit(event)}>
-        <div ref={measureRef} className="composer-measure" aria-hidden="true">{content}{'\u200b'}</div>
+      <form className={`composer${multiline ? ' composer-multiline' : ''}${allowAttachments ? '' : ' composer-text-only'}`}
+        aria-busy={sending} onSubmit={(event) => void submit(event)}>
+        <div ref={measureRef} className="composer-measure" aria-hidden="true">{displayedContent}{'\u200b'}</div>
         <input
           ref={fileInputRef}
           className="file-picker-input"
@@ -258,7 +265,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         {allowAttachments && <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={!connected || sending || !draftReady} aria-label="上传图片或文件" title="可选择多个附件"><PlusIcon /></button>}
         <textarea
           ref={textareaRef}
-          value={content}
+          value={displayedContent}
           onChange={(event) => changeContent(event.target.value)}
           onKeyDown={(event) => {
             if (shouldSubmitComposerShortcut({
@@ -274,7 +281,8 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
           placeholder={placeholder}
           aria-label="消息"
           rows={1}
-          disabled={!connected || sending}
+          readOnly={sending}
+          disabled={!connected}
         />
         {waitingForTurn ? <button
           className="send-button send-mode-stop"
@@ -288,11 +296,12 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
         </button> : <button
           className={`send-button send-mode-${deliveryMode}`}
           type="submit"
+          onMouseDown={event => { if (document.activeElement === textareaRef.current) event.preventDefault(); }}
           disabled={!connected || modelSwitchPending || sending || !draftReady || (!content.trim() && !hasAttachments)}
-          aria-label={sendLabel}
+          aria-label={sending ? '正在发送' : sendLabel}
           title={deliveryMode === 'queue' ? '排队到下一轮' : deliveryMode === 'steer' ? '引导当前执行' : '发送'}
         >
-          <SendIcon />
+          {sending ? <span className="composer-send-indicator" aria-hidden="true" /> : <SendIcon />}
         </button>}
       </form>
     </div>

@@ -262,6 +262,7 @@ export interface RemoteAttachment {
 
 export interface RemoteMessage {
   deliveryAcknowledged?: boolean;
+  deliveryState?: 'uploading' | 'sending' | 'unconfirmed';
   asyncAnswerIds?: string[];
   id: string;
   threadId: string;

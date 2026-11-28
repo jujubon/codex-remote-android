@@ -925,7 +925,12 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
         onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt}
         canSteer={canSteer} models={models} skills={skills} onSend={(...args) => {
           if (args[2] !== 'queue' && !followingRef.current) {
-            scrollToBottom();
+            historyAnchorRef.current = null;
+            scrollIntentRef.current = null;
+            followingRef.current = true;
+            setFrozenEntryEnd(null);
+            setRenderedEntryLimit(DEFAULT_RENDERED_ENTRY_LIMIT);
+            setHasNewContent(false);
             scheduleFollowScroll();
           }
           return onSend(...args);

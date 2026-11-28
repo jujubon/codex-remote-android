@@ -331,6 +331,7 @@
 .role-user .message-label { justify-content: flex-end; }
 .role-user .message-bubble { width: fit-content; margin-inline-start: auto; padding: 10px 13px; border: 0; border-radius: 16px 16px 5px 16px; background: var(--accent-soft); color: #2e2450; }
 .message-label strong { color: var(--muted); font-size: 11px; font-weight: 700; }
+.message-delivery { color: var(--muted); }
 .message-bubble .markdown-content, .message-bubble p { font-size: 15px; line-height: 1.68; }
 .message-row.is-progress .message-bubble { color: var(--muted); }
 .message-row.is-progress .markdown-content, .message-row.is-progress .markdown-content p { font-size: 13px; line-height: 1.6; }
@@ -381,6 +382,14 @@
 .composer .attach-button, .composer .send-button { display: grid; place-items: center; width: var(--composer-control); min-width: var(--composer-control); height: var(--composer-control); padding: 0; border-radius: 14px; }
 .composer .attach-button { grid-area: attach; background: var(--accent-soft); color: var(--accent); }
 .composer .send-button { grid-area: send; }
+.composer[aria-busy='true'] .send-button:not(.send-mode-stop) { opacity: .8; }
+.composer-send-indicator {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgb(255 255 255 / 42%);
+  border-top-color: currentColor;
+  border-radius: 50%;
+}
 .composer .send-mode-stop { background: #faecef; color: #a12f48; }
 .composer .send-mode-stop:not(:disabled):active { background: #f5dce4; }
 .composer .send-mode-stop svg { width: 20px; height: 20px; }
@@ -487,6 +496,11 @@
   from { opacity: .66; transform: translate3d(26px, 0, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
+@keyframes outgoing-message-enter {
+  from { opacity: .56; transform: translateY(6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes composer-send-spin { to { transform: rotate(360deg); } }
 @keyframes activity-dot {
   0%, 64%, 100% { opacity: .55; transform: translateY(0); }
   32% { opacity: 1; transform: translateY(-2px) scale(1.2); }
@@ -511,6 +525,11 @@
 @media (prefers-reduced-motion: no-preference) {
   .thread-screen, .computer-screen, .setup-screen { animation: screen-enter 220ms var(--ease-settle) backwards; }
   .conversation-screen { animation: conversation-enter 260ms var(--ease-settle) backwards; }
+  .message-row[data-sending='true'] .message-bubble {
+    transform-origin: bottom right;
+    animation: outgoing-message-enter 175ms var(--ease-settle) backwards;
+  }
+  .composer-send-indicator { animation: composer-send-spin .72s linear infinite; }
   .home-nav button[aria-current=page]::before { animation: nav-highlight-in 240ms var(--ease-spring) both; }
   .command-palette, .attachment-strip, .activity-copy, .new-content-button, .inbox-body:not([hidden]),
   .computer-reveal:not([hidden]), .computer-disclosure[open] .computer-receive-settings, .cockpit-accounts-body,

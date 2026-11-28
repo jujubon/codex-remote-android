@@ -1,5 +1,26 @@
 const DRAFT_PREFIX = 'codex-mobile.composer-draft.v1.';
 const clearedDrafts = new EventTarget();
+const sendingDrafts = new Set<string>();
+const sendChanges = new EventTarget();
+
+export function composerDraftSending(key: string): boolean {
+  return sendingDrafts.has(key);
+}
+
+export function onComposerSendChange(key: string, update: () => void): () => void {
+  sendChanges.addEventListener(key, update);
+  return () => sendChanges.removeEventListener(key, update);
+}
+
+export function beginComposerSend(key: string): (() => void) | undefined {
+  if (sendingDrafts.has(key)) return;
+  sendingDrafts.add(key);
+  sendChanges.dispatchEvent(new Event(key));
+  return () => {
+    sendingDrafts.delete(key);
+    sendChanges.dispatchEvent(new Event(key));
+  };
+}
 
 export function composerDraftKey(scope: string, threadId: string): string {
   return `${DRAFT_PREFIX}${scope}:${threadId}`;

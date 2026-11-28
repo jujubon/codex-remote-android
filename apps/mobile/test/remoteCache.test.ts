@@ -24,6 +24,21 @@ describe("remote cache", () => {
     expect(cacheScope("https://host", "token-a")).not.toBe(cacheScope("https://host", "token-b"));
   });
 
+  it("restores only potentially delivered messages after closing during a send", () => {
+    const pending = {
+      id: "local_send", threadId: "thread", role: "user" as const, content: "Submitted text",
+      createdAt: 1, status: "complete" as const, deliveryState: "sending" as const,
+      detail: { clientUserMessageId: "client-send" },
+    };
+    const uploading = { ...pending, id: "local_upload", deliveryState: "uploading" as const };
+    const snapshot: RemoteCacheSnapshot = {
+      schema: 4, savedAt: 1, syncCursor: 0, threadIndexVersion: 1, selectedThreadId: "thread",
+      threads: [{ id: "thread", title: "task", preview: "", updatedAt: 2, state: "idle", unread: 0, cwd: "/tmp", modelProvider: "" }],
+      messagesByThread: { thread: [uploading, pending] }, historyByThread: {},
+    };
+    expect(compactCache(snapshot).messagesByThread.thread).toEqual([{ ...pending, deliveryState: "unconfirmed" }]);
+  });
+
   it("filters messages by the target thread id", () => {
     const owned = { id: "owned", threadId: "child", role: "assistant" as const, content: "child", createdAt: 1, status: "complete" as const };
     const foreign = { ...owned, id: "foreign", threadId: "parent" };

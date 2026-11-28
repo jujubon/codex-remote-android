@@ -154,6 +154,7 @@ export function messageBubblePropsEqual(previous: MessageBubbleProps, next: Mess
   return messageEqual && sameAgentTargets(previous.agentTargets, next.agentTargets)
     && previous.assistantName === next.assistantName
     && left.deliveryAcknowledged === right.deliveryAcknowledged
+    && left.deliveryState === right.deliveryState
     && previous.onDiscardLocalMessage === next.onDiscardLocalMessage
     && previous.onOpenAgent === next.onOpenAgent
     && previous.onLoadAttachment === next.onLoadAttachment
@@ -164,6 +165,9 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const isUser = message.role === 'user';
+  const sending = isUser && (message.deliveryState === 'uploading' || message.deliveryState === 'sending');
+  const deliveryLabel = message.deliveryState === 'uploading' ? '上传附件中' : message.deliveryState === 'sending' ? '发送中'
+    : message.deliveryState === 'unconfirmed' ? '送达待确认' : undefined;
   const isTool = message.role === 'tool';
   const normalizedType = message.itemType?.toLowerCase() ?? '';
   const normalizedName = message.toolName?.toLowerCase() ?? '';
@@ -188,7 +192,8 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
   </>;
 
   return (
-    <article className={`message-row role-${message.role} ${isProgress ? 'is-progress' : ''} ${isSubagent ? 'is-subagent' : ''} ${message.status === 'failed' ? 'is-failed' : ''}`}>
+    <article className={`message-row role-${message.role} ${isProgress ? 'is-progress' : ''} ${isSubagent ? 'is-subagent' : ''} ${message.status === 'failed' ? 'is-failed' : ''}`}
+      data-sending={sending || undefined}>
       <div className="message-column">
         {inspectable ? (
           <details
@@ -241,13 +246,14 @@ export const MessageBubble = memo(function MessageBubble({ message, agentTargets
                 <time>{displayTime(message.createdAt, message.timestampSource)}</time>
                 {duration && <span>{duration}</span>}
                 {message.status === 'failed' && <span className="failed-label">失败</span>}
+                {deliveryLabel && <span className="message-delivery" role="status">{deliveryLabel}</span>}
               </span>
             </header>
             <div className={`message-bubble ${message.status === 'streaming' ? 'is-streaming' : ''}`}>
               {body()}
               {message.status === 'streaming' && <span className="typing-caret" />}
             </div>
-            {onDiscardLocalMessage && canDiscardLocalMessage(message) &&
+            {!sending && onDiscardLocalMessage && canDiscardLocalMessage(message) &&
               <button type="button" className="secondary-button message-delete-local"
                 onClick={() => onDiscardLocalMessage(message.threadId, message.id)}>删除本地消息</button>}
           </>
