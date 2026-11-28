@@ -1,9 +1,11 @@
 import type { AccountUsage } from '../types/protocol';
 import type { RemoteConfig } from '../lib/configStore';
-import { formatQuotaTime, usageWindowName, usageWindowsInDisplayOrder } from '../lib/usageDisplay';
+import { formatQuotaTime, usageWindowGroups, usageWindowName } from '../lib/usageDisplay';
 import { GaugeIcon, UpdateIcon } from './Icons';
 import { UsageResetCards } from './UsageResetCards';
 import { CockpitAccountSwitch } from './CockpitAccountSwitch';
+
+const groupLabels: Record<string, string> = { 'Gemini Models': 'Gemini', 'Claude and GPT models': 'Claude / GPT' };
 
 export function AccountUsagePanel({ usage, status, refresh, resetConfig, onReset }: {
   usage: AccountUsage | null; status: string; refresh: () => void;
@@ -21,14 +23,20 @@ export function AccountUsagePanel({ usage, status, refresh, resetConfig, onReset
           disabled={status.startsWith('正在')} onClick={refresh}><UpdateIcon aria-hidden="true" /></button>
       </div>
       {status && <p role="status" className="usage-note">{status}</p>}
-      {!!usage?.windows.length && <ul className="usage-windows">{usageWindowsInDisplayOrder(usage.windows).map((window, index) => {
-        const name = `${window.group} · ${usageWindowName(window.minutes)}`;
-        return <li className="usage-window" key={index}>
-          <div className="usage-heading"><span>{name}</span><strong>{window.remainingPercent}%</strong></div>
-          <progress aria-label={`${name}剩余额度`} aria-valuetext={`剩余 ${window.remainingPercent}%`} value={window.remainingPercent} max={100} />
-          {window.resetsAt && <small>{formatQuotaTime(window.resetsAt)} 重置</small>}
-        </li>;
-      })}</ul>}
+      {!!usage?.windows.length && <div className="usage-groups">{usageWindowGroups(usage.windows).map(group => {
+        const title = Object.hasOwn(groupLabels, group.name) ? groupLabels[group.name] : group.name;
+        return <section className="usage-group" key={group.name} aria-label={title}>
+          <h4>{title}</h4>
+          <ul className="usage-windows">{group.windows.map((window, index) => {
+            const duration = usageWindowName(window.minutes);
+            return <li className="usage-window" key={`${window.minutes}-${index}`}>
+              <div className="usage-heading"><span>{duration}</span><strong>{window.remainingPercent}%</strong></div>
+              <progress aria-label={`${title} ${duration}剩余额度`} aria-valuetext={`剩余 ${window.remainingPercent}%`} value={window.remainingPercent} max={100} />
+              {window.resetsAt && <small>{formatQuotaTime(window.resetsAt)} 重置</small>}
+            </li>;
+          })}</ul>
+        </section>;
+      })}</div>}
       {usage && !usage.windows.length && <p className="usage-note">电脑未提供额度窗口。</p>}
       {usage && <small className="usage-note">更新于 {formatQuotaTime(usage.checkedAt)}</small>}
     </div>

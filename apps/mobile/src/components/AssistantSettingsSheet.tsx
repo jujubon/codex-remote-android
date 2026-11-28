@@ -9,6 +9,7 @@ type SheetDrag = {
   lastY: number;
   lastAt: number;
   height: number;
+  startOffset: number;
   offset: number;
   velocity: number;
   dragging: boolean;
@@ -37,11 +38,15 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
   function startDrag(event: PointerEvent<HTMLDivElement>) {
     const dialog = dialogRef.current;
     if (!dialog?.open || !event.isPrimary || event.button !== 0) return;
+    const transform = settling.current?.playState === 'running' ? getComputedStyle(dialog).transform : 'none';
+    const offset = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
+    if (offset) dialog.style.transform = slide(offset);
     settling.current?.cancel();
+    settling.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = {
       id: event.pointerId, startX: event.clientX, startY: event.clientY, lastY: event.clientY,
-      lastAt: event.timeStamp, height: dialog.offsetHeight, offset: 0, velocity: 0, dragging: false,
+      lastAt: event.timeStamp, height: dialog.offsetHeight, startOffset: offset, offset, velocity: 0, dragging: false,
     };
   }
 
@@ -52,14 +57,15 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
     if (!gesture.dragging) {
       const horizontal = Math.abs(event.clientX - gesture.startX);
       if (Math.max(Math.abs(distance), horizontal) < 5) return;
-      if (horizontal >= Math.abs(distance)) { drag.current = null; return; }
+      if (horizontal >= Math.abs(distance)) { endDrag(event, true); return; }
       gesture.dragging = true;
     }
     const elapsed = event.timeStamp - gesture.lastAt;
     if (elapsed > 0) gesture.velocity = elapsed > 90 ? 0 : (event.clientY - gesture.lastY) / elapsed;
     gesture.lastAt = event.timeStamp;
     gesture.lastY = event.clientY;
-    gesture.offset = distance < 0 ? Math.max(-14, distance * .18) : Math.min(distance, gesture.height);
+    const next = gesture.startOffset + distance;
+    gesture.offset = next < 0 ? Math.max(-14, next * .18) : Math.min(next, gesture.height);
     if (frame.current == null) frame.current = requestAnimationFrame(() => {
       frame.current = null;
       if (drag.current === gesture && dialogRef.current?.open) dialogRef.current.style.transform = slide(gesture.offset);
@@ -74,11 +80,11 @@ export function AssistantSettingsSheet({ dialogRef, titleId, title, closeLabel, 
     if (frame.current != null) cancelAnimationFrame(frame.current);
     frame.current = null;
     dialog.style.removeProperty('transform');
-    if (!gesture.dragging || !dialog.open) return;
+    if ((!gesture.dragging && gesture.offset === 0) || !dialog.open) return;
 
     const threshold = Math.max(48, Math.min(112, gesture.height * .32));
     const flick = gesture.offset >= 28 && event.timeStamp - gesture.lastAt < 80 && gesture.velocity > .58;
-    const dismiss = !cancelled && (gesture.offset >= threshold || flick);
+    const dismiss = gesture.dragging && !cancelled && (gesture.offset >= threshold || flick);
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && typeof dialog.animate === 'function') {
       settling.current = dialog.animate([
         { transform: slide(gesture.offset) }, { transform: slide(dismiss ? gesture.height + 12 : 0) },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { homeQuotaPercent, usageWindowsInDisplayOrder } from '../src/lib/usageDisplay';
+import { homeQuotaPercent, usageWindowGroups } from '../src/lib/usageDisplay';
 import type { AccountUsage } from '../src/types/protocol';
 
 function usage(...windows: [group: string, minutes: number, remainingPercent: number][]): AccountUsage {
@@ -24,6 +24,7 @@ describe('home quota ring', () => {
 it('shows five hours above seven days in each Antigravity group without changing the source data', () => {
   const { windows } = usage(['Gemini Models', 10080, 22], ['Claude and GPT models', 10080, 13],
     ['Claude and GPT models', 300, 80], ['Gemini Models', 300, 0]);
-  expect(usageWindowsInDisplayOrder(windows).map(window => window.remainingPercent)).toEqual([0, 22, 80, 13]);
+  expect(usageWindowGroups(windows).map(group => [group.name, group.windows.map(window => window.remainingPercent)]))
+    .toEqual([['Gemini Models', [0, 22]], ['Claude and GPT models', [80, 13]]]);
   expect(windows.map(window => window.remainingPercent)).toEqual([22, 13, 80, 0]);
 });

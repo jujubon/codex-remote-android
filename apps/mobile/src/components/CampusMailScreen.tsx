@@ -145,7 +145,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
         setDetail(mail);
         setDetailError('');
       }
-    }).catch(() => { if (active) { setDetail(undefined); setDetailError('暂时无法读取这封邮件，请稍后重试。'); } });
+    }).catch(() => { if (active) setDetailError('暂时无法读取这封邮件，请稍后重试。'); });
     return () => { active = false; };
   }, [connected, endpoint, revision, selected, selectMailbox]);
 
@@ -308,6 +308,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
             <time dateTime={new Date(detail.receivedAt).toISOString()}>{dateLabel(detail.receivedAt)}</time>
           </div>
         </header>
+        {detailError && <p className="computer-feedback" role="status">暂时无法刷新，正在显示上次读取的邮件。</p>}
         {detail.summary ? <section className="mail-summary">
           <div className="mail-summary-heading"><h4><ClipboardIcon />AI 摘要</h4>
             {detail.importance === 'important' && <span className="mail-classification">重要</span>}</div>

@@ -10,7 +10,7 @@ export function homeQuotaPercent(usage: AccountUsage | null, assistant: Assistan
   return window ? Math.round(Math.min(100, Math.max(0, window.remainingPercent))) : undefined;
 }
 
-export function usageWindowsInDisplayOrder(windows: AccountUsage['windows']) {
+export function usageWindowGroups(windows: AccountUsage['windows']) {
   const groups = new Map<string, AccountUsage['windows']>();
   for (const window of windows) {
     const group = groups.get(window.group) ?? [];
@@ -18,7 +18,7 @@ export function usageWindowsInDisplayOrder(windows: AccountUsage['windows']) {
     groups.set(window.group, group);
   }
   const rank = (minutes: number | null) => minutes === 300 ? 0 : minutes === 10080 ? 1 : 2;
-  return [...groups.values()].flatMap(group => group.sort((a, b) => rank(a.minutes) - rank(b.minutes)));
+  return [...groups].map(([name, group]) => ({ name, windows: group.sort((a, b) => rank(a.minutes) - rank(b.minutes)) }));
 }
 
 export function formatQuotaTime(timestamp: number) {

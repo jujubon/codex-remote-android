@@ -58,6 +58,7 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
   const [selectedDeliveryMode, setSelectedDeliveryMode] = useState<DeliveryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
+  const fitFrame = useRef<number | null>(null);
   const [multiline, setMultiline] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => onComposerDraftSent(draftKey, () => setContent(readComposerDraft(draftKey))), [draftKey]);
@@ -84,29 +85,37 @@ export function Composer({ draftKey, connected, running, onSend, onInterrupt, ca
     setSelectedDeliveryMode(running ? 'steer' : 'auto');
   }, [running]);
 
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    const measure = measureRef.current;
-    if (!textarea || !measure) return;
-    const fit = () => {
+  const scheduleFit = useCallback(() => {
+    if (fitFrame.current !== null) return;
+    fitFrame.current = requestAnimationFrame(() => {
+      fitFrame.current = null;
+      const textarea = textareaRef.current;
+      const measure = measureRef.current;
+      if (!textarea || !measure) return;
       const multiple = measure.scrollHeight > parseFloat(getComputedStyle(measure).lineHeight);
-      if (multiple !== multiline) {
+      if (multiple !== textarea.form?.classList.contains('composer-multiline')) {
         setMultiline(multiple);
         return;
       }
-      const maximum = parseFloat(getComputedStyle(textarea).maxHeight);
-      if (!multiple) {
-        textarea.style.removeProperty('height');
-      } else {
-        textarea.style.height = '0px';
-        textarea.style.height = `${Math.min(textarea.scrollHeight, maximum)}px`;
-      }
-    };
-    fit();
-    const resize = new ResizeObserver(fit);
+      textarea.style.removeProperty('height');
+      // The max-height in CSS continues to apply when the keyboard changes the viewport.
+      if (multiple) textarea.style.height = `${textarea.scrollHeight}px`;
+    });
+  }, []);
+
+  useLayoutEffect(scheduleFit, [displayedContent, multiline, scheduleFit]);
+
+  useLayoutEffect(() => {
+    const measure = measureRef.current;
+    if (!measure) return;
+    const resize = new ResizeObserver(scheduleFit);
     resize.observe(measure);
-    return () => resize.disconnect();
-  }, [displayedContent, multiline]);
+    return () => {
+      resize.disconnect();
+      if (fitFrame.current !== null) cancelAnimationFrame(fitFrame.current);
+      fitFrame.current = null;
+    };
+  }, [scheduleFit]);
 
   const commandOptions = useMemo<CommandOption[]>(() => [
     { value: '/status', title: '/status', description: '查看状态、目录、模型与计时', group: '命令' },

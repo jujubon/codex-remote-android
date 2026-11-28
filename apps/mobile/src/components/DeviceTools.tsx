@@ -9,7 +9,7 @@ import { deviceRequest, QUICK_SHARE_KEY, readPhoneClipboard, shareFileToComputer
 import { ClipboardIcon, CloseIcon, MonitorIcon, PowerIcon, ShieldIcon, UploadIcon } from './Icons';
 import { ComputerCardHeading } from './ComputerCardHeading';
 
-type DeviceTool = 'clipboard' | 'screen' | 'share';
+type DeviceTool = 'clipboard' | 'screen' | 'share' | 'display' | 'mute';
 
 export function DeviceTools({ config, status, updateStatus, runningThreadId, connected }: {
   config: RemoteConfig;
@@ -38,7 +38,7 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
 
   useEffect(() => { setMuted(undefined); setDisplayOff(undefined); }, [config, connected]);
   useEffect(() => {
-    if (!computerControls || !connected || activeTool === 'screen') return;
+    if (!computerControls || !connected || activeTool === 'screen' || activeTool === 'display' || activeTool === 'mute') return;
     let current = true;
     let timer: ReturnType<typeof setTimeout>;
     async function refreshControls() {
@@ -85,7 +85,8 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
       return 'Windows 已接收锁屏请求。';
     })}><ShieldIcon aria-hidden="true" />锁定电脑</button>;
   const muteSwitch = <ComputerControlSwitch label="电脑静音" checked={muted} disabled={controlsDisabled}
-    onToggle={() => void run('screen', async () => {
+    pending={activeTool === 'mute'} error={feedback?.tool === 'mute' ? feedback.text : undefined}
+    onToggle={() => void run('mute', async () => {
       const audio = await deviceRequest<{ muted: boolean }>(config, 'audio/mute', { muted: !muted });
       setMuted(audio.muted);
     })} />;
@@ -126,7 +127,8 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
         {displayControl ? <div className="computer-control-grid">
           <div className="computer-control-row" role="group" aria-label="屏幕与声音">
             <ComputerControlSwitch label="熄屏挂机" checked={displayOff} disabled={controlsDisabled}
-              onToggle={() => void run('screen', async () => {
+              pending={activeTool === 'display'} error={feedback?.tool === 'display' ? feedback.text : undefined}
+              onToggle={() => void run('display', async () => {
                 const display = await deviceRequest<{ displayOff: boolean }>(config, 'display/power', { displayOff: !displayOff });
                 setDisplayOff(display.displayOff);
               })} />
@@ -222,16 +224,23 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
   </div>;
 }
 
-function ComputerControlSwitch({ label, checked, disabled, onToggle }: {
+function ComputerControlSwitch({ label, checked, disabled, pending, error, onToggle }: {
   label: string;
   checked?: boolean;
   disabled: boolean;
+  pending: boolean;
+  error?: string;
   onToggle: () => void;
 }) {
-  return <button type="button" className="computer-control-switch" role="switch"
-    aria-checked={checked === true} disabled={disabled || checked === undefined} onClick={onToggle}>
-    <span>{label}</span><span className="computer-control-track" aria-hidden="true" />
-  </button>;
+  const status = pending ? '等待电脑回执' : checked === undefined ? '状态未确认' : checked ? '已开启' : '已关闭';
+  return <div className="computer-control-item">
+    <button type="button" className="computer-control-switch" role="switch" aria-label={label}
+      aria-checked={checked === true} aria-busy={pending} disabled={disabled || checked === undefined} onClick={onToggle}>
+      <span className="computer-control-copy"><strong>{label}</strong><small>{status}</small></span>
+      <span className="computer-control-track" aria-hidden="true" />
+    </button>
+    {error && <small className="computer-control-error" role="alert">{error}</small>}
+  </div>;
 }
 
 export function DevicePowerDialog({ config, phase, threadId, onClose }: {
