@@ -1,4 +1,4 @@
-import type { AccountUsage, ModelOption, RemoteMessage, RemoteThread } from '../types/protocol';
+import type { ModelOption, RemoteMessage, RemoteThread } from '../types/protocol';
 import { asyncQuestionDetail } from './asyncQuestions';
 
 export interface CachedHistoryState {
@@ -18,7 +18,6 @@ export interface RemoteCacheSnapshot {
   selectedThreadId: string | null;
   threads: RemoteThread[];
   models?: ModelOption[];
-  usage?: AccountUsage | null;
   messagesByThread: Record<string, RemoteMessage[]>;
   historyByThread: Record<string, CachedHistoryState>;
 }

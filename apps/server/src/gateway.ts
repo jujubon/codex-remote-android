@@ -103,11 +103,25 @@ const THREAD_SOURCE_KINDS = [
 
 export class MobileGateway {
   private pendingUsage?: Promise<AccountUsage>;
+  private accountSwitching = false;
+  private verifyUsageAccount?: () => Promise<boolean>;
 
   readAccountUsage(): Promise<AccountUsage> {
-    return this.pendingUsage ??= this.bridge.request("account/rateLimits/read", {})
-      .then(accountUsage)
-      .finally(() => { this.pendingUsage = undefined; });
+    if (this.accountSwitching) return Promise.reject(new GatewayRequestError("account_switching", "正在切换 Codex 账号，稍后会自动读取新额度。"));
+    if (this.pendingUsage) return this.pendingUsage;
+    const verify = this.verifyUsageAccount;
+    const request = Promise.resolve().then(async () => {
+      if (verify && !await verify()) {
+        throw new GatewayRequestError("account_unverified", "尚未确认新账号，额度暂不可用。请重新打开 Codex 桌面后刷新。");
+      }
+      if (this.pendingUsage !== request) throw new GatewayRequestError("account_switching", "当前账号已变化，请刷新额度。");
+      this.verifyUsageAccount = undefined;
+      const raw = await this.bridge.request("account/rateLimits/read", {});
+      if (this.pendingUsage !== request) throw new GatewayRequestError("account_switching", "当前账号已变化，请刷新额度。");
+      return accountUsage(raw);
+    }).finally(() => { if (this.pendingUsage === request) this.pendingUsage = undefined; });
+    this.pendingUsage = request;
+    return request;
   }
 
   async deleteAntigravityThread(threadId: string): Promise<void> {
@@ -1234,7 +1248,23 @@ export class MobileGateway {
   pauseForAccountSwitch(): boolean {
     if (this.nativeDesktopTurns.size || this.approvals.size ||
       [...this.desktopThreads.values()].some(conversationIsActive)) return false;
-    return this.pauseForHostUpdate();
+    if (!this.pauseForHostUpdate()) return false;
+    this.accountSwitching = true;
+    this.pendingUsage = undefined;
+    this.announceAccountSwitch(true);
+    return true;
+  }
+
+  resumeAfterAccountSwitch(verifyUsageAccount?: () => Promise<boolean>): void {
+    this.accountSwitching = false;
+    this.verifyUsageAccount = verifyUsageAccount;
+    this.announceAccountSwitch(false);
+    this.resumeAfterHostUpdate();
+  }
+
+  private announceAccountSwitch(switching: boolean) {
+    const payload = JSON.stringify({ type: "event", method: "codex/accountSwitch", params: { switching } } satisfies ServerMessage);
+    for (const socket of this.wss.clients) this.sendPayload(socket, payload);
   }
 
   resumeAfterHostUpdate(): void {

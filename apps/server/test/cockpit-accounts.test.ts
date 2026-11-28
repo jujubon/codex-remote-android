@@ -16,6 +16,7 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
   let activeEmail: string;
   let reloadEmail: string;
   let sentSwitches: string[];
+  let quotaRequests: { accountId: string; refresh: boolean }[];
   let receiptId: string;
   let accounts: typeof source[];
   let acquireIdle: ReturnType<typeof vi.fn<() => boolean>>;
@@ -43,18 +44,26 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     activeEmail = source.email;
     reloadEmail = target.email;
     sentSwitches = [];
+    quotaRequests = [];
     receiptId = target.id;
     accounts = [source, target];
     server.on("connection", socket => socket.on("message", message => {
       const request = JSON.parse(message.toString());
       const { authToken, requestId, command, version } = request.payload;
+      const data = command.operation === "list" ? accounts
+        : command.operation === "quota" ? { platform: "codex", accountId: command.accountId, quota: {
+          status: command.accountId === target.id && !command.refresh ? "stale" : "available", updatedAt: 1780000000,
+          data: { hourly: { remainingPercent: command.accountId === source.id ? 0 : command.refresh ? 62 : 74, windowMinutes: 300, resetAt: 1780000200 },
+            weekly: { remainingPercent: command.accountId === source.id ? 41 : null, windowMinutes: 10080 }, raw: "private-fixture" },
+        } }
+        : { platform: "codex", accountId: receiptId, effect: "credentials_written", warnings: [] };
       const reply = { type: "response.automation", payload:
         authToken === token && request.type === "request.automation" && version === 1 && command.platform === "codex"
-          ? { version, requestId, status: "ok", data: command.operation === "list" ? accounts
-            : { platform: "codex", accountId: receiptId, effect: "credentials_written", warnings: [] } }
+          ? { version, requestId, status: "ok", data }
           : { version, requestId, status: "error", code: "unauthorized", message: "Fixture rejected the request" },
       };
       if (reply.payload.status === "ok" && command.operation === "switch") sentSwitches.push(command.accountId);
+      if (reply.payload.status === "ok" && command.operation === "quota") quotaRequests.push({ accountId: command.accountId, refresh: command.refresh });
       socket.send(JSON.stringify(reply));
     }));
     acquireIdle = vi.fn(() => true);
@@ -92,6 +101,18 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     const trying = cockpit.start(key);
     await expect(cockpit.start(key)).rejects.toThrow("已有账号切换正在处理");
     await expect(trying).rejects.toThrow("电脑仍在处理任务");
+    expect(sentSwitches).toEqual([]);
+    expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("compares saved quotas by account and refreshes only the chosen account without switching", async () => {
+    const before = (await cockpit.list()).accounts;
+    expect(before[0]?.quota).toMatchObject({ status: "available", checkedAt: 1780000000000,
+      windows: [{ kind: "hourly", remainingPercent: 0, resetsAt: 1780000200000 }, { kind: "weekly", remainingPercent: 41 }] });
+    expect(before[1]?.quota).toMatchObject({ status: "stale", windows: [{ kind: "hourly", remainingPercent: 74 }] });
+    expect(JSON.stringify(before)).not.toContain("private-fixture");
+    await expect(cockpit.refreshQuota(before[1]?.key)).resolves.toMatchObject({ status: "available", windows: [{ remainingPercent: 62 }] });
+    expect(quotaRequests.filter(request => request.refresh)).toEqual([{ accountId: target.id, refresh: true }]);
     expect(sentSwitches).toEqual([]);
     expect(restart).not.toHaveBeenCalled();
   });

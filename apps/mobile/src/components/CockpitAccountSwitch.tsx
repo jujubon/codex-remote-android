@@ -1,10 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
+import { formatQuotaTime, usageWindowName } from '../lib/usageDisplay';
 import { ChevronDownIcon, UpdateIcon } from './Icons';
 
-type Account = { key: string; label: string; plan?: string; current: boolean };
+type Quota = {
+  status: 'available' | 'stale' | 'failed' | 'unavailable';
+  checkedAt: number | null;
+  windows: { kind: 'hourly' | 'weekly'; remainingPercent: number; minutes: number | null; resetsAt: number | null }[];
+};
+type Account = { key: string; label: string; plan?: string; current: boolean; quota?: Quota };
 type Operation = { id: string; stage: 'switching' | 'verified' | 'unverified' | 'failed'; message?: string };
+
+function AccountQuota({ quota, error, loading }: { quota?: Quota; error?: string; loading: boolean }) {
+  const checked = quota?.checkedAt ? formatQuotaTime(quota.checkedAt) : '';
+  return <>
+    {!!quota?.windows.length && <div className="cockpit-quota-grid">{quota.windows.map(window => {
+      const name = usageWindowName(window.minutes, window.kind === 'weekly' ? '周额度' : '短期额度');
+      return <div className="cockpit-quota-window" key={window.kind}>
+        <div><span>{name}</span><strong>{window.remainingPercent}%</strong></div>
+        <progress max={100} value={window.remainingPercent} aria-label={`${name}剩余额度`} />
+        {window.resetsAt && <small>{formatQuotaTime(window.resetsAt)} 重置</small>}
+      </div>;
+    })}</div>}
+    <p className="usage-note" role="status">
+      {loading ? '正在刷新额度…' : error || (quota?.status === 'stale' ? `上次刷新失败${checked ? ` · ${checked} 的额度` : ''}` :
+        quota?.windows.length ? (checked ? `更新于 ${checked}` : 'Cockpit Tools 缓存') :
+          quota?.status === 'failed' ? '上次读取额度失败' : '暂无可用额度记录')}
+    </p>
+  </>;
+}
 
 export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVerified }: { config: RemoteConfig; onVerified: () => void }) {
   const config = useMemo(() => ({ serverUrl, pairingToken }), [serverUrl, pairingToken]);
@@ -14,6 +39,8 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
   const [job, setJob] = useState<Operation>();
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
+  const [quotaReading, setQuotaReading] = useState<string>();
+  const [quotaError, setQuotaError] = useState<{ key: string; message: string }>();
   const latestOnVerified = useRef(onVerified);
   latestOnVerified.current = onVerified;
   const switching = job?.stage === 'switching';
@@ -21,6 +48,7 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
   const refresh = useCallback(async () => {
     setBusy(true);
     setError('');
+    setQuotaError(undefined);
     try {
       const list = await deviceRequest<{ accounts: Account[]; operation?: Operation }>(config, 'cockpit/accounts');
       setAccounts(list.accounts);
@@ -47,6 +75,19 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
       setSelected(undefined);
     } catch (failure) { setAccountError(failure); }
     finally { setBusy(false); }
+  }
+
+  async function refreshAccountQuota(account: Account) {
+    setQuotaReading(account.key);
+    setQuotaError(undefined);
+    try {
+      const quota = await deviceRequest<Quota>(config, 'cockpit/quota', { key: account.key });
+      setAccounts(current => current?.map(row => row.key === account.key ? { ...row, quota } : row));
+      if (account.current) latestOnVerified.current();
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : '暂时无法刷新额度。';
+      setQuotaError({ key: account.key, message: account.quota?.windows.length ? `${message} 已保留上次记录。` : message });
+    } finally { setQuotaReading(undefined); }
   }
 
   useEffect(() => {
@@ -82,12 +123,13 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
     : job?.stage === 'unverified' ? 'Cockpit 已应用切换。当前账号暂未验证，请重新打开 Codex Desktop 并核对。'
     : job?.message;
 
+  const controlsDisabled = busy || switching || Boolean(quotaReading);
   return <section className="cockpit-accounts" aria-busy={busy || switching}>
     <div className="usage-heading">
       <div className="cockpit-heading"><h3>Codex 账号</h3><small>Cockpit Tools</small></div>
       <div className="cockpit-actions">
         {expanded && !selected && <button className="nav-icon-button usage-icon-button" type="button" aria-label="刷新账号列表"
-          disabled={busy || switching} onClick={() => void refresh()}><UpdateIcon aria-hidden="true" /></button>}
+          disabled={controlsDisabled} onClick={() => void refresh()}><UpdateIcon aria-hidden="true" /></button>}
         <button className="nav-icon-button usage-icon-button cockpit-toggle" type="button" aria-expanded={expanded}
           aria-label={expanded ? '收起 Codex 账号' : '展开 Codex 账号'} onClick={() => setExpanded(value => !value)}>
           <ChevronDownIcon aria-hidden="true" />
@@ -104,12 +146,19 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
         </div>
       </div> : <>
         {accounts?.length ? <ul className="cockpit-account-list">{accounts.map(account => <li key={account.key}>
-          <span><strong>{account.label}</strong>{account.plan && <small>{account.plan.toUpperCase()}</small>}</span>
-          {account.current ? <small className="computer-status-pill" data-tone="success">当前</small>
-            : <button className="secondary-button" type="button" disabled={busy || switching} onClick={() => {
-              setError('');
-              setSelected(account);
-            }}>选用</button>}
+          <div className="cockpit-account-heading">
+            <div className="cockpit-account-identity"><strong>{account.label}</strong>{account.plan && <small>{account.plan.toUpperCase()}</small>}</div>
+            <div className="cockpit-actions">
+              <button className="nav-icon-button usage-icon-button" type="button" aria-label={`刷新 ${account.label} 的额度`}
+                disabled={controlsDisabled} onClick={() => void refreshAccountQuota(account)}><UpdateIcon aria-hidden="true" /></button>
+              {account.current ? <small className="computer-status-pill" data-tone="success">当前</small>
+                : <button className="secondary-button" type="button" disabled={controlsDisabled} onClick={() => {
+                  setError('');
+                  setSelected(account);
+                }}>选用</button>}
+            </div>
+          </div>
+          <AccountQuota quota={account.quota} error={quotaError?.key === account.key ? quotaError.message : undefined} loading={quotaReading === account.key} />
         </li>)}</ul> : !error && <p className="usage-note" role="status">{busy ? '正在读取账号…' : 'Cockpit Tools 中没有已保存的 Codex 账号。'}</p>}
       </>}
     </div>}

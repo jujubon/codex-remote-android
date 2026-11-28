@@ -175,7 +175,7 @@ describe('Android system-bar safe areas', () => {
     expect(declarations('.assistant-sheet-body')).toMatch(/var\(--app-safe-bottom\)/);
     expect(declarations('.agent-strip')).toMatch(/var\(--app-safe-right\)/);
     expect(declarations('.prompt-queue-panel')).toMatch(/var\(--app-safe-left\)/);
-    expect(declarations('.git-diff-panel')).toMatch(/var\(--app-safe-right\)/);
+    expect(declarations('.assistant-sheet-body')).toMatch(/var\(--app-safe-right\)/);
     expect(declarations('.activity-status-slot')).toMatch(/var\(--app-safe-left\)/);
     expect(declarations('.activity-status-slot')).toMatch(/var\(--app-safe-right\)/);
     expect(declarations('.compaction-status')).toMatch(/var\(--app-safe-left\)/);

@@ -55,7 +55,7 @@ describe('Git diff large-list scrolling affordance', () => {
   it('defines an independent vertical scroller and explicit disclosure label', () => {
     const source = readFileSync(new URL('../src/components/GitDiffPanel.tsx', import.meta.url), 'utf8');
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
-    expect(source).toContain('git-diff-toggle-label');
+    expect(source).toContain('Git 变更，');
     expect(source).toContain('Git 变更文件，可上下滚动');
     expect(styles).toMatch(/\.git-diff-scroll\s*\{[^}]*max-height:[^}]*overflow-y:\s*scroll/s);
     expect(styles).toMatch(/\.git-diff-scroll::-webkit-scrollbar\s*\{[^}]*width:/s);

@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useDeviceStatus } from '../hooks/useDeviceStatus';
 import { openAntigravityPortal } from '../lib/antigravityPortal';
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest, type CodexDesktopState } from '../lib/deviceTools';
 import type { Assistant } from '../types/protocol';
-import { CloseIcon, MonitorIcon } from './Icons';
+import { AssistantSettingsSheet } from './AssistantSettingsSheet';
+import { MonitorIcon, PowerIcon } from './Icons';
 
 export function AssistantDesktopAction({ assistant, config, connectionUrl, connected }: {
   assistant: Assistant; config: RemoteConfig; connectionUrl?: string; connected: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const statusId = useId();
   const [request, setRequest] = useState<'open' | 'close'>();
   const [pending, setPending] = useState<'open' | 'close'>();
   const [confirmClose, setConfirmClose] = useState(false);
@@ -26,12 +29,12 @@ export function AssistantDesktopAction({ assistant, config, connectionUrl, conne
   const motion = request ?? pending ?? (connected && codex && status?.codexDesktop === 'starting' ? 'open' : undefined);
   const title = codex ? 'Codex 桌面' : 'Antigravity 桌面';
   const desktopState = !connected ? 'offline' : motion ? 'pending' : opened ? 'open' : available && windowOpen === false ? 'closed' : 'offline';
-  const statusText = !connected ? '配套服务未连接。'
-    : !available ? '电脑上未找到桌面应用。'
+  const statusText = !connected ? '配套服务未连接'
+    : !available ? '电脑上未找到桌面应用'
     : motion === 'close' ? '正在关闭桌面…'
     : motion === 'open' ? '正在启动桌面…'
-    : opened ? '桌面已打开。'
-    : windowOpen === false ? '桌面未打开。' : '正在确认桌面状态…';
+    : opened ? '桌面已打开'
+    : windowOpen === false ? '桌面未打开' : '正在确认桌面状态…';
 
   useEffect(() => {
     if (!pending) return;
@@ -91,7 +94,7 @@ export function AssistantDesktopAction({ assistant, config, connectionUrl, conne
   }
 
   return <>
-    <button className="manage-button assistant-desktop-link" type="button" aria-describedby="assistant-desktop-state"
+    <button className="manage-button assistant-desktop-link" type="button" aria-describedby={statusId}
       aria-haspopup="dialog"
       onClick={() => {
         setConfirmClose(false);
@@ -99,31 +102,30 @@ export function AssistantDesktopAction({ assistant, config, connectionUrl, conne
       }}>
       <MonitorIcon aria-hidden="true" /><span>启动</span><i data-state={desktopState} aria-hidden="true" />
     </button>
-    <span id="assistant-desktop-state" hidden>{statusText}</span>
-    <dialog className="session-dialog" ref={dialog} aria-labelledby="assistant-desktop-title"
-      onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
-      <div className="session-sheet assistant-desktop-sheet">
-        <header className="sheet-title-row">
-          <h2 id="assistant-desktop-title">{title}</h2>
-          <button type="button" className="nav-icon-button" aria-label="关闭桌面操作" onClick={() => dialog.current?.close()}><CloseIcon /></button>
-        </header>
-        <p className="computer-feedback" data-tone={desktopState === 'open' ? 'success' : undefined} role="status">{statusText}</p>
+    <span id={statusId} hidden>{statusText}</span>
+    <AssistantSettingsSheet dialogRef={dialog} titleId={titleId} title={title} closeLabel="关闭桌面操作" onClosed={() => setConfirmClose(false)}>
+      <div className="assistant-desktop-sheet">
+        <div className="desktop-status-card" data-state={desktopState} role="status">
+          <span className="desktop-status-icon"><MonitorIcon aria-hidden="true" /></span>
+          <strong>{statusText}</strong>
+          <span className="desktop-status-dot" aria-hidden="true" />
+        </div>
         {error && <p className="computer-feedback" data-tone="error" role="alert">{error}</p>}
         {confirmClose && opened ? <>
-          <p className="assistant-close-warning">关闭窗口可能中断桌面正在运行的任务。</p>
-          <div className="device-actions">
+          <div className="assistant-close-warning"><strong>关闭 {title}？</strong><p>正在桌面运行的任务可能会中断。</p></div>
+          <div className="desktop-sheet-actions">
             <button className="secondary-button" type="button" onClick={() => setConfirmClose(false)}>取消</button>
-            <button className="secondary-button assistant-desktop-close" type="button" onClick={() => void closeDesktop()}>确认关闭</button>
+            <button className="primary-button assistant-desktop-close" type="button" onClick={() => void closeDesktop()}>确认关闭</button>
           </div>
-        </> : <div className="device-actions">
+        </> : <div className="desktop-sheet-actions">
           {available && !opened && <button className="primary-button" type="button"
-            disabled={Boolean(motion)} onClick={() => void start()}>启动</button>}
+            disabled={Boolean(motion)} onClick={() => void start()}><PowerIcon aria-hidden="true" />启动</button>}
           {!codex && <button className={opened ? 'primary-button' : 'secondary-button'} type="button"
             disabled={motion === 'close'} onClick={() => void openPortal()}>进入桌面对话</button>}
           {opened && status?.desktopCloseSupported && <button className="secondary-button assistant-desktop-close" type="button"
-            disabled={Boolean(motion)} onClick={() => setConfirmClose(true)}>关闭桌面</button>}
+            disabled={Boolean(motion)} onClick={() => setConfirmClose(true)}><PowerIcon aria-hidden="true" />关闭桌面</button>}
         </div>}
       </div>
-    </dialog>
+    </AssistantSettingsSheet>
   </>;
 }

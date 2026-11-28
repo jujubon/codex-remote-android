@@ -2,11 +2,19 @@
 
 每次更新用户可安装的版本，都同步在维护者的 GitHub 仓库发布 GitHub Release。
 
+对外版本采用 `主版本.次版本.修订号`。不兼容变更升主版本，向后兼容的新功能升次版本，修复和样式调整升修订号。Android `versionCode` 是系统用于判断升级顺序的独立整数，每次发布递增。App 通过 GitHub Release 检查版本并下载签名 APK，安装由 Android 系统确认。Windows 配套服务下载同版 ZIP，通过已有更新程序替换。
+
 1. 同步 Android `versionName`、Windows 包名和 Host 健康接口的版本。Android `versionCode` 必须高于上一版。
 2. 运行类型检查和测试，构建 Android APK 与 Windows ZIP。确认 APK 签名兼容覆盖安装，检查两个包的内容和 SHA-256。
 3. 提交对应源码并推送到维护者仓库。基于该提交创建 `v<版本号>` 标签。
 4. 用该标签发布 GitHub Release，附上 APK、ZIP 和 SHA-256，说明变更、升级方式和已知限制。发布后检查 Release 页面和两个附件。
 5. 在发布说明中加上 `<!-- codex-remote:min-host=0.9.23 -->` 格式的兼容版本标记，把示例版本换成新版 App 使用全部功能所需的最低 Windows 版本。
+
+## 1.1.0
+
+- Codex 账号列表展示每个账号的剩余额度与重置时间，可以单独刷新，无需先切号。需要 Windows 配套服务 1.1.0 和启用了本地服务的 Cockpit Tools 1.5.3 或更新版本。
+- Codex 切号时立即清除旧额度，等当前账号核验后重新读取。
+- 对话设置的 Git 变更和两个助手的桌面启动弹窗采用新的卡片布局。
 
 ## 1.0.10
 

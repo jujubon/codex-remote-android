@@ -1279,6 +1279,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const [skills, setSkills] = useState<SkillOption[]>([]);
   const [usage, setUsage] = useState<AccountUsage | null>(null);
   const [usageStatus, setUsageStatus] = useState('');
+  const usageSwitching = useRef(false);
   const usageRequest = useRef('');
   const usageTimers = useRef<{ fallback?: number; deadline?: number }>({});
   const cancelUsageRequest = useCallback(() => {
@@ -1290,7 +1291,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   const [modelPending, setModelPending] = useState(false);
   const modelRequest = useRef<{ id: string; threadId: string; model?: string; effort?: string } | null>(null);
   const refreshUsage = useCallback((force = false) => {
-    if (!config || (usageRequest.current && force !== true)) return;
+    if (!config || usageSwitching.current || (usageRequest.current && force !== true)) return;
     if (usageRequest.current) cancelUsageRequest();
     const requestId = createRequestId('usage');
     usageRequest.current = requestId;
@@ -1307,10 +1308,10 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         cancelUsageRequest();
         setUsage(next);
         setUsageStatus('');
-      }).catch(() => {
+      }).catch((error: unknown) => {
         if (sent || usageRequest.current !== requestId) return;
         cancelUsageRequest();
-        setUsageStatus('暂时无法读取额度，可点击刷新重试。');
+        setUsageStatus(error instanceof Error ? error.message : '暂时无法读取额度，可点击刷新重试。');
       });
     };
     if (sent) usageTimers.current.fallback = window.setTimeout(readOverHttp, 2_500);
@@ -2364,6 +2365,14 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           if (message.method === 'antigravity/threadDeleted') {
             const threadId = record(message.params)?.threadId;
             if (typeof threadId === 'string') forgetAntigravityThread(threadId);
+          } else if (message.method === 'codex/accountSwitch') {
+            const switching = record(message.params)?.switching;
+            if (typeof switching !== 'boolean') break;
+            usageSwitching.current = switching;
+            cancelUsageRequest();
+            setUsage(null);
+            if (switching) setUsageStatus('正在切换账号，稍后自动读取新额度。');
+            else refreshUsage(true);
           } else handleEvent(message.method, message.params);
           break;
         case 'approvals.snapshot': {
@@ -2446,6 +2455,14 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           break;
         }
         case 'error': {
+          if (message.requestId?.startsWith('usage_')) {
+            if (message.requestId === usageRequest.current) {
+              cancelUsageRequest();
+              if (message.code === 'account_switching' || message.code === 'account_unverified') setUsage(null);
+              setUsageStatus(message.message || '暂时无法读取额度，可点击刷新重试。');
+            }
+            break;
+          }
           if (message.requestId && syncChecks.current.has(message.requestId)) {
             syncChecks.current.get(message.requestId)?.(false);
             break;
@@ -2518,7 +2535,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       }
       if (typeof message.syncCursor === 'number') syncCursorRef.current = Math.max(syncCursorRef.current, message.syncCursor);
     },
-    [applyPermissionModeSnapshot, clearThreadAttentionNotification, forgetAntigravityThread, handleEvent, observeCompactionSnapshot, replaceThreadsAndSyncAttention, reportCompactionFailure, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
+    [applyPermissionModeSnapshot, cancelUsageRequest, clearThreadAttentionNotification, forgetAntigravityThread, handleEvent, observeCompactionSnapshot, refreshUsage, replaceThreadsAndSyncAttention, reportCompactionFailure, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
   );
   handleMessageRef.current = handleMessage;
 
@@ -2537,6 +2554,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
 
     setModels([]);
     cancelUsageRequest();
+    usageSwitching.current = false;
     setUsage(null);
     setUsageStatus('');
     setSkills([]);
@@ -2574,7 +2592,6 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       if (cancelled) return;
       if (cached) {
         setModels(Array.isArray(cached.models) ? cached.models : []);
-        setUsage(Array.isArray(cached.usage?.windows) ? cached.usage : null);
         setThreads(cached.threads);
         threadsRef.current = cached.threads;
         setMessagesByThread(cached.messagesByThread);
@@ -2611,6 +2628,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         token: config.pairingToken,
         onMessage: (message) => handleMessageRef.current(message),
         onResume: () => {
+          refreshUsage();
           const threadId = selectedThreadRef.current;
           const syncVersion = syncVersionRef.current;
           if (syncVersion) {
@@ -2635,7 +2653,10 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
             setCodexReady(false);
             modelRequest.current = null;
             setModelPending(false);
-            if (!usageRequest.current) setUsageStatus('电脑未连接');
+            usageSwitching.current = false;
+            cancelUsageRequest();
+            setUsage(null);
+            setUsageStatus('电脑未连接');
           } else {
             setUsageStatus(current => current === '电脑未连接' ? '' : current);
           }
@@ -2668,7 +2689,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       if (socketRef.current === socket) socketRef.current = null;
       void appListener?.remove();
     };
-  }, [config, cancelUsageRequest, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification]);
+  }, [config, cancelUsageRequest, refreshUsage, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification]);
 
   useEffect(() => {
     if (!config || !cacheHydratedRef.current || !cacheScopeRef.current) return;
@@ -2688,7 +2709,6 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         selectedThreadId,
         threads,
         models,
-        usage,
         messagesByThread,
         historyByThread,
       };
@@ -2702,7 +2722,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     return () => {
       if (cacheSaveTimerRef.current !== null) window.clearTimeout(cacheSaveTimerRef.current);
     };
-  }, [config, historyByThread, messagesByThread, models, selectedThreadId, threads, usage]);
+  }, [config, historyByThread, messagesByThread, models, selectedThreadId, threads]);
 
 
   const selectThread = useCallback((threadId: string | null) => {

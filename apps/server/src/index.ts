@@ -59,7 +59,7 @@ const antigravity = await AntigravitySessions.open(join(dirname(config.promptQue
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const updates = new CompanionUpdates(() => gateway.pauseForHostUpdate(), () => gateway.resumeAfterHostUpdate());
-const cockpit = new CockpitAccounts(bridge, () => gateway.pauseForAccountSwitch(), () => gateway.resumeAfterHostUpdate(), config.codexHome);
+const cockpit = new CockpitAccounts(bridge, () => gateway.pauseForAccountSwitch(), verify => gateway.resumeAfterAccountSwitch(verify), config.codexHome);
 await updates.restoreGuard().catch(error => console.warn("[updates] Could not restore update guard", error));
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
@@ -224,6 +224,11 @@ async function handleDevice(request: IncomingMessage, response: ServerResponse):
   }
   if (request.method === "GET" && request.url === "/api/device/cockpit/status") {
     json(response, 200, cockpit.status());
+    return;
+  }
+  if (request.method === "POST" && request.url === "/api/device/cockpit/quota") {
+    const { key } = await readJsonBody(request, 1024);
+    json(response, 200, await cockpit.refreshQuota(key));
     return;
   }
   if (request.method === "POST" && request.url === "/api/device/cockpit/switch") {

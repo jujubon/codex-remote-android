@@ -106,7 +106,8 @@ export async function deviceRequest<T>(config: RemoteConfig, action: string, bod
     || (action === 'antigravity/models' && body === undefined)
     || (['audio/mute', 'display/power'].includes(action) && body === undefined) ? 'GET' : 'POST';
   const timeoutMs = ['inbox/clear', 'thread/rename'].includes(action) ? 60_000 : action === 'reader/open-remote' ? 25_000 : ['antigravity/usage', 'antigravity/models'].includes(action) ? 22_000
-    : action.startsWith('usage/reset/') ? 25_000 : action === 'reader/open-local' ? 18_000 : action === 'usage' ? 6_000 : 12_000;
+    : action === 'cockpit/quota' ? 28_000 : action.startsWith('usage/reset/') ? 25_000
+    : action === 'reader/open-local' ? 18_000 : action === 'usage' ? 6_000 : 12_000;
   const headers: Record<string, string> = { Authorization: 'Bearer ' + config.pairingToken, 'ngrok-skip-browser-warning': '1' };
   if (body) headers['Content-Type'] = 'application/json';
   if (Capacitor.isNativePlatform()) {

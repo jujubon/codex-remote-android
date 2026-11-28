@@ -180,6 +180,30 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
+it("drops an old quota response across an account switch and waits for account verification", async () => {
+  const { bridge, gateway } = await start();
+  let resolveOld!: (value: unknown) => void;
+  const oldReply = new Promise(resolve => { resolveOld = resolve; });
+  let reads = 0;
+  const request = bridge.request.bind(bridge);
+  bridge.request = (method, params) => method === "account/rateLimits/read"
+    ? ++reads === 1 ? oldReply : Promise.resolve({ rateLimits: { primary: { usedPercent: 21 } } }) : request(method, params);
+  const old = gateway.readAccountUsage();
+  await waitFor(() => reads === 1);
+  expect(gateway.pauseForAccountSwitch()).toBe(true);
+  await expect(gateway.readAccountUsage()).rejects.toMatchObject({ code: "account_switching" });
+  let verified = false;
+  gateway.resumeAfterAccountSwitch(async () => verified);
+  await expect(gateway.readAccountUsage()).rejects.toMatchObject({ code: "account_unverified" });
+  expect(reads).toBe(1);
+  verified = true;
+  const fresh = gateway.readAccountUsage();
+  resolveOld({ rateLimits: { primary: { usedPercent: 99 } } });
+  await expect(old).rejects.toMatchObject({ code: "account_switching" });
+  await expect(fresh).resolves.toMatchObject({ windows: [{ remainingPercent: 79 }] });
+  expect(reads).toBe(2);
+});
+
 
 
 describe("Host path validation", () => {
