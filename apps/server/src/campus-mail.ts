@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { analyzeMail, MailResultError, openMailGenerator, translateMailPart, translationChunks, type Importance, type MailSummary } from "./mail-analysis.js";
+import { analyzeMail, isVoluntaryPetition, MailResultError, openMailGenerator, translateMailPart, translationChunks, type Importance, type MailSummary } from "./mail-analysis.js";
 
 const mailHelper = fileURLToPath(new URL("../windows/campus_mail.py", import.meta.url));
 const retained = 150;
@@ -12,17 +12,29 @@ type MailConfig = { address: string; secret: string; dataDir: string; model?: st
 type MailContent = { uid: number; subject: string; sender: string; address: string; receivedAt: number; body: string; truncated: boolean };
 type Provider = "antigravity" | "ollama" | "off";
 type Preferences = { provider?: Provider; prioritySenders?: string[] };
-type Task = { state: "pending" | "review" | "done" | "ignored"; remindAt?: number };
+type Task = { state: "pending" | "review" | "done" | "ignored"; remindAt?: number; manual?: boolean };
 type Message = MailContent & {
   id: string; noticedAt?: number; priority: boolean; summary?: MailSummary; summaryFailed?: boolean; retryAt?: number;
-  translationParts?: string[]; translation?: string; override?: Importance; task?: Task;
+  translationParts?: string[]; translation?: string; override?: Importance; task?: Task; voluntaryPetition?: boolean;
 };
 type Cache = { epoch: number; cursor: number; rows: Message[]; lastSyncAt: number; preferences?: Preferences };
 type Batch = { epoch: number; cursor: number; initial: boolean; more: boolean; rows: MailContent[]; error?: string };
 export type MailAlert = { id: string; mailId?: string; at: number; priority: boolean; subject: string; preview?: string };
 const digest = (input: string) => createHash("sha256").update(input).digest("hex");
-const importanceOf = (row: Message) => row.override ?? row.summary?.importance;
+const importanceOf = (row: Message) => row.override ?? (row.voluntaryPetition ? "promotion" : row.summary?.importance);
 const normalizedAddress = /^[^\s@]+@[^\s@]+$/;
+const schoolAddress = /^[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn$/i;
+const qqAddress = /^[a-z0-9._+%-]+@qq\.com$/i;
+
+export function classifyMailRow(row: Message): Message {
+  if (row.voluntaryPetition !== undefined) return row;
+  if (!isVoluntaryPetition(row)) return { ...row, voluntaryPetition: false };
+  // Legacy review items were model suggestions. Keep finished or manually accepted tasks.
+  const automated = row.task?.state === "review" || (row.task?.state === "pending" && !row.task.manual &&
+    !row.task.remindAt && row.summary?.task === "explicit");
+  return { ...row, voluntaryPetition: true, task: automated ? undefined : row.task,
+    summary: row.summary ? { ...row.summary, importance: "promotion", task: "none", action: "", deadline: "", quote: "" } : undefined };
+}
 
 export function mailAlerts(rows: Message[], now: number, provider: Provider, failed: boolean): MailAlert[] {
   const alerts: MailAlert[] = [];
@@ -101,7 +113,9 @@ export class CampusMail {
 
   list() {
     return {
-      configured: Boolean(this.settings), syncing: Boolean(this.polling), status: this.status,
+      configured: Boolean(this.settings), mailbox: this.settings ? (qqAddress.test(this.settings.address) ? "qq" : "csu") : undefined,
+      mailboxId: this.accountKey,
+      syncing: Boolean(this.polling), status: this.status,
       model: this.settings?.model ?? null, modelReady: this.modelReady, lastSyncAt: this.cache?.lastSyncAt ?? null,
       smartMail: true, provider: this.provider, prioritySenders: this.prioritySenders,
       analysisStatus: this.analysisStatus, analyzingId: this.analyzingId,
@@ -159,10 +173,10 @@ export class CampusMail {
       return { ...cache, rows: cache.rows.map(row => {
         if (row.id !== id) return row;
         switch (operation) {
-          case "add": case "reopen": return { ...row, task: { state: "pending" } };
-          case "complete": return row.task ? { ...row, task: { state: "done" } } : row;
+          case "add": case "reopen": return { ...row, task: { state: "pending", manual: true } };
+          case "complete": return row.task ? { ...row, task: { state: "done", manual: row.task.manual } } : row;
           case "dismiss": return { ...row, task: { state: "ignored" } };
-          case "snooze": return row.task?.state === "pending" ? { ...row, task: { state: "pending", remindAt: Date.now() + 3_600_000 } } : row;
+          case "snooze": return row.task?.state === "pending" ? { ...row, task: { ...row.task, remindAt: Date.now() + 3_600_000 } } : row;
           case "important": case "normal": case "promotion": return { ...row, override: operation };
           default: return { ...row, override: undefined };
         }
@@ -178,7 +192,7 @@ export class CampusMail {
     if (force && this.nextAttemptAt > Date.now() && this.backoff > 30_000) return Promise.resolve();
     if (force && this.cache && Date.now() - this.cache.lastSyncAt < 3_000) return Promise.resolve();
     this.polling = this.poll().catch(() => {
-      this.status ||= "暂时无法同步学校邮箱，稍后会重试。";
+      this.status ||= "暂时无法同步邮箱，稍后会重试。";
       this.nextAttemptAt = Date.now() + this.backoff;
       this.backoff = Math.min(this.backoff * 2, 300_000);
     }).finally(() => {
@@ -201,7 +215,7 @@ export class CampusMail {
     }
     let config: MailConfig | undefined;
     try { config = JSON.parse(raw.replace(/^\uFEFF/, "")) as MailConfig; } catch {}
-    if (!config || typeof config.address !== "string" || !/^[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn$/i.test(config.address) ||
+    if (!config || typeof config.address !== "string" || (!schoolAddress.test(config.address) && !qqAddress.test(config.address)) ||
         typeof config.secret !== "string" || !config.secret || typeof config.dataDir !== "string" || !isAbsolute(config.dataDir)) {
       this.settings = this.cache = this.accountKey = this.cachePath = undefined;
       this.resetAnalysis();
@@ -224,16 +238,16 @@ export class CampusMail {
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    if (!this.cache) this.cache = cache;
+    if (!this.cache && cache) this.cache = { ...cache, rows: cache.rows.map(classifyMailRow) };
     const batch = await readImap(config, cache);
     if (batch.error) {
-      this.status = batch.error === "login" ? "学校邮箱未接受登录，请在电脑上核对客户端专用密码。" : "学校邮箱暂时无法连接。";
+      this.status = batch.error === "login" ? "邮箱未接受登录，请在电脑上核对客户端授权码。" : "邮箱暂时无法连接。";
       throw new Error("imap");
     }
     const now = Date.now();
     await this.mutate(async () => {
       const prioritySenders = new Set(this.prioritySenders);
-      const rows: Message[] = batch.rows.map(item => ({ ...item, id: digest(`${key}:${batch.epoch}:${item.uid}`),
+      const rows = batch.rows.map(item => classifyMailRow({ ...item, id: digest(`${key}:${batch.epoch}:${item.uid}`),
         priority: prioritySenders.has(item.address), ...(batch.initial ? {} : { noticedAt: now }) }));
       const prior = this.cache?.rows ?? [];
       const next: Cache = { epoch: batch.epoch, cursor: batch.cursor, lastSyncAt: now,
@@ -260,7 +274,7 @@ export class CampusMail {
     const path = this.cachePath;
     return this.mutate(async () => {
       if (signal?.aborted) return;
-      if (this.stopped || !path || this.cachePath !== path || !this.cache) throw new Error("请先完成学校邮箱同步。");
+      if (this.stopped || !path || this.cachePath !== path || !this.cache) throw new Error("请先完成邮箱同步。");
       const next = change(this.cache);
       await saveCache(path, next);
       if (this.cachePath === path) this.cache = next;

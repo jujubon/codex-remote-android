@@ -13,9 +13,9 @@ type Row = { id: string; subject: string; sender: string; receivedAt: number; pr
 type Detail = Omit<Row, 'summary'> & { address: string; body: string; truncated: boolean; summaryFailed?: boolean;
   importanceOverride?: Importance; translation?: string;
   summary?: { overview: string; action: string; deadline: string; quote: string; needsTranslation?: boolean } };
-type Inbox = { configured: boolean; syncing: boolean; status: string; lastSyncAt: number | null; model: string | null; modelReady: boolean | null;
+type Inbox = { configured: boolean; mailbox?: 'csu' | 'qq'; mailboxId?: string; syncing: boolean; status: string;
+  lastSyncAt: number | null; model: string | null; modelReady: boolean | null;
   smartMail?: boolean; provider?: Provider; prioritySenders?: string[]; analysisStatus?: string; analyzingId?: string; pendingAnalysis?: number; rows: Row[] };
-const importanceLabels: Record<Importance, string> = { important: '重要', normal: '普通', promotion: '推广' };
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const dateLabel = (date: number) => dateFormat.format(date);
 
@@ -28,7 +28,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'inbox' | 'tasks'>('inbox');
-  const [filter, setFilter] = useState<'all' | 'important' | 'promotion'>('all');
+  const [filter, setFilter] = useState<'all' | 'important'>('all');
   const [taskFilter, setTaskFilter] = useState<Task['state']>('pending');
   const [bodyVersion, setBodyVersion] = useState<'original' | 'translated'>('original');
   const [selected, setSelected] = useState<string>();
@@ -44,6 +44,20 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const detailSheet = useRef<HTMLDialogElement>(null);
   const settingsSheet = useRef<HTMLDialogElement>(null);
   const consentSheet = useRef<HTMLDialogElement>(null);
+  const displayedMailbox = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (displayedMailbox.current && displayedMailbox.current !== inbox?.mailboxId) {
+      if (detailSheet.current?.open) detailSheet.current.close();
+      if (consentSheet.current?.open) consentSheet.current.close();
+      if (settingsSheet.current?.open) settingsSheet.current.close();
+      setDetail(undefined);
+      setView('inbox');
+      setQuery('');
+      setFilter('all');
+    }
+    displayedMailbox.current = inbox?.mailboxId;
+  }, [inbox?.mailboxId]);
 
   const load = useCallback(async () => {
     const sequence = ++request.current;
@@ -51,7 +65,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
       const next = await deviceRequest<Inbox>(endpoint, 'mail');
       if (request.current === sequence) { setInbox(next); setError(''); }
     } catch (failure) {
-      if (request.current === sequence) setError(failure instanceof Error ? failure.message : '暂时无法读取学校邮箱。');
+      if (request.current === sequence) setError(failure instanceof Error ? failure.message : '暂时无法读取邮箱。');
     }
   }, [endpoint]);
 
@@ -139,10 +153,11 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
   const pendingTasks = inbox?.rows.filter(row => row.task?.state === 'pending').length ?? 0;
   const reviewing = inbox?.rows.filter(row => row.task?.state === 'review').length ?? 0;
   const canChange = connected && !actionBusy;
+  const mailboxLabel = inbox?.mailbox === 'qq' ? 'QQ 邮箱' : inbox?.configured ? '学校邮箱' : '邮件';
 
   return <main className="app-screen computer-screen campus-mail-screen">
     <header className="top-bar computer-top-bar">
-      <span className="project-symbol"><MailIcon /></span><h1>学校邮箱</h1>
+      <span className="project-symbol"><MailIcon /></span><h1>{mailboxLabel}</h1>
       <div className="mail-header-actions">
         <button className="nav-icon-button" type="button" aria-label="同步邮件" disabled={!connected || syncRequested || inbox?.syncing || !inbox?.configured}
           onClick={() => void sync()}><UpdateIcon /></button>
@@ -154,9 +169,9 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
       {error && <p className="computer-feedback" role="alert" data-tone="error">{error}</p>}
       {inbox?.status && <p className="computer-feedback" role="status">{inbox.status}</p>}
       {inbox?.analysisStatus && <p className="computer-feedback" role="status">{inbox.analysisStatus}</p>}
-      {connected && !inbox && !error && <p className="computer-feedback" role="status">正在读取学校邮箱…</p>}
+      {connected && !inbox && !error && <p className="computer-feedback" role="status">正在读取邮箱…</p>}
       {inbox && !inbox.configured && <section className="mail-connect-card">
-        <span className="mail-symbol"><MailIcon /></span><h2>连接中南大学邮箱</h2>
+        <span className="mail-symbol"><MailIcon /></span><h2>连接邮箱</h2>
         <p>在电脑上完成授权后，这里会同步最近的邮件。</p>
         <button className="primary-button" type="button" onClick={openSettings}>查看连接方法</button>
       </section>}
@@ -175,7 +190,6 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
             <div className="mail-filters" aria-label="筛选邮件">
               <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部</button>
               <button type="button" aria-pressed={filter === 'important'} onClick={() => setFilter('important')}>{inbox.smartMail ? '重要' : '重点'}</button>
-              {inbox.smartMail && <button type="button" aria-pressed={filter === 'promotion'} onClick={() => setFilter('promotion')}>推广</button>}
             </div>
             <small role="status">{inbox.syncing || syncRequested ? '同步中…' : inbox.pendingAnalysis ? `${inbox.pendingAnalysis} 封待分析`
               : inbox.lastSyncAt ? `${dateLabel(inbox.lastSyncAt)} 同步` : ''}</small>
@@ -189,7 +203,6 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
             <span className="mail-row-icon" data-priority={row.importance === 'important' || row.priority}><MailIcon /></span>
             <span className="mail-row-copy">
               <span className="mail-row-meta"><span>{row.sender}</span>{row.importance === 'important' && <strong>重要</strong>}
-                {row.importance === 'promotion' && <span className="mail-promotion">推广</span>}
                 {!row.importance && row.priority && <strong>重点</strong>}<time>{dateLabel(row.receivedAt)}</time></span>
               <strong className="mail-subject">{view === 'tasks' ? row.action || row.subject : row.subject}</strong>
               {view === 'tasks' ? <span className="mail-preview">{row.deadline || '未注明截止时间'}
@@ -205,20 +218,32 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
     <AssistantSettingsSheet dialogRef={detailSheet} title="邮件详情" titleId="mail-detail-title" closeLabel="关闭邮件详情" onClosed={() => {
       setSelected(undefined); onTargetClosed();
     }}>
-      {detail ? <article className="mail-detail">
-        <header><h3>{detail.subject}</h3><p>{detail.sender}{detail.address && detail.address !== detail.sender ? ` · ${detail.address}` : ''}</p>
-          <time>{dateLabel(detail.receivedAt)}</time></header>
+      {detail ? <article className="mail-detail" key={detail.id}>
+        <header className="mail-detail-heading">
+          <h3>{detail.subject}</h3>
+          <div className="mail-detail-byline">
+            <span className="mail-detail-sender"><strong>{detail.sender}</strong>
+              {detail.address && detail.address.toLowerCase() !== detail.sender.trim().toLowerCase() && <small>{detail.address}</small>}
+            </span>
+            <time dateTime={new Date(detail.receivedAt).toISOString()}>{dateLabel(detail.receivedAt)}</time>
+          </div>
+        </header>
         {detail.summary ? <section className="mail-summary">
           <div className="mail-summary-heading"><h4>AI 摘要</h4>
-            {detail.importance && <span className="mail-classification" data-importance={detail.importance}>{importanceLabels[detail.importance]}</span>}</div>
+            {detail.importance === 'important' && <span className="mail-classification">重要</span>}</div>
           <p>{detail.summary.overview}</p>
-          {detail.summary.action && <p><strong>待办</strong> {detail.summary.action}</p>}
-          {(detail.summary.deadline || detail.summary.action) && <p><strong>截止时间</strong> {detail.summary.deadline || '未注明'}</p>}
-          {detail.summary.quote && <blockquote>{detail.summary.quote}</blockquote>}
+          {detail.importance !== 'promotion' && (detail.summary.action || detail.summary.deadline) && <dl className="mail-summary-facts">
+            {detail.summary.action && <div><dt>{detail.task?.state === 'review' ? '待确认' : '待办'}</dt><dd>{detail.summary.action}</dd></div>}
+            {detail.summary.deadline && <div><dt>截止时间</dt><dd>{detail.summary.deadline}</dd></div>}
+          </dl>}
+          {detail.importance !== 'promotion' && detail.summary.quote && <details className="mail-detail-disclosure">
+            <summary>查看原文依据<ChevronRightIcon aria-hidden="true" /></summary>
+            <blockquote>{detail.summary.quote}</blockquote>
+          </details>}
         </section> : ((inbox?.provider && inbox.provider !== 'off' || !inbox?.smartMail && inbox?.model) && <p className="computer-feedback" role="status">
           {detail.summaryFailed || inbox.modelReady === false ? '摘要暂未完成，电脑会稍后重试。'
             : inbox.analyzingId === detail.id ? '正在分析邮件…' : '等待生成摘要…'}</p>)}
-        {inbox?.smartMail && <section className="mail-detail-actions" aria-label="处理邮件">
+        {inbox?.smartMail && detail.task && <section className="mail-detail-actions" aria-label="处理待办">
           <div className="mail-action-buttons">
             <button className="secondary-button" type="button" disabled={!canChange}
               onClick={() => void mailAction(detail.task?.state === 'pending' ? 'complete' : detail.task?.state === 'done' ? 'reopen' : 'add')}>
@@ -229,15 +254,22 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
               onClick={() => void mailAction('dismiss')}>忽略建议</button>}
           </div>
           {detail.task?.remindAt && detail.task.remindAt > Date.now() ? <small>将在 {dateLabel(detail.task.remindAt)} 提醒</small> : null}
-          <label className="mail-importance-control"><span>调整分类</span>
-            <select aria-label="调整分类" disabled={!canChange} value={detail.importanceOverride ?? 'automatic'}
-              onChange={event => void mailAction(event.target.value)}>
-              <option value="automatic">AI 自动判断</option><option value="important">重要</option>
-              <option value="normal">普通</option><option value="promotion">推广</option>
-            </select>
-          </label>
-          {actionError && <p className="computer-feedback" role="alert" data-tone="error">{actionError}</p>}
         </section>}
+        {inbox?.smartMail && <details className="mail-detail-disclosure mail-detail-menu">
+          <summary>邮件操作<ChevronRightIcon aria-hidden="true" /></summary>
+          <div>
+            {!detail.task && <button className="secondary-button" type="button" disabled={!canChange}
+              onClick={() => void mailAction('add')}>加入待办</button>}
+            <label className="mail-importance-control"><span>调整分类</span>
+              <select aria-label="调整分类" disabled={!canChange} value={detail.importanceOverride ?? 'automatic'}
+                onChange={event => void mailAction(event.target.value)}>
+                <option value="automatic">AI 自动判断</option><option value="important">重要</option>
+                <option value="normal">普通</option><option value="promotion">静默处理</option>
+              </select>
+            </label>
+          </div>
+        </details>}
+        {actionError && <p className="computer-feedback" role="alert" data-tone="error">{actionError}</p>}
         <section className="mail-body">
           {detail.translation ? <div className="mail-filters mail-body-tabs" aria-label="正文语言">
             <button type="button" aria-pressed={bodyVersion === 'original'} onClick={() => setBodyVersion('original')}>原文</button>
@@ -253,6 +285,12 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
     <AssistantSettingsSheet dialogRef={settingsSheet} title="邮箱设置" titleId="mail-settings-title" closeLabel="关闭邮箱设置" onClosed={() => undefined}>
       <section className="mail-settings-card">
         {inbox?.smartMail && inbox.configured ? <>
+          <h3>当前来源 · {mailboxLabel}</h3>
+          <details className="mail-detail-disclosure mail-source-help">
+            <summary>在电脑切换邮箱<ChevronRightIcon aria-hidden="true" /></summary>
+            <p>QQ 邮箱使用 IMAP 授权码。在电脑运行 <code>Set-CampusMail.cmd -Provider qq</code>。</p>
+            <p>切回已配置的学校邮箱，运行 <code>Set-CampusMail.cmd -Provider csu -UseSaved</code>。</p>
+          </details>
           <h3>自动摘要与分类</h3>
           <p>{inbox.provider === 'antigravity' ? 'Antigravity 已开启' : inbox.provider === 'ollama' ? `本地模型 · ${inbox.model ?? 'Ollama'}` : '未开启'}</p>
           <div className="mail-action-buttons">
@@ -273,10 +311,11 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
             <button className="secondary-button" type="submit" disabled={!connected || settingsBusy}>保存联系人</button>
           </form>
           {settingsError && <p className="computer-feedback" role="alert" data-tone="error">{settingsError}</p>}
-        </> : <><h3>{inbox?.configured ? '中南大学邮箱已配置' : '在 Windows 上配置'}</h3>
+        </> : <><h3>{inbox?.configured ? '邮箱已配置' : '在 Windows 上配置'}</h3>
           <ol><li>登录中南大学网页邮箱，在「个人信息 → 邮箱密码」生成客户端专用密码。</li>
           <li>在 Windows 配套服务目录运行 <code>Set-CampusMail.cmd</code>，按提示填写邮箱和专用密码。</li>
-          <li>回到邮件页刷新。AI 摘要需在 Windows 配置本地 Ollama 模型。</li></ol>
+          <li>接入 QQ 邮箱时，生成 IMAP 授权码，并运行 <code>Set-CampusMail.cmd -Provider qq</code>。</li>
+          <li>回到邮件页刷新，然后在邮箱设置里选择摘要方式。</li></ol>
         <p>重点发件人可在电脑配置。通知在锁屏时隐藏主题和摘要。</p>
           {inbox?.model && <p>摘要模型 <strong>{inbox.model}</strong>{inbox.modelReady === false ? ' · 未连接' : ''}</p>}</>}
       </section>

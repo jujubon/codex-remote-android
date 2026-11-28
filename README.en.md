@@ -66,7 +66,7 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 
 Cockpit manages account credentials on Windows. The phone receives masked labels, plans, quotas, and operation status. The companion connects to Cockpit over loopback. Keep Cockpit's WebSocket port local.
 
-## Central South University mail
+## Mail
 
 1. Update Android and the Windows companion to **1.3.0**. For a new mailbox connection, create a mail client password in [CSU webmail](https://mail.csu.edu.cn/).
 2. Run `Set-CampusMail.cmd` from the active Windows companion folder and enter your full address and client password. Windows encrypts the credentials for your user. The mail cache defaults to the `mail` subfolder of the configured update directory. Use `-DataDirectory` to choose a different location.
@@ -75,6 +75,8 @@ Cockpit manages account credentials on Windows. The phone receives masked labels
 With Android and the Windows companion on **1.3.0**, open Mail settings and confirm to enable Antigravity processing. The signed-in CLI sends the subject and relevant body text to Google for summaries, importance, to-dos, and Chinese translations. Credentials and attachments stay on the PC. For local processing, run [Ollama in local-only mode](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features), install a model, and run `Set-CampusMail.cmd -Model model-name`. Press Enter to reuse a saved client password.
 
 Routine and promotional messages stay in your inbox. Important mail can notify you, and explicit action requests appear under To-dos. Change a classification, complete or snooze a task, and manage priority contacts from the Mail tab. Run `Set-CampusMail.cmd -Disconnect` to stop syncing.
+
+Version **1.4.0** also supports personal [QQ Mail](https://mail.qq.com/). Enable IMAP and generate an authorization code in QQ Mail, then run `Set-CampusMail.cmd -Provider qq` from the active Windows companion folder. Each mailbox keeps its own credentials and analysis settings. One mailbox syncs at a time. Run `Set-CampusMail.cmd -Provider csu -UseSaved` to switch back to the saved CSU account.
 
 ## Background operation and updates
 

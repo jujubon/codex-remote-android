@@ -66,7 +66,7 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 
 账号凭据由 Cockpit 在电脑上管理。手机收到脱敏标签、套餐、额度和操作状态。配套服务通过本机回环地址访问 Cockpit 的自动化接口，Cockpit 的 WebSocket 端口应留在本机。
 
-## 学校邮箱
+## 邮箱
 
 1. 将手机和 Windows 配套服务均更新到 **1.3.0**。首次连接时，在[中南大学网页邮箱](https://mail.csu.edu.cn/)的「个人信息 → 邮箱密码」生成客户端专用密码。
 2. 在正在使用的 Windows 配套服务目录运行 `Set-CampusMail.cmd`，按提示填入完整邮箱和客户端专用密码。凭据由 Windows 当前用户加密保存。默认邮件缓存位于已配置的更新目录下的 `mail` 子目录，也可用 `-DataDirectory` 指定位置。
@@ -75,6 +75,8 @@ Windows 启动器优先使用 Codex 附带的 Node.js。提示找不到 `node.ex
 在「邮件 → 设置」确认开启 Antigravity 自动分析。配套服务通过已登录的 Antigravity CLI 将标题和所需正文交给 Google，逐封生成摘要、分类、待办和中文译文，凭据和附件留在电脑上。也可运行 [Ollama 本地模式](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)，下载本地模型后用 `Set-CampusMail.cmd -Model 模型名` 配置。提示输入专用密码时回车可沿用现有授权。
 
 普通和推广邮件保留在收件箱。重要邮件可提醒，有明确行动要求的邮件进入「待办」。可手动调整分类、完成待办或延后一小时提醒。在邮箱设置中管理重点联系人或关闭自动分析。用 `Set-CampusMail.cmd -Disconnect` 断开邮箱。
+
+手机和 Windows 配套服务均升级到 **1.4.0** 后，也可使用个人 QQ 邮箱。在 [QQ 邮箱](https://mail.qq.com/) 的设置中开启 IMAP 并生成授权码，然后在 Windows 配套服务目录运行 `Set-CampusMail.cmd -Provider qq`。两个邮箱的授权和分析设置分别保存，同一时刻同步一个。运行 `Set-CampusMail.cmd -Provider csu -UseSaved` 可切回已配置的学校邮箱。
 
 ## 后台运行与更新
 

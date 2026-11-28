@@ -22,7 +22,7 @@ import org.json.JSONObject;
 final class CampusMailNotifications {
     private static final String SILENT_CHANNEL = "campus_mail_silent";
     private static final String PRIORITY_CHANNEL = "campus_mail_priority";
-    private static final String TITLE = "学校邮箱有新邮件";
+    private static final String TITLE = "收到新邮件";
     private static final int NOTIFICATION_ID = 815;
     private static final long MAX_AGE = 24 * 60 * 60 * 1000L;
 
@@ -34,8 +34,8 @@ final class CampusMailNotifications {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null || !manager.areNotificationsEnabled()) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(new NotificationChannel(SILENT_CHANNEL, "学校邮箱", NotificationManager.IMPORTANCE_LOW));
-            manager.createNotificationChannel(new NotificationChannel(PRIORITY_CHANNEL, "学校邮箱 · 重点邮件", NotificationManager.IMPORTANCE_DEFAULT));
+            manager.createNotificationChannel(new NotificationChannel(SILENT_CHANNEL, "邮箱", NotificationManager.IMPORTANCE_LOW));
+            manager.createNotificationChannel(new NotificationChannel(PRIORITY_CHANNEL, "邮箱 · 重点邮件", NotificationManager.IMPORTANCE_DEFAULT));
         }
 
         Set<String> active = new HashSet<>();

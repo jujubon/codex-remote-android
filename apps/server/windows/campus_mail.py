@@ -126,9 +126,18 @@ def scan(client, previous_epoch, cursor):
                 more=len(ids) > len(batch) and not initial, rows=rows)
 
 
+def imap_host(address):
+    if re.fullmatch(r"[a-z0-9._+%-]+@qq\.com", address, re.IGNORECASE):
+        return "imap.qq.com"
+    if re.fullmatch(r"[a-z0-9._+%-]+@(?:[a-z0-9-]+\.)*csu\.edu\.cn", address, re.IGNORECASE):
+        return "mail.csu.edu.cn"
+    raise ValueError("Unsupported mail account")
+
+
 def main(request):
+    host = imap_host(request["address"])
     password = unprotect(request["secret"])
-    with imaplib.IMAP4_SSL("mail.csu.edu.cn", 993, ssl_context=ssl.create_default_context(), timeout=12) as client:
+    with imaplib.IMAP4_SSL(host, 993, ssl_context=ssl.create_default_context(), timeout=12) as client:
         try:
             client.login(request["address"], password)
         except imaplib.IMAP4.error:

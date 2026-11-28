@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mailAlerts, taskFromSummary } from "../src/campus-mail.js";
+import { classifyMailRow, mailAlerts, taskFromSummary } from "../src/campus-mail.js";
 import { translationChunks, validateSummary } from "../src/mail-analysis.js";
 
 const now = Date.UTC(2026, 10, 28, 10);
@@ -26,6 +26,22 @@ describe("campus mail analysis", () => {
     const summary = validateSummary({ ...result, importance: "promotion" }, mail);
     expect(taskFromSummary(summary)).toBeUndefined();
     expect(mailAlerts([{ ...mail, summary }], now + 100_000, "antigravity", false)).toEqual([]);
+  });
+
+  it("reclassifies cached voluntary petitions and clears old AI suggestions without deleting a manual to-do", () => {
+    const petition = { ...mail, subject: "Request to sign the chapter petition",
+      body: "If you support the formation, please review and sign the petition.", address: "onlinepetitions@from.ieee.org" };
+    const legacy = { ...validateSummary(result, mail), importance: "normal" as const, task: "review" as const };
+    const restored = classifyMailRow({ ...petition, summary: legacy, task: { state: "review" } });
+    expect(restored.summary).toMatchObject({ importance: "promotion", task: "none", action: "", deadline: "" });
+    expect(restored.task).toBeUndefined();
+    expect(mailAlerts([restored], now, "antigravity", false)).toEqual([]);
+    const known = validateSummary({ ...result, quote: petition.body }, petition);
+    expect(known).toMatchObject({ importance: "promotion", task: "none" });
+    expect(classifyMailRow({ ...petition, summary: legacy, task: { state: "pending", manual: true } }).task)
+      .toEqual({ state: "pending", manual: true });
+    const assignment = classifyMailRow({ ...mail, subject: "Draft the petition for legal review" });
+    expect(assignment.voluntaryPetition).toBe(false);
   });
 
   it("puts ungrounded actions into review and drops unsupported deadlines", () => {
