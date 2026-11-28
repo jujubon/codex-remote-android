@@ -260,21 +260,28 @@
 .project-heading-button[aria-expanded=true] .project-chevron { transform: rotate(180deg); }
 .project-new, .project-hide { color: var(--muted); border-radius: 11px; }
 .project-new:active, .project-hide:active { background: var(--accent-soft); color: var(--accent); }
-.thread-card { min-height: 62px; padding-block: 12px; align-items: center; gap: 7px; }
+.thread-card { position: relative; min-height: 62px; padding-block: 12px; align-items: center; gap: 7px; }
+.thread-open-button { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; }
+.thread-open-button:focus-visible { outline-offset: -3px; }
 .thread-card .thread-state { align-self: flex-start; }
+.thread-title-row { align-items: center; }
+.thread-title-group { display: flex; align-items: center; min-width: 0; gap: 3px; }
 .thread-title-row strong { color: var(--ink); font-size: 14px; }
-.thread-title-row .thread-time { font-size: 10px; }
+.thread-title-row .thread-time { margin-inline-start: auto; font-size: 10px; }
 .thread-preview { margin: 4px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .thread-meta:not(:empty) { margin-top: 6px; }
-.thread-row-with-rename {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
-  align-items: center;
-  padding-inline-end: 4px;
+.thread-rename.nav-icon-button {
+  position: relative;
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  margin-block: -13px;
+  place-items: center start;
+  padding-inline-start: 2px;
+  color: var(--muted);
 }
-.thread-row-with-rename .thread-card { min-width: 0; border-bottom: 0; }
-.thread-rename.nav-icon-button { color: var(--muted); }
-.thread-rename.nav-icon-button svg { width: 17px; height: 17px; }
+.thread-rename.nav-icon-button svg { width: 15px; height: 15px; }
 
 .conversation-top-bar { grid-template-columns: 44px minmax(0,1fr) auto; gap: 8px; }
 .conversation-top-bar .nav-icon-button {

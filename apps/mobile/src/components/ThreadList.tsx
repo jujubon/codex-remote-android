@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { threadStateLabel } from '../hooks/useRemote';
 import type { Assistant, ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
@@ -194,6 +194,7 @@ function ThreadRow({
   onSelect,
   expandedParents,
   onToggleChildren,
+  onRename,
   wrap,
 }: {
   thread: RemoteThread;
@@ -203,10 +204,13 @@ function ThreadRow({
   onSelect: (threadId: string, target?: AttentionTarget) => void;
   expandedParents: Set<string>;
   onToggleChildren: (threadId: string) => void;
+  onRename?: (thread: RemoteThread) => void;
   wrap?: (thread: RemoteThread, card: React.ReactNode) => React.ReactNode;
 }) {
   const children = childrenByParent.get(thread.id) ?? [];
   const isAgent = Boolean(thread.parentThreadId || thread.agentNickname || thread.agentRole);
+  const titleId = useId();
+  const title = isAgent ? thread.agentNickname || thread.title || 'Subagent' : thread.title || '未命名任务';
   const childrenCollapsed = !expandedParents.has(thread.id);
   const completedDuration = thread.lastTurnDurationMs != null
     ? formatDuration(thread.lastTurnDurationMs)
@@ -215,17 +219,20 @@ function ThreadRow({
     '--thread-indent': `${Math.min(depth, 4) * 14}px`,
   } as React.CSSProperties;
 
-  const card = <button
+  const card = <div
         className={`thread-card ${isAgent ? 'thread-card-agent' : ''}`}
         style={rowStyle}
-        type="button"
-        aria-keyshortcuts={wrap && !isAgent ? 'ArrowLeft' : undefined}
-        onClick={() => onSelect(thread.id, attention)}
       >
+        <button className="thread-open-button" type="button" aria-labelledby={titleId}
+          aria-keyshortcuts={wrap && !isAgent ? 'ArrowLeft' : undefined} onClick={() => onSelect(thread.id, attention)} />
         <span className={`thread-state state-${thread.state}`} aria-hidden={thread.state === 'not_loaded'} aria-label={threadStateLabel(thread.state)}><span /></span>
         <span className="thread-main">
           <span className="thread-title-row">
-            <strong>{isAgent ? thread.agentNickname || thread.title || 'Subagent' : thread.title || '未命名任务'}</strong>
+            <span className="thread-title-group">
+              <strong id={titleId}>{title}</strong>
+              {!isAgent && onRename && <button className="nav-icon-button thread-rename" type="button"
+                aria-label={`重命名 ${title}`} aria-haspopup="dialog" onClick={() => onRename(thread)}><EditIcon /></button>}
+            </span>
             <span className="thread-time">{thread.state === 'running' && thread.currentTurnStartedAt
               ? <ElapsedTime startedAt={thread.currentTurnStartedAt} />
               : relativeTime(thread.updatedAt)}</span>
@@ -248,7 +255,7 @@ function ThreadRow({
           </span>
         </span>
         {Boolean(thread.unread) && <span className="unread-badge">{thread.unread}</span>}
-      </button>;
+      </div>;
   return (
     <>
       {wrap && !isAgent ? wrap(thread, card) : card}
@@ -391,11 +398,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
       { label: '隐藏', tone: 'hide', icon: <EyeIcon off />, onSelect: () => hiddenThreads.setHidden(thread.id, true) },
       ...(onArchive && thread.assistant !== 'antigravity' ? [{ label: '归档', tone: 'archive' as const, icon: <ArchiveIcon />, onSelect: () => onArchive(thread) }] : []),
       ...(onDelete && thread.assistant === 'antigravity' ? [{ label: '删除', tone: 'delete' as const, icon: <TrashIcon />, onSelect: () => onDelete(thread) }] : []),
-    ]}>{onRename ? <div className="thread-row-with-rename">
-      {card}
-      <button className="nav-icon-button thread-rename" type="button" aria-label={`重命名 ${thread.title}`} aria-haspopup="dialog"
-        onClick={() => onRename(thread)}><EditIcon /></button>
-    </div> : card}</SwipeActions>;
+    ]}>{card}</SwipeActions>;
   };
 
   return (
@@ -524,7 +527,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
         ) : flatList ? recent.map(thread => (
           <div key={thread.id} className="recent-thread"><small>{(thread.projectless || !thread.cwd || removed.isHidden(thread.cwd)) ? NO_PROJECT : projectName(thread.cwd)}</small>
             <ThreadRow thread={thread} attention={filter === '待处理' ? attention[thread.id] : undefined}
-              childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} wrap={wrapThread} />
+              childrenByParent={emptyChildren} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} onRename={onRename} wrap={wrapThread} />
           </div>
         )) : groups.map(({ cwd, items }) => {
           const ids = new Set(items.map((thread) => thread.id));
@@ -564,7 +567,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
               </header>
               <ProjectThreads collapsed={collapsed}>
                 {roots.map((thread) => (
-                  <ThreadRow key={thread.id} thread={thread} childrenByParent={childrenByParent} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} wrap={wrapThread} />
+                  <ThreadRow key={thread.id} thread={thread} childrenByParent={childrenByParent} depth={0} onSelect={onSelect} expandedParents={expandedParents} onToggleChildren={toggleChildren} onRename={onRename} wrap={wrapThread} />
                 ))}
               </ProjectThreads>
             </section>
