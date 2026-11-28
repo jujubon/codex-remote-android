@@ -55,7 +55,7 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 
 - **Pick up a Codex task.** Search projects, conversations, and messages. Open the elapsed-time row to see a turn's tool activity. Live controls in desktop-created chats depend on the available Codex Desktop connection and the session state. [Desktop connection details (Chinese)](docs/desktop-ipc.md)
 - **Launch or close a desktop app.** Tap **Launch** (`启动`) in the relevant assistant tab. Green means the window is open and amber means it is opening or closing. The **⋯** next to search opens project and conversation management. For the Antigravity desktop panel, enable Remote Control on the PC and sign in to the panel with the same Google account.
-- **Check your quota.** The Codex home badge shows the remaining 5-hour quota. The Antigravity badge shows the Gemini group's remaining 5-hour quota. Tap either badge for other windows and reset times.
+- **Check your quota.** The Codex home badge shows the remaining 5-hour quota. The Antigravity badge shows the Gemini group's remaining 5-hour quota. Tap either badge to see each group's 5-hour and 7-day windows and reset times.
 - **Send screenshots and files.** Use the Android share sheet to send a file to your PC or attach multiple files to a chat. Preview pictures in the phone inbox. Storage locations and attachment cleanup are configurable. [File transfers (Chinese)](docs/file-transfer.md)
 - **See your phone on your PC.** Open phone mirroring from the Computer tab. Local mirroring uses scrcpy and wireless debugging. Android asks for permission when you start cross-network screen sharing. [Phone mirroring setup (Chinese)](docs/phone-reader.md)
 

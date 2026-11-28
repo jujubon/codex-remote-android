@@ -267,7 +267,7 @@
 .thread-title-row { align-items: center; }
 .thread-title-group { display: flex; align-items: center; min-width: 0; gap: 3px; }
 .thread-title-row strong { color: var(--ink); font-size: 14px; }
-.thread-title-row .thread-time { margin-inline-start: auto; font-size: 10px; }
+.thread-title-row .thread-time { margin-inline-start: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
 .thread-preview { margin: 4px 0 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .thread-meta:not(:empty) { margin-top: 6px; }
 .thread-rename.nav-icon-button {
@@ -510,7 +510,11 @@
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes conversation-enter {
-  from { opacity: .66; transform: translate3d(26px, 0, 0); }
+  from { opacity: .9; transform: translate3d(16px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes thread-list-return {
+  from { opacity: .94; transform: translate3d(-10px, 0, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 @keyframes outgoing-message-enter {
@@ -541,7 +545,8 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .thread-screen, .computer-screen, .setup-screen { animation: screen-enter 220ms var(--ease-settle) backwards; }
-  .conversation-screen { animation: conversation-enter 260ms var(--ease-settle) backwards; }
+  .thread-screen[data-returning-from-thread] { animation: thread-list-return 180ms var(--ease-settle) backwards; }
+  .conversation-screen { animation: conversation-enter 210ms var(--ease-settle) backwards; }
   .message-row[data-sending='true'] .message-bubble {
     transform-origin: bottom right;
     animation: outgoing-message-enter 175ms var(--ease-settle) backwards;

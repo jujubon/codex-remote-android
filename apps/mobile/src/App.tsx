@@ -43,7 +43,7 @@ function savedAssistantPage(): Assistant {
 }
 
 function emptyListPosition(): ThreadListPosition {
-  return { query: '', filter: '全部项目', scrollTop: 0 };
+  return { query: '', filter: '全部项目', scrollTop: 0, expandedParents: new Set() };
 }
 
 export function popThreadBackStack(stack: string[]): { previousThreadId: string | null; remaining: string[] } {
@@ -56,6 +56,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [deleteAttachmentsAfterTurn, setDeleteAttachmentsAfterTurn] = useState<boolean>();
   const [homePage, setHomePage] = useState<HomePage>(savedAssistantPage);
+  const [returningToList, setReturningToList] = useState(false);
   const [mailTarget, setMailTarget] = useState<string>();
   const [startupUpdateHandled, setStartupUpdateHandled] = useState(false);
   const [requestedUpdate, setRequestedUpdate] = useState<StartupUpdate>();
@@ -99,6 +100,7 @@ export function App() {
   const showDirectory = (path: string) => Boolean(path) && !hidden.isHidden(path) && !removed.isHidden(path);
 
   const goToPage = useCallback((page: HomePage) => {
+    setReturningToList(false);
     setHomePage(page);
     if (page === 'codex' || page === 'antigravity') {
       lastAssistantPage.current = page;
@@ -140,6 +142,7 @@ export function App() {
       remote.selectThread(previousThreadId);
       return;
     }
+    setReturningToList(true);
     remote.selectThread(null);
   }, [remote.selectThread, remote.selectedThreadId, selectedAgentByThread]);
 
@@ -412,6 +415,7 @@ export function App() {
       ) : (
         <ThreadList key={homePage}
           assistant={homePage}
+          returningFromThread={returningToList}
           canCreate={remote.phase === 'connected' && (homePage === 'codex' || remote.antigravityAvailable)}
           desktopAction={config && <AssistantDesktopAction assistant={homePage} config={config}
             connectionUrl={remote.connectionUrl} connected={remote.phase === 'connected'} />}

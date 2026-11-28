@@ -18,6 +18,8 @@ interface SwipeGesture {
   lastAt: number;
   velocity: number;
   horizontal: boolean;
+  offset: number;
+  frame?: number;
 }
 
 export function SwipeActions({ id, open, onChange, actions, project = false, children }: {
@@ -43,34 +45,53 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
     if (!width) return;
     gesture.current = {
       id: event.pointerId, x: event.clientX, y: event.clientY, start: open ? width : 0, direction, width,
-      lastX: event.clientX, lastAt: event.timeStamp, velocity: 0, horizontal: false,
+      lastX: event.clientX, lastAt: event.timeStamp, velocity: 0, horizontal: false, offset: 0,
     };
   }
 
   function move(event: PointerEvent<HTMLDivElement>) {
     const pointer = gesture.current;
     if (!pointer || pointer.id !== event.pointerId) return;
-    const dx = event.clientX - pointer.x;
+    let dx = event.clientX - pointer.x;
     if (!pointer.horizontal) {
       const dy = Math.abs(event.clientY - pointer.y);
       if (Math.max(Math.abs(dx), dy) < 9) return;
-      if (Math.abs(dx) < dy * 1.25 || (!project && dx > 0 && !pointer.start)) {
+      if (Math.abs(dx) < dy * 1.25 || !foreground.current) {
         gesture.current = null;
         return;
       }
+      // Pick up the actual position if the previous swipe is still settling.
+      const transform = getComputedStyle(foreground.current).transform;
+      const offset = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41;
+      if (!project && dx > 0 && offset >= -.5) {
+        gesture.current = null;
+        return;
+      }
+      const settling = Math.abs(offset - pointer.direction * pointer.start) > .5;
+      pointer.direction = Math.abs(offset) > .5 ? (offset > 0 ? 1 : -1) : (dx > 0 ? 1 : -1);
+      pointer.start = Math.min(pointer.width, Math.abs(offset));
+      if (settling) {
+        pointer.x = pointer.lastX = event.clientX;
+        dx = 0;
+      }
       pointer.horizontal = true;
-      if (!pointer.start) pointer.direction = dx > 0 ? 1 : -1;
       setDirection(pointer.direction);
       preventClick.current = true;
       event.currentTarget.dataset.swipeDragging = 'true';
+      foreground.current.style.transform = `translate3d(${offset}px, 0, 0)`;
       event.currentTarget.setPointerCapture(pointer.id);
     }
     const elapsed = event.timeStamp - pointer.lastAt;
     if (elapsed > 0) pointer.velocity = elapsed > 90 ? 0 : .35 * pointer.velocity + .65 * (event.clientX - pointer.lastX) / elapsed;
     pointer.lastX = event.clientX;
     pointer.lastAt = event.timeStamp;
-    const offset = pointer.direction * Math.max(0, Math.min(pointer.width, pointer.start + pointer.direction * dx));
-    if (foreground.current) foreground.current.style.transform = `translate3d(${offset}px, 0, 0)`;
+    pointer.offset = pointer.direction * Math.max(0, Math.min(pointer.width, pointer.start + pointer.direction * dx));
+    if (pointer.frame === undefined) pointer.frame = requestAnimationFrame(() => {
+      pointer.frame = undefined;
+      if (gesture.current === pointer && foreground.current) {
+        foreground.current.style.transform = `translate3d(${pointer.offset}px, 0, 0)`;
+      }
+    });
   }
 
   function finish(event: PointerEvent<HTMLDivElement>, cancelled = false) {
@@ -78,6 +99,7 @@ export function SwipeActions({ id, open, onChange, actions, project = false, chi
     if (!pointer || pointer.id !== event.pointerId) return;
     gesture.current = null;
     if (!pointer.horizontal) return;
+    if (pointer.frame !== undefined) cancelAnimationFrame(pointer.frame);
     if (!cancelled) {
       const dx = event.clientX - pointer.x;
       const flick = Math.abs(dx) > 23 && event.timeStamp - pointer.lastAt < 90 && Math.abs(pointer.velocity) > 0.4;

@@ -131,10 +131,12 @@ export interface ThreadListPosition {
   query: string;
   filter: string;
   scrollTop: number;
+  expandedParents: Set<string>;
 }
 
 interface ThreadListProps {
   assistant: Assistant;
+  returningFromThread?: boolean;
   canCreate: boolean;
   desktopAction?: React.ReactNode;
   position: RefObject<ThreadListPosition>;
@@ -325,7 +327,7 @@ const historyFilters: { value: HistoryVisibility; label: string; hint: string }[
 ];
 const projectFilters = ['全部项目', '最近', '进行中', '待处理'];
 
-export function ThreadList({ assistant, canCreate, desktopAction, position, onArchives, onArchive, onRename, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
+export function ThreadList({ assistant, returningFromThread, canCreate, desktopAction, position, onArchives, onArchive, onRename, onDelete, quota, quotaPercent, onOpenQuota, threads, attention, phase, phaseDetail, onSelect, onCreate, onSettings, onReconnect, footer, notice, hidden, hiddenThreads, removed }: ThreadListProps) {
   const [visibility, setVisibility] = useState(readHistoryVisibility);
   const listRef = useRef<HTMLElement>(null);
   const manageRef = useRef<HTMLDialogElement>(null);
@@ -358,7 +360,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
     position.current.scrollTop = 0;
     if (listRef.current) listRef.current.scrollTop = 0;
   };
-  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+  const [expandedParents, setExpandedParents] = useState(position.current.expandedParents);
   const [projectCollapsePreferences, setProjectCollapsePreferences] = useState<ProjectCollapsePreferences>(
     () => readProjectCollapsePreferences(),
   );
@@ -367,12 +369,11 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
   }, [projectCollapsePreferences]);
 
   const toggleChildren = (threadId: string) => {
-    setExpandedParents((current) => {
-      const next = new Set(current);
-      if (next.has(threadId)) next.delete(threadId);
-      else next.add(threadId);
-      return next;
-    });
+    const next = new Set(position.current.expandedParents);
+    if (next.has(threadId)) next.delete(threadId);
+    else next.add(threadId);
+    position.current.expandedParents = next;
+    setExpandedParents(next);
   };
 
   const filtered = useMemo(() => {
@@ -405,7 +406,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
   };
 
   return (
-    <main className="app-screen thread-screen" onPointerDownCapture={event => {
+    <main className="app-screen thread-screen" data-returning-from-thread={returningFromThread || undefined} onPointerDownCapture={event => {
       if (swipe && (!(event.target instanceof Element) || event.target.closest<HTMLElement>('[data-swipe-id]')?.dataset.swipeId !== swipe)) setSwipe(null);
     }}>
       <header className="top-bar thread-top-bar">

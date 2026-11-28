@@ -1,6 +1,6 @@
 import type { AccountUsage } from '../types/protocol';
 import type { RemoteConfig } from '../lib/configStore';
-import { formatQuotaTime, usageWindowName } from '../lib/usageDisplay';
+import { formatQuotaTime, usageWindowName, usageWindowsInDisplayOrder } from '../lib/usageDisplay';
 import { GaugeIcon, UpdateIcon } from './Icons';
 import { UsageResetCards } from './UsageResetCards';
 import { CockpitAccountSwitch } from './CockpitAccountSwitch';
@@ -21,7 +21,7 @@ export function AccountUsagePanel({ usage, status, refresh, resetConfig, onReset
           disabled={status.startsWith('正在')} onClick={refresh}><UpdateIcon aria-hidden="true" /></button>
       </div>
       {status && <p role="status" className="usage-note">{status}</p>}
-      {!!usage?.windows.length && <ul className="usage-windows">{usage.windows.map((window, index) => {
+      {!!usage?.windows.length && <ul className="usage-windows">{usageWindowsInDisplayOrder(usage.windows).map((window, index) => {
         const name = `${window.group} · ${usageWindowName(window.minutes)}`;
         return <li className="usage-window" key={index}>
           <div className="usage-heading"><span>{name}</span><strong>{window.remainingPercent}%</strong></div>
