@@ -1074,12 +1074,12 @@
 .computer-control-row > button { min-height: 47px; border-radius: 11px; white-space: normal; }
 .computer-control-switch {
   display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 44px;
-  padding: 4px; border: 0; border-radius: 11px; background: transparent; color: var(--ink);
+  padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-subtle); color: var(--ink);
   font-size: .875rem; font-weight: 650; line-height: 1.3; text-align: start;
 }
 .computer-control-switch:disabled { opacity: .45; }
-.computer-control-switch:active:not(:disabled) { background: var(--surface-subtle); }
-.computer-control-switch[aria-checked=true] { color: var(--accent); }
+.computer-control-switch[aria-checked=true] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 22%, var(--line)); background: var(--accent-soft); }
+.computer-control-switch:active:not(:disabled) { background: var(--surface-pressed); }
 .computer-control-track {
   flex: 0 0 34px;
   height: 20px;

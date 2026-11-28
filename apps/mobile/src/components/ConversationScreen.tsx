@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption } from '../types/protocol';
+import type { ApprovalDecision, ApprovalRequest, CompactionStatus, ConnectionPhase, GitDiffSnapshot, ModelOption, PermissionMode, PromptDeliveryMode, PromptQueueItem, RemoteMessage, RemoteThread, SkillOption, ThreadState } from '../types/protocol';
 import { ApprovalCard, AsyncQuestionCard } from './ApprovalCard';
 import { encodeAsyncAnswer, isAsyncQuestionTranscript, pendingAsyncQuestions } from '../lib/asyncQuestions';
 import { CompactionStatusBar } from './CompactionStatusBar';
@@ -209,6 +209,7 @@ export type ConversationEntry =
 export function groupConversationMessages(messages: RemoteMessage[]): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
   const lastProcessByTurn = new Map<string, ConversationGroup>();
+  const processCountByTurn = new Map<string, number>();
   const durationByTurn = new Map<string, number>();
   let pending: RemoteMessage[] = [];
   const messageEntry = (message: RemoteMessage): ConversationEntry => ({
@@ -225,8 +226,10 @@ export function groupConversationMessages(messages: RemoteMessage[]): Conversati
         targetsByMessage[message.id] = messageTargets;
         for (const target of messageTargets) mergeAgentTarget(targets, target);
       }
+      const groupIndex = turnId ? (processCountByTurn.get(turnId) ?? 0) : 0;
+      if (turnId) processCountByTurn.set(turnId, groupIndex + 1);
       const group: ConversationGroup = {
-        type: turnId ? 'process' : 'tool-group', id: `${turnId ? 'process' : 'tools'}:${pending[0]!.id}`, messages: pending,
+        type: turnId ? 'process' : 'tool-group', id: turnId ? `process:${turnId}:${groupIndex}` : `tools:${pending[0]!.id}`, messages: pending,
         agentTargets: targets.size > 0 ? [...targets.values()] : EMPTY_AGENT_TARGETS,
         agentTargetsByMessage: targetsByMessage,
       };
@@ -253,8 +256,12 @@ export function groupConversationMessages(messages: RemoteMessage[]): Conversati
   return entries;
 }
 
-export function processLabel({ turnSummary }: ConversationGroup, currentTurnId?: string): string {
-  if (currentTurnId && turnSummary?.turnId === currentTurnId) return '执行中';
+export function processLabel({ turnSummary }: ConversationGroup, currentTurnId?: string, state: ThreadState = 'running'): string {
+  if (currentTurnId && turnSummary?.turnId === currentTurnId) {
+    if (state === 'waiting_input') return '等待输入';
+    if (state === 'waiting_approval') return '等待审批';
+    if (state === 'running') return '执行中';
+  }
   const duration = turnSummary?.durationMs;
   if (duration == null) return '执行过程';
   const seconds = Math.floor(duration / 1000);
@@ -314,6 +321,14 @@ export function subagentsFromConversationEntries(entries: ConversationEntry[]): 
 
 export const DEFAULT_RENDERED_ENTRY_LIMIT = 80;
 export const RENDERED_ENTRY_CHUNK = 80;
+
+function conversationEntryKey(entry: ConversationEntry) {
+  if (entry.type !== 'message') return entry.id;
+  const message = entry.message;
+  const detail = message.role === 'user' ? record(message.detail) : null;
+  const clientId = detail?.clientUserMessageId ?? detail?.clientId;
+  return typeof clientId === 'string' && clientId ? `user:${clientId}` : message.id;
+}
 
 export function conversationEntryWindow(entries: ConversationEntry[], limit: number, end = entries.length): {
   entries: ConversationEntry[];
@@ -375,9 +390,9 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   const suppressNextContentNotificationRef = useRef(false);
   const followScrollFrameRef = useRef<number | null>(null);
   const scrollTopRef = useRef(0);
+  const scrollIntentRef = useRef<{ direction: 'older' | 'newer'; until: number } | null>(null);
   const touchOriginRef = useRef<{ x: number; y: number } | null>(null);
   const olderRequestedRef = useRef(false);
-  const previousEntryCountRef = useRef(0);
   const settingsRef = useRef<HTMLDialogElement>(null);
   const actionsRef = useRef<HTMLDialogElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -389,7 +404,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   const [hasNewContent, setHasNewContent] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [renderedEntryLimit, setRenderedEntryLimit] = useState(DEFAULT_RENDERED_ENTRY_LIMIT);
-  const [frozenEntryEnd, setFrozenEntryEnd] = useState<number | null>(null);
+  const [frozenEntryEnd, setFrozenEntryEnd] = useState<{ index: number; key?: string } | null>(null);
   const [expandedToolGroupIds, setExpandedToolGroupIds] = useState<Set<string>>(() => new Set());
 
   const antigravity = thread.assistant === 'antigravity';
@@ -410,16 +425,18 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
     }
     return visible;
   }, [messages, compaction, thread.id, thread.mobileManaged, selectedAgentId]);
-  const reasoning = useMemo(() => latestReasoning(messages, currentTurnId), [currentTurnId, messages]);
+  const executing = phase === 'connected' && thread.state === 'running';
+  const reasoning = useMemo(() => executing ? latestReasoning(messages, currentTurnId) : undefined, [currentTurnId, executing, messages]);
   const conversationEntries = useMemo(
     () => resolveConversationEntryAgentNames(groupConversationMessages(orderConversationTurns(visibleMessages)), threadSubagents),
     [threadSubagents, visibleMessages],
   );
-  const historyEntryGrowth = historyAnchorRef.current
-    ? Math.max(0, conversationEntries.length - previousEntryCountRef.current)
-    : 0;
-  const effectiveRenderedEntryLimit = renderedEntryLimit + historyEntryGrowth;
-  const effectiveFrozenEntryEnd = frozenEntryEnd == null ? null : frozenEntryEnd + historyEntryGrowth;
+  const anchoredEntryEnd = useMemo(() => frozenEntryEnd?.key
+    ? conversationEntries.findIndex(entry => conversationEntryKey(entry) === frozenEntryEnd.key) + 1 : 0,
+  [conversationEntries, frozenEntryEnd?.key]);
+  const effectiveFrozenEntryEnd = frozenEntryEnd ? anchoredEntryEnd || frozenEntryEnd.index : null;
+  const effectiveRenderedEntryLimit = renderedEntryLimit + (frozenEntryEnd && anchoredEntryEnd
+    ? Math.max(0, anchoredEntryEnd - frozenEntryEnd.index) : 0);
   const renderedWindow = useMemo(
     () => conversationEntryWindow(
       conversationEntries,
@@ -462,10 +479,11 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
   );
 
   useLayoutEffect(() => {
-    previousEntryCountRef.current = conversationEntries.length;
     if (effectiveRenderedEntryLimit !== renderedEntryLimit) setRenderedEntryLimit(effectiveRenderedEntryLimit);
-    if (effectiveFrozenEntryEnd !== frozenEntryEnd) setFrozenEntryEnd(effectiveFrozenEntryEnd);
-  }, [conversationEntries.length, effectiveFrozenEntryEnd, effectiveRenderedEntryLimit, frozenEntryEnd, renderedEntryLimit]);
+    if (frozenEntryEnd && anchoredEntryEnd && frozenEntryEnd.index !== anchoredEntryEnd) {
+      setFrozenEntryEnd({ ...frozenEntryEnd, index: anchoredEntryEnd });
+    }
+  }, [anchoredEntryEnd, effectiveRenderedEntryLimit, frozenEntryEnd, renderedEntryLimit]);
 
   useEffect(() => {
     if (renderedWindow.hiddenAfter > 0) setHasNewContent(true);
@@ -476,13 +494,13 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
     previousContentKeyRef.current = '';
     followingRef.current = true;
     scrollTopRef.current = 0;
+    scrollIntentRef.current = null;
     touchOriginRef.current = null;
     olderRequestedRef.current = false;
     setHasNewContent(false);
     setAgentsExpanded(false);
     setRenderedEntryLimit(DEFAULT_RENDERED_ENTRY_LIMIT);
     setFrozenEntryEnd(null);
-    previousEntryCountRef.current = 0;
     setExpandedToolGroupIds(new Set());
     if (followScrollFrameRef.current != null) {
       window.cancelAnimationFrame(followScrollFrameRef.current);
@@ -512,7 +530,13 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       window.cancelAnimationFrame(followScrollFrameRef.current);
       followScrollFrameRef.current = null;
     }
-    setFrozenEntryEnd(conversationEntries.length);
+    const last = renderedWindow.entries.at(-1);
+    setFrozenEntryEnd({ index: renderedWindow.end, key: last ? conversationEntryKey(last) : undefined });
+  }
+
+  function noteUserScroll(direction: 'older' | 'newer') {
+    scrollIntentRef.current = { direction, until: performance.now() + 450 };
+    if (direction === 'older') pauseFollowing();
   }
 
   function loadOlder() {
@@ -668,7 +692,12 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           className="message-stream"
           aria-live="off"
           onWheel={event => {
-            if (event.deltaY < 0 && Math.abs(event.deltaY) > Math.abs(event.deltaX)) pauseFollowing();
+            if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) noteUserScroll(event.deltaY < 0 ? 'older' : 'newer');
+          }}
+          onKeyDown={event => {
+            if (event.target !== event.currentTarget) return;
+            if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)) noteUserScroll('older');
+            else if (['ArrowDown', 'PageDown', 'End', ' '].includes(event.key)) noteUserScroll('newer');
           }}
           onTouchStart={event => {
             const touch = event.touches.length === 1 ? event.touches[0] : undefined;
@@ -678,9 +707,12 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
           onTouchMove={event => {
             const start = touchOriginRef.current;
             const touch = event.touches.length === 1 ? event.touches[0] : undefined;
-            if (!start || !touch || touch.clientY - start.y < 8 || touch.clientY - start.y < Math.abs(touch.clientX - start.x)) return;
-            pauseFollowing();
-            if (event.currentTarget.scrollTop <= 3 && !olderRequestedRef.current) {
+            if (!start || !touch) return;
+            const distanceY = touch.clientY - start.y;
+            if (Math.abs(distanceY) < 8 || Math.abs(distanceY) < Math.abs(touch.clientX - start.x)) return;
+            touchOriginRef.current = { x: touch.clientX, y: touch.clientY };
+            noteUserScroll(distanceY > 0 ? 'older' : 'newer');
+            if (distanceY > 0 && event.currentTarget.scrollTop <= 3 && !olderRequestedRef.current) {
               olderRequestedRef.current = true;
               loadOlder();
             }
@@ -690,15 +722,16 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
             const top = event.currentTarget.scrollTop;
             scrollTopRef.current = top;
             const follows = nearBottom(event.currentTarget);
-            if (top < previousTop - 1 && !follows) {
-              pauseFollowing();
+            const intent = scrollIntentRef.current;
+            const direction = intent && performance.now() < intent.until ? intent.direction : undefined;
+            if (direction === 'older' && top < previousTop - 1 && !follows) {
               if (top <= 3 && !olderRequestedRef.current) {
                 olderRequestedRef.current = true;
                 loadOlder();
               }
             }
             if (top > 24) olderRequestedRef.current = false;
-            if (follows && top > previousTop + 1 && !followingRef.current) {
+            if (direction === 'newer' && follows && top > previousTop + 1 && !followingRef.current) {
               followingRef.current = true;
               setHasNewContent(false);
               if (frozenEntryEnd != null || renderedEntryLimit > DEFAULT_RENDERED_ENTRY_LIMIT) {
@@ -737,7 +770,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
               </div>
             )}
             {renderedWindow.entries.map((entry) => entry.type === 'message' ? (
-              <MessageBubble key={entry.message.id} message={entry.message} assistantName={assistantName} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} onDiscardLocalMessage={onDiscardLocalMessage} />
+              <MessageBubble key={conversationEntryKey(entry)} message={entry.message} assistantName={assistantName} agentTargets={entry.agentTargets} onOpenAgent={onOpenThread} onLoadAttachment={onLoadAttachment} onDownloadAttachment={onDownloadAttachment} onDiscardLocalMessage={onDiscardLocalMessage} />
             ) : (
               <details
                 className={`tool-call-group${entry.type === 'process' ? ' turn-process' : ''}${entry.messages.some((message) => message.status === 'streaming') ? ' is-streaming' : ''}`}
@@ -757,7 +790,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
               >
                 <summary>
                   <ChevronRightIcon className="tool-group-disclosure" />
-                  {entry.type === 'process' ? <span className="process-label">{processLabel(entry, currentTurnId)}</span> : <>
+                  {entry.type === 'process' ? <span className="process-label">{processLabel(entry, phase === 'connected' ? currentTurnId : undefined, thread.state)}</span> : <>
                     <strong>工具调用 · {entry.messages.length}</strong>
                     <small>{entry.messages.map((message) => message.toolName || '工具').slice(0, 3).join('、')}{entry.messages.length > 3 ? '…' : ''}</small>
                     <span className="tool-group-summary-actions">
@@ -784,7 +817,7 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
         )}
       </div>
 
-      <TransientActivity running={running} assistantName={assistantName} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
+      <TransientActivity running={executing} assistantName={assistantName} content={reasoning?.content} summaryId={reasoning?.id} startedAt={thread.currentTurnStartedAt} />
       <CompactionStatusBar status={compaction?.phase === 'succeeded' ? null : compaction} onDismiss={onDismissCompaction} />
       <ConversationContextPanel key={thread.id} thread={thread} messages={messages} />
       <PromptQueuePanel items={promptQueue} attention={attention?.kind === 'queue' ? attention : undefined}
@@ -890,7 +923,13 @@ export function ConversationScreen({ draftKey, inboxFile, loadInboxPreview, onCl
       <Composer draftKey={draftKey} assistantName={assistantName} waitForIdle={antigravity} modelSwitchPending={antigravity && modelPending}
         allowAttachments={!antigravity || antigravityAttachments === true} inboxFile={inboxFile} loadInboxPreview={loadInboxPreview}
         onClearInboxFile={onClearInboxFile} connected={phase === 'connected'} running={running} canInterrupt={canInterrupt}
-        canSteer={canSteer} models={models} skills={skills} onSend={onSend} onInterrupt={onInterrupt} />
+        canSteer={canSteer} models={models} skills={skills} onSend={(...args) => {
+          if (args[2] !== 'queue' && !followingRef.current) {
+            scrollToBottom();
+            scheduleFollowScroll();
+          }
+          return onSend(...args);
+        }} onInterrupt={onInterrupt} />
       {selectedAgent && (
         <div className="agent-sheet-backdrop" role="presentation" onClick={() => onSelectAgent(null)}>
           <section className="agent-sheet" role="dialog" aria-modal="true" aria-label={`${selectedAgent.label} Subagent 详情`} onClick={(event) => event.stopPropagation()}>

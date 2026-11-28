@@ -150,6 +150,10 @@ export function isActiveTurnStatus(value: unknown): boolean {
   return status === 'inprogress' || status === 'running' || status === 'active' || status === 'started';
 }
 
+function isTerminalTurnStatus(value: unknown): boolean {
+  return /^(completed|complete|failed|interrupted|cancelled|canceled|aborted)$/i.test(String(value ?? '').trim());
+}
+
 function subagentMetadataFromSource(sourceValue: unknown): { parentThreadId?: string; agentNickname?: string; agentRole?: string } {
   const source = record(sourceValue);
   const original = record(source?.original);
@@ -188,15 +192,14 @@ function normalizeSummary(thread: ThreadSummary): RemoteThread {
   };
 }
 
-export function mergeThreadSummaries(current: RemoteThread[], incoming: ThreadSummary[], replace: boolean): RemoteThread[] {
+export function mergeThreadSummaries(current: RemoteThread[], incoming: ThreadSummary[], replace: boolean, activeTurns?: Readonly<Record<string, string>>): RemoteThread[] {
   const previousById = new Map(current.map((thread) => [thread.id, thread]));
   const merged = incoming.map((thread) => {
     const summary = normalizeSummary(thread);
     const previous = previousById.get(summary.id);
-    const keepObservedState = summary.state === 'not_loaded'
-      && previous
-      && previous.state !== 'not_loaded'
-      && previous.state !== 'unknown';
+    const keepObservedState = previous && ((summary.state === 'not_loaded' && !['not_loaded', 'unknown'].includes(previous.state))
+      || (activeTurns?.[summary.id] && ['running', 'waiting_input', 'waiting_approval'].includes(previous.state)
+        && ['idle', 'unknown'].includes(summary.state)));
     previousById.delete(summary.id);
     return {
       ...previous,
@@ -338,6 +341,10 @@ function projectedUserCorrelation(value: unknown): string | undefined {
 }
 
 export function canonicalProjectedItems(items: unknown[]): unknown[] {
+  if (!items.some(value => {
+    const item = record(value);
+    return /^item-\d+$/.test(stringValue(item?.id, item?.itemId) ?? '');
+  })) return items;
   const canonicalCounts = new Map<string, number>();
   const canonicalUserCorrelations = new Map<string, number>();
   for (const value of items) {
@@ -510,9 +517,10 @@ function withoutProjectedMessageAliases(
   messages: RemoteMessage[],
   authoritative: RemoteMessage[],
 ): RemoteMessage[] {
+  if (!messages.some(message => message.role === 'assistant' && isSyntheticProjectedMessage(message))) return messages;
   const canonicalCounts = new Map<string, number>();
   for (const message of authoritative) {
-    if (isSyntheticProjectedMessage(message)) continue;
+    if (message.role !== 'assistant' || isSyntheticProjectedMessage(message)) continue;
     const fingerprint = messageProjectionFingerprint(message);
     canonicalCounts.set(fingerprint, (canonicalCounts.get(fingerprint) ?? 0) + 1);
   }
@@ -703,9 +711,10 @@ function liveInsertIndex(items: RemoteMessage[], turnId?: string): number {
   return items.length;
 }
 
-function upsertLiveItem(items: RemoteMessage[], message: RemoteMessage): RemoteMessage[] {
+export function upsertLiveItem(items: RemoteMessage[], message: RemoteMessage): RemoteMessage[] {
   const previous = items.find(item => item.id === message.id);
-  if (previous) return upsertById(items, preserveQuestionDetail(previous, message));
+  if (previous) return upsertById(items, message.status === 'streaming'
+    ? preserveFresherLiveMessage(previous, message) : preserveQuestionDetail(previous, message));
   const index = liveInsertIndex(items, message.turnId);
   return [...items.slice(0, index), message, ...items.slice(index)];
 }
@@ -929,26 +938,25 @@ export function reconcileThreadSnapshot(
     bucket.push(message);
     authoritativeByTurn.set(message.turnId, bucket);
   }
-  const liveTailByTurn = new Map<string, RemoteMessage[]>();
+  const liveByTurn = new Map<string, RemoteMessage[]>();
   for (const message of cleanedCurrent) {
-    if (!message.turnId || !covered.has(message.turnId) || overlaps(message)) continue;
-    const bucket = liveTailByTurn.get(message.turnId) ?? [];
+    if (!message.turnId || !covered.has(message.turnId)) continue;
+    const bucket = liveByTurn.get(message.turnId) ?? [];
     bucket.push(message);
-    liveTailByTurn.set(message.turnId, bucket);
+    liveByTurn.set(message.turnId, bucket);
   }
   const mergedByTurn = new Map<string, RemoteMessage[]>();
 
   for (const turnId of coveredTurnIds) {
     const canonical = authoritativeByTurn.get(turnId) ?? [];
-    // A Desktop snapshot is the canonical prefix for this turn. Only exact semantic
-    // aliases of canonical messages are removed above; unmatched live items retain their
-    // opaque IDs and stay in the event tail until a later snapshot includes them.
     const canonicalHasReasoning = canonical.some((message) => message.itemType?.toLowerCase().includes('reasoning'));
     const canonicalHasPlan = canonical.some((message) => {
       const type = message.itemType?.toLowerCase() ?? '';
       return type.includes('plan') || type.includes('todo');
     });
-    const eventTail = (liveTailByTurn.get(turnId) ?? []).filter((message) => {
+    const live = liveByTurn.get(turnId) ?? [];
+    const unmatched = new Set(live.filter((message) => {
+      if (overlaps(message)) return false;
       const type = message.itemType?.toLowerCase() ?? '';
       // Drop only projection/fallback reasoning aliases once a canonical snapshot has
       // them. A real opaque live item that is not in the snapshot yet must remain as the
@@ -959,8 +967,37 @@ export function reconcileThreadSnapshot(
       }
       if (canonicalHasPlan && (type.includes('plan') || type.includes('todo'))) return false;
       return true;
-    });
-    mergedByTurn.set(turnId, dedupeMessages([...canonical, ...eventTail]));
+    }));
+    if (unmatched.size === 0) {
+      mergedByTurn.set(turnId, canonical);
+      continue;
+    }
+    // Keep event-only items between known neighbors. If there are no two
+    // ordered anchors, the snapshot remains the prefix and the events stay in its tail.
+    const positions = new Map(canonical.map((message, index) => [message.id, index]));
+    const insertions = new Map<number, RemoteMessage[]>();
+    let previousPosition: number | undefined;
+    let pending: RemoteMessage[] = [];
+    for (const message of live) {
+      const position = positions.get(message.id);
+      if (position === undefined) {
+        if (unmatched.has(message)) pending.push(message);
+        continue;
+      }
+      if (previousPosition !== undefined && position > previousPosition && pending.length) {
+        const bucket = insertions.get(position) ?? [];
+        bucket.push(...pending);
+        insertions.set(position, bucket);
+        pending.forEach(item => unmatched.delete(item));
+        pending = [];
+      }
+      previousPosition = position;
+      pending = [];
+    }
+    mergedByTurn.set(turnId, dedupeMessages([
+      ...canonical.flatMap((message, index) => [...(insertions.get(index) ?? []), message]),
+      ...unmatched,
+    ]));
   }
 
   const result: RemoteMessage[] = [];
@@ -1003,11 +1040,15 @@ function reportedTurnDuration(turn?: UnknownRecord | null): number | undefined {
   return undefined;
 }
 
-export function normalizeThreadPayload(payload: unknown): {
+type NormalizedThreadPayload = {
   thread: RemoteThread | null;
   messages: RemoteMessage[];
   currentTurnId?: string;
-} {
+  turnIds?: string[];
+  completedTurnId?: string;
+};
+
+export function normalizeThreadPayload(payload: unknown): NormalizedThreadPayload {
   const outer = record(payload);
   const threadData = record(outer?.thread) ?? outer;
   if (!threadData) return { thread: null, messages: [] };
@@ -1015,7 +1056,9 @@ export function normalizeThreadPayload(payload: unknown): {
   if (!id) return { thread: null, messages: [] };
   const turns = Array.isArray(threadData.turns) ? threadData.turns : [];
   const messages: RemoteMessage[] = [];
+  const turnIds: string[] = [];
   let currentTurnId = stringValue(threadData.mobileActiveTurnId);
+  let completedTurnId: string | undefined;
   const reportedState = stateFromStatus(threadData.threadRuntimeStatus ?? threadData.status);
   const lastOwnedTurn = [...turns].reverse().find(value => {
     const owner = explicitThreadOwner(value);
@@ -1029,7 +1072,14 @@ export function normalizeThreadPayload(payload: unknown): {
     if (turnOwner && turnOwner !== id) return;
     const turnId = stringValue(turn.id, turn.turnId) ?? `turn_${turnIndex}`;
     const turnStatus = String(turn.status ?? '').toLowerCase();
-    if (turnValue === lastOwnedTurn && isActiveTurnStatus(turnStatus)) currentTurnId = turnId;
+    turnIds.push(turnId);
+    if (turnValue === lastOwnedTurn) {
+      if (isActiveTurnStatus(turnStatus)) currentTurnId = turnId;
+      if (isTerminalTurnStatus(turnStatus)) {
+        completedTurnId = turnId;
+        if (currentTurnId === turnId) currentTurnId = undefined;
+      }
+    }
     const ownedItems = (Array.isArray(turn.items) ? turn.items : []).filter((item) => {
       const itemOwner = explicitThreadOwner(item);
       return !itemOwner || itemOwner === id;
@@ -1088,7 +1138,17 @@ export function normalizeThreadPayload(payload: unknown): {
     },
     messages,
     currentTurnId,
+    turnIds,
+    completedTurnId,
   };
+}
+
+export function keepObservedTurn(snapshot: NormalizedThreadPayload, currentTurnId: string | undefined, finishedTurns: ReadonlySet<string>): boolean {
+  const thread = snapshot.thread;
+  if (!thread) return false;
+  if (snapshot.currentTurnId && finishedTurns.has(`${thread.id}\u0000${snapshot.currentTurnId}`)) return true;
+  if (!currentTurnId || snapshot.currentTurnId === currentTurnId) return false;
+  return !snapshot.turnIds?.includes(currentTurnId) || (!snapshot.currentTurnId && !snapshot.completedTurnId);
 }
 
 function normalizeApproval(approval: WireApprovalRequest): ApprovalRequest {
@@ -1428,10 +1488,6 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
   }, [selectedThreadId]);
 
   useEffect(() => {
-    turnIdsRef.current = turnIds;
-  }, [turnIds]);
-
-  useEffect(() => {
     approvalsRef.current = approvals;
   }, [approvals]);
 
@@ -1534,16 +1590,21 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     }
   }, [reportCompactionFailure, updateCompactionStatus]);
 
-  const updateThreadState = useCallback((threadId: string, state: ThreadState) => {
-    setThreads((current) => {
-      const updated = sortThreads(
-        current.map((thread) =>
-          thread.id === threadId ? { ...thread, state, updatedAt: Date.now() } : thread,
-        ),
-      );
-      threadsRef.current = updated;
-      return updated;
-    });
+  const setCurrentTurn = useCallback((threadId: string, turnId?: string) => {
+    const next = turnIdsAfterSnapshot(turnIdsRef.current, threadId, turnId);
+    if (next === turnIdsRef.current) return;
+    turnIdsRef.current = next;
+    setTurnIds(next);
+  }, []);
+
+  const updateThreadState = useCallback((threadId: string, state: ThreadState,
+    runtime?: Partial<Pick<RemoteThread, 'currentTurnStartedAt' | 'lastTurnDurationMs' | 'mobileManaged' | 'mobileRuntimeActive'>>,
+  ) => {
+    const updated = sortThreads(threadsRef.current.map(thread =>
+      thread.id === threadId ? { ...thread, state, updatedAt: Date.now(), ...runtime } : thread,
+    ));
+    threadsRef.current = updated;
+    setThreads(updated);
   }, []);
 
   const queueAttentionCancellation = useCallback((threadId: string, kind: 'approval' | 'input') => {
@@ -1661,6 +1722,22 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     }
   }, [clearThreadAttentionNotification, updateAttentionNotification]);
 
+  const applyThreadSnapshot = useCallback((snapshot: NormalizedThreadPayload) => {
+    const thread = snapshot.thread;
+    if (!thread) return;
+    const previous = threadsRef.current.find(candidate => candidate.id === thread.id);
+    if (previous && keepObservedTurn(snapshot, turnIdsRef.current[thread.id], terminalMessageTurnsRef.current)) {
+      replaceThreadsAndSyncAttention(sortThreads(upsertById(threadsRef.current, {
+        ...thread, state: previous.state, currentTurnStartedAt: previous.currentTurnStartedAt, updatedAt: Math.max(thread.updatedAt, previous.updatedAt),
+        lastTurnDurationMs: previous.lastTurnDurationMs, mobileRuntimeActive: previous.mobileRuntimeActive,
+      })));
+      return;
+    }
+    if (snapshot.completedTurnId) terminalMessageTurnsRef.current.add(`${thread.id}\u0000${snapshot.completedTurnId}`);
+    setCurrentTurn(thread.id, snapshot.currentTurnId);
+    replaceThreadsAndSyncAttention(sortThreads(upsertById(threadsRef.current, thread)));
+  }, [replaceThreadsAndSyncAttention, setCurrentTurn]);
+
   const forgetAntigravityThread = useCallback((threadId: string) => {
     if (!threadId.startsWith('antigravity:')) return;
     replaceThreadsAndSyncAttention(threadsRef.current.filter(thread => thread.id !== threadId));
@@ -1752,24 +1829,24 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           observeCompactionSnapshot({ thread: params.thread }, normalized.thread.id);
           const latestTodo = latestPlanMessage(normalized.messages);
           if (latestTodo) setTodoByThread((current) => ({ ...current, [normalized.thread!.id]: latestTodo }));
-          replaceThreadsAndSyncAttention(sortThreads(upsertById(threadsRef.current, normalized.thread!)));
+          applyThreadSnapshot(normalized);
           if (selectedThreadRef.current === normalized.thread.id) {
             const observedTurnId = normalized.currentTurnId ?? normalized.messages.at(-1)?.turnId;
             setMessagesByThread((current) => ({ ...current, [normalized.thread!.id]: reconcileThreadSnapshot(current[normalized.thread!.id] ?? [], normalized.messages, normalized.thread!.id, observedTurnId) }));
             if (normalized.thread.model) setSelectedModelState(normalized.thread.model);
             if (normalized.thread.effort) setSelectedEffortState(normalized.thread.effort);
             if (normalized.thread.permissionMode) applyPermissionModeSnapshot(normalized.thread.id, normalized.thread.permissionMode);
-            setTurnIds((current) => turnIdsAfterSnapshot(current, normalized.thread!.id, normalized.currentTurnId));
           }
         }
         return;
       }
       if (method === 'thread/status/changed' && threadId) {
+        if (turnId && turnIdsRef.current[threadId] && turnId !== turnIdsRef.current[threadId]) return;
         const nextState = stateFromStatus(params?.status);
         updateThreadState(threadId, nextState);
         updateAttentionNotification(threadId, nextState);
         if (!['running', 'waiting_approval', 'waiting_input'].includes(nextState)) {
-          setTurnIds((current) => turnIdsAfterSnapshot(current, threadId));
+          setCurrentTurn(threadId);
         }
         return;
       }
@@ -1794,8 +1871,8 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         return;
       }
       if (method === 'turn/started' && threadId && turnId) {
-        terminalMessageTurnsRef.current.delete(`${threadId}\u0000${turnId}`);
-        setTurnIds((current) => ({ ...current, [threadId]: turnId }));
+        if (terminalMessageTurnsRef.current.has(`${threadId}\u0000${turnId}`)) return;
+        setCurrentTurn(threadId, turnId);
         const turn = record(params?.turn);
         const startedAt = timestamp(turn?.startedAt ?? turn?.turnStartedAtMs ?? turn?.startedAtMs ?? params?.startedAtMs ?? Date.now());
         if (turnHasContextCompaction(turn)) {
@@ -1803,12 +1880,8 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           compactionTurnIdsRef.current[threadId].add(turnId);
           updateCompactionStatus(threadId, { phase: 'running', startedAt, turnId, automatic: !compactionsRef.current[threadId] });
         }
-        setThreads((current) => {
-          const updated = current.map((thread) => thread.id === threadId ? { ...thread, state: 'running' as const, currentTurnStartedAt: startedAt,
-            ...(params?.mobileRuntimeActive === true ? { mobileManaged: true, mobileRuntimeActive: true } : {}) } : thread);
-          threadsRef.current = updated;
-          return updated;
-        });
+        updateThreadState(threadId, 'running', { currentTurnStartedAt: startedAt,
+          ...(params?.mobileRuntimeActive === true ? { mobileManaged: true, mobileRuntimeActive: true } : {}) });
         updateAttentionNotification(threadId, 'running');
         return;
       }
@@ -1816,7 +1889,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         if (turnId) terminalMessageTurnsRef.current.add(`${threadId}\u0000${turnId}`);
         const turn = record(params?.turn);
         const activeTurn = turnIdsRef.current[threadId];
-        if (activeTurn && turnId && activeTurn !== turnId) return;
+        const belongsToPreviousTurn = Boolean(activeTurn && turnId && activeTurn !== turnId);
         const failed = String(turn?.status ?? '').toLowerCase() === 'failed';
         const quotaLimited = turn?.quotaLimited === true;
         const error = record(turn?.error);
@@ -1825,7 +1898,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         const trackedCompaction = Boolean(turnId && compactionTurnIdsRef.current[threadId]?.has(turnId));
         const activeCompaction = compactionsRef.current[threadId];
         const isCompactionTurn = trackedCompaction || (Boolean(activeCompaction) && ['requested', 'running', 'retrying'].includes(activeCompaction.phase) && turnHasContextCompaction(turn));
-        if (isCompactionTurn) {
+        if (!belongsToPreviousTurn && isCompactionTurn) {
           if (failed || turnStatus.includes('interrupt')) {
             reportCompactionFailure(threadId, errorText ?? (turnStatus.includes('interrupt') ? '上下文压缩被中断' : '上下文压缩失败'), turnId);
           } else {
@@ -1833,24 +1906,12 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           }
           if (turnId) compactionTurnIdsRef.current[threadId]?.delete(turnId);
         }
-        setTurnIds((current) => {
-          const next = { ...current };
-          delete next[threadId];
-          return next;
-        });
         const durationMs = reportedTurnDuration(turn);
         const completedThreadState: ThreadState = quotaLimited ? 'quota_limited' : failed ? 'error' : 'idle';
-        setThreads((current) => {
-          const updated = current.map((thread) => thread.id === threadId ? {
-            ...thread,
-            state: completedThreadState,
-            currentTurnStartedAt: undefined,
-            lastTurnDurationMs: durationMs,
-            updatedAt: Date.now(),
-          } : thread);
-          threadsRef.current = updated;
-          return updated;
-        });
+        if (!belongsToPreviousTurn) {
+          setCurrentTurn(threadId);
+          updateThreadState(threadId, completedThreadState, { currentTurnStartedAt: undefined, lastTurnDurationMs: durationMs });
+        }
         setMessagesByThread((current) => {
           const completed = messagesForThread(threadId, current[threadId] ?? []).map((message) => {
             if (turnId && message.turnId && message.turnId !== turnId) return message;
@@ -1861,19 +1922,21 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
               ? { ...finished, turnDurationMs: durationMs } : finished;
           });
           if (failed && errorText) {
-            completed.push({
+            return { ...current, [threadId]: upsertLiveItem(completed, {
               id: `${turnId ?? 'turn'}_error`,
               threadId,
+              turnId,
               role: 'system',
               content: errorText,
               createdAt: Date.now(),
               timestampSource: 'live',
               status: 'failed',
               toolName: '错误',
-            });
+            }) };
           }
           return { ...current, [threadId]: completed };
         });
+        if (belongsToPreviousTurn) return;
         if (failed && errorText && !isCompactionTurn && !quotaLimited) setLastError(errorText);
         const completedThread = threadsRef.current.find((thread) => thread.id === threadId);
         const threadTitle = completedThread?.title ?? 'Codex 任务';
@@ -1905,7 +1968,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         const error = record(params?.error);
         if (params?.quotaLimited === true && params.willRetry === false) {
           updateThreadState(threadId, 'quota_limited');
-          setTurnIds(current => turnIdsAfterSnapshot(current, threadId));
+          setCurrentTurn(threadId);
           clearThreadAttentionNotification(threadId);
           return;
         }
@@ -2000,8 +2063,8 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       if ((method === 'item/started' || method === 'item/completed') && threadId && item) {
         const terminalItemKey = `${threadId}\u0000${itemId}`;
         if (method === 'item/started') {
-          terminalMessageItemsRef.current.delete(terminalItemKey);
-          terminalMessageItemsRef.current.delete(`${terminalItemKey}_detail`);
+          if (terminalMessageItemsRef.current.has(terminalItemKey)
+            || (turnId && terminalMessageTurnsRef.current.has(`${threadId}\u0000${turnId}`))) return;
         } else {
           terminalMessageItemsRef.current.add(terminalItemKey);
           terminalMessageItemsRef.current.add(`${terminalItemKey}_detail`);
@@ -2067,7 +2130,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
         appendDelta(threadId, turnId, itemId, textFromContent(params?.delta), 'tool', '命令输出');
       }
     },
-    [appendDelta, clearThreadAttentionNotification, flushPendingMessageDeltas, observeCompactionSnapshot, replaceThreadsAndSyncAttention, reportCompactionFailure, updateAttentionNotification, updateCompactionStatus, updateThreadState],
+    [appendDelta, applyThreadSnapshot, clearThreadAttentionNotification, flushPendingMessageDeltas, observeCompactionSnapshot, reportCompactionFailure, setCurrentTurn, updateAttentionNotification, updateCompactionStatus, updateThreadState],
   );
 
   const handleMessage = useCallback(
@@ -2115,6 +2178,11 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
             replaceThreadsAndSyncAttention([]);
             setMessagesByThread({});
             setHistoryByThread({});
+            turnIdsRef.current = {};
+            setTurnIds({});
+            pendingMessageDeltasRef.current.clear();
+            terminalMessageItemsRef.current.clear();
+            terminalMessageTurnsRef.current.clear();
             threadIndexVersionRef.current = 0;
             syncCursorRef.current = 0;
           }
@@ -2166,13 +2234,13 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           }
           break;
         case 'threads': {
-          replaceThreadsAndSyncAttention(mergeThreadSummaries(threadsRef.current, message.threads, true));
+          replaceThreadsAndSyncAttention(mergeThreadSummaries(threadsRef.current, message.threads, true, turnIdsRef.current));
           break;
         }
         case 'threads.snapshot': {
           if (message.requestId) syncChecks.current.get(message.requestId)?.(true);
           threadIndexVersionRef.current = message.version;
-          replaceThreadsAndSyncAttention(mergeThreadSummaries(threadsRef.current, message.threads, true));
+          replaceThreadsAndSyncAttention(mergeThreadSummaries(threadsRef.current, message.threads, true, turnIdsRef.current));
           break;
         }
         case 'threads.delta':
@@ -2185,7 +2253,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           replaceThreadsAndSyncAttention(mergeThreadSummaries(
             threadsRef.current.filter((thread) => !message.removedIds.includes(thread.id)),
             message.upserts,
-            false,
+            false, turnIdsRef.current,
           ));
           break;
         case 'archive.result':
@@ -2290,13 +2358,14 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           break;
         }
         case 'thread': {
+          flushPendingMessageDeltas();
           const normalized = normalizeThreadPayload(message.thread);
           if (!normalized.thread) break;
           if (message.requestId) sendReceipts.current.get(message.requestId)?.(true);
           observeCompactionSnapshot(message.thread, normalized.thread.id);
           const latestTodo = latestPlanMessage(normalized.messages);
           if (latestTodo) setTodoByThread((current) => ({ ...current, [normalized.thread!.id]: latestTodo }));
-          replaceThreadsAndSyncAttention(sortThreads(upsertById(threadsRef.current, normalized.thread!)));
+          applyThreadSnapshot(normalized);
           const isSelectedLiveSnapshot = selectedThreadRef.current === normalized.thread.id && !message.history;
           const observedTurnId = normalized.currentTurnId ?? normalized.messages.at(-1)?.turnId;
           setMessagesByThread((current) => ({
@@ -2312,7 +2381,6 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
           }));
           if (![...olderHistoryRequests.current.values()].includes(normalized.thread.id))
             setHistoryLoadingByThread((current) => ({ ...current, [normalized.thread!.id]: false }));
-          setTurnIds((current) => turnIdsAfterSnapshot(current, normalized.thread!.id, normalized.currentTurnId));
           const activatesThread = consumeThreadActivationIntent(
             pendingThreadStartRequestsRef.current,
             message.requestId,
@@ -2355,9 +2423,11 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
               item.id === `local_${message.requestId}`
                 ? { ...item, deliveryAcknowledged: true, turnId: turnId ?? item.turnId, content: displayedText ?? item.content } : item),
           }));
+          if (isTerminalTurnStatus(turn?.status) || (turnId && terminalMessageTurnsRef.current.has(`${message.threadId}\u0000${turnId}`))) break;
           if (message.threadId.startsWith('antigravity:') && !isActiveTurnStatus(turn?.status)) break;
-          if (turnId) setTurnIds((current) => ({ ...current, [message.threadId]: turnId }));
-          updateThreadState(message.threadId, 'running');
+          if (turnId && turnIdsRef.current[message.threadId] === turnId) break;
+          if (turnId) setCurrentTurn(message.threadId, turnId);
+          updateThreadState(message.threadId, 'running', { currentTurnStartedAt: timestamp(turn?.startedAt ?? turn?.turnStartedAtMs) });
           updateAttentionNotification(message.threadId, 'running');
           break;
         }
@@ -2478,7 +2548,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
               }));
               if (message.code === 'usage_limit_reached') {
                 updateThreadState(threadId, 'quota_limited');
-                setTurnIds(current => turnIdsAfterSnapshot(current, threadId));
+                setCurrentTurn(threadId);
               }
             }
             if (!message.threadId || selectedThreadRef.current === message.threadId) setLastError(message.message);
@@ -2535,7 +2605,7 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
       }
       if (typeof message.syncCursor === 'number') syncCursorRef.current = Math.max(syncCursorRef.current, message.syncCursor);
     },
-    [applyPermissionModeSnapshot, cancelUsageRequest, clearThreadAttentionNotification, forgetAntigravityThread, handleEvent, observeCompactionSnapshot, refreshUsage, replaceThreadsAndSyncAttention, reportCompactionFailure, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
+    [applyPermissionModeSnapshot, applyThreadSnapshot, cancelUsageRequest, clearThreadAttentionNotification, flushPendingMessageDeltas, forgetAntigravityThread, handleEvent, observeCompactionSnapshot, refreshUsage, replaceThreadsAndSyncAttention, reportCompactionFailure, setCurrentTurn, setSelectedPermissionMode, showPermissionModeStatus, updateAttentionNotification, updateCompactionStatus, updateThreadState],
   );
   handleMessageRef.current = handleMessage;
 
@@ -2575,6 +2645,9 @@ export function useRemote(config: RemoteConfig | null, deleteAttachmentsAfterTur
     notifiedAttentionStateByThreadRef.current = {};
     setTurnIds({});
     turnIdsRef.current = {};
+    pendingMessageDeltasRef.current.clear();
+    terminalMessageItemsRef.current.clear();
+    terminalMessageTurnsRef.current.clear();
     setLastError('');
     setCompactionsByThread({});
     compactionsRef.current = {};

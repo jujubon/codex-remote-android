@@ -227,6 +227,15 @@ describe('turn process disclosure', () => {
     expect(labels(snapshot(), 'turn')).toEqual(['执行中']);
   });
 
+  it('keeps the process identity when earlier tools arrive and uses the actual waiting state', () => {
+    const initial = groupConversationMessages(snapshot()).find(entry => entry.type === 'process');
+    const expandedHistory = groupConversationMessages(snapshot({ items: [items[0], { type: 'commandExecution', id: 'early', command: 'prepare' }, ...items.slice(1)] }))
+      .find(entry => entry.type === 'process');
+    expect(expandedHistory?.id).toBe(initial?.id);
+    expect(processLabel(expandedHistory!, 'turn', 'waiting_approval')).toBe('等待审批');
+    expect(processLabel(expandedHistory!, 'turn', 'waiting_input')).toBe('等待输入');
+  });
+
   it('keeps failed commands in the same collapsed process with their original details', () => {
     const failures = [542, 1500, 237].map((durationMs, index) => ({
       type: 'commandExecution', id: `failed-${index}`, command: 'check build', status: 'failed', durationMs,

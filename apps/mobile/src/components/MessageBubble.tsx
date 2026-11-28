@@ -5,11 +5,13 @@ import { Markdown } from './Markdown';
 import { ChevronRightIcon } from './Icons';
 import { canDiscardLocalMessage } from '../hooks/useRemote';
 
+const messageTime = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
 export function displayTime(timestamp: number, source?: RemoteMessage['timestampSource']): string {
   if (!source || source === 'turn' || !timestamp || timestamp <= 0) return '';
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';
-  const formatted = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date);
+  const formatted = messageTime.format(date);
   return source === 'observed' ? `≈${formatted}` : formatted;
 }
 

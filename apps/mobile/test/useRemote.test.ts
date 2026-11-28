@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyPendingMessageDeltas, canonicalProjectedItems, compactionStatusFromThreadPayload, consumeThreadActivationIntent, contextCompactionItemIdsFromThreadPayload, createSelectedMessagesSelector, dedupeMessages, eventThreadId, isActiveTurnStatus, normalizeThreadPayload, optimisticAttachmentsFromUploads, permissionModeLabel, reconcileMessages, reconcileThreadSnapshot, shouldApplyPermissionModeSnapshot, shouldNotifyThreadCompletion, staleApprovalWireIds, stateFromStatus, turnIdsAfterSnapshot, visibleUserText } from '../src/hooks/useRemote';
 import type { RemoteMessage } from '../src/types/protocol';
-import { canDiscardLocalMessage, orderConversationTurns } from '../src/hooks/useRemote';
+import { canDiscardLocalMessage, keepObservedTurn, orderConversationTurns, upsertLiveItem } from '../src/hooks/useRemote';
 import { encodeAsyncAnswer, isAsyncQuestionTranscript, pendingAsyncQuestions } from '../src/lib/asyncQuestions';
 
 function user(id: string, content: string, createdAt: number): RemoteMessage {
@@ -278,6 +278,32 @@ describe('Selected message reference stability', () => {
 });
 
 describe('Desktop/mobile reconciliation', () => {
+  it('ignores old or incomplete runtime snapshots while preserving confirmations for the active turn', () => {
+    const snapshot = (turns: unknown[]) => normalizeThreadPayload({ id: 'thread', status: { type: 'idle' }, turns });
+    const old = { id: 'old', status: 'completed', items: [] };
+    const empty = snapshot([]);
+    const older = snapshot([old]);
+    const finishing = snapshot([old, { id: 'live', status: 'completed', items: [] }]);
+    expect(keepObservedTurn(empty, 'live', new Set())).toBe(true);
+    expect(keepObservedTurn(older, 'live', new Set())).toBe(true);
+    expect(keepObservedTurn(finishing, 'live', new Set())).toBe(false);
+    expect(keepObservedTurn(snapshot([{ ...old, status: 'inProgress' }]), undefined, new Set(['thread\u0000old']))).toBe(true);
+  });
+
+  it('preserves intervening live messages when a partial snapshot spans the same anchors', () => {
+    const prompt = { ...user('prompt', 'question', 1), turnId: 'turn' };
+    const hint = { ...user('local_hint', 'more context', 2), turnId: 'turn', deliveryAcknowledged: true };
+    const reply = { ...user('stream-reply', 'partial reply', 3), role: 'assistant' as const, turnId: 'turn' };
+    expect(reconcileThreadSnapshot([prompt, hint, reply], [prompt, reply]).map(item => item.id))
+      .toEqual(['prompt', 'local_hint', 'stream-reply']);
+  });
+
+  it('does not replace already streamed text with a delayed item start', () => {
+    const live = { ...user('reply', '已有流式内容', 1), role: 'assistant' as const, turnId: 'turn', status: 'streaming' as const };
+    const delayedStart = { ...live, content: '', assistantPhase: 'commentary' as const };
+    expect(upsertLiveItem([live], delayedStart)[0]).toMatchObject({ content: live.content, assistantPhase: 'commentary' });
+  });
+
   it('keeps a pending send after history that arrives late, for both open pages and live snapshots', () => {
     const pending = user('local_send', 'new', 20);
     const old = { ...user('old', 'previous reply', 10), role: 'assistant' as const, turnId: 'old-turn' };
