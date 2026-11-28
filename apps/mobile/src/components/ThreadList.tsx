@@ -3,7 +3,8 @@ import { threadStateLabel } from '../hooks/useRemote';
 import type { Assistant, ConnectionPhase, RemoteThread } from '../types/protocol';
 import { ConnectionStatus } from './ConnectionStatus';
 import { ElapsedTime } from './ElapsedTime';
-import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EditIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SearchIcon, SettingsIcon, TrashIcon } from './Icons';
+import { ArchiveIcon, ChatIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, EditIcon, EyeIcon, FolderIcon, MoreIcon, PlusIcon, SettingsIcon, TrashIcon } from './Icons';
+import { SearchField } from './SearchField';
 import { SwipeActions } from './SwipeActions';
 import { closeDialogForHandoff } from '../lib/dialogMotion';
 import { AssistantSettingsSheet } from './AssistantSettingsSheet';
@@ -429,11 +430,7 @@ export function ThreadList({ assistant, canCreate, desktopAction, position, onAr
       </div>}
       <div className="thread-browser">
         <div className="project-search-row">
-          <div className="project-search">
-            <SearchIcon />
-            <input type="search" aria-label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={event => updateQuery(event.target.value)} />
-            {query && <button className="nav-icon-button" type="button" aria-label="清空搜索" onClick={() => updateQuery('')}><CloseIcon /></button>}
-          </div>
+          <SearchField label="搜索项目或对话" placeholder="搜索项目、对话或消息" value={query} onChange={updateQuery} />
           <button type="button" className="nav-icon-button project-management-button" title="管理项目与对话"
             aria-label="管理项目与对话" aria-haspopup="dialog" onClick={() => manageRef.current?.showModal()}><MoreIcon /></button>
         </div>

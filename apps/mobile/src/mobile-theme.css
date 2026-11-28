@@ -82,7 +82,7 @@
   padding: 4px calc(var(--app-safe-right) + var(--project-gutter)) 4px calc(var(--app-safe-left) + var(--project-gutter));
   background: var(--bg);
 }
-.project-search {
+.search-field {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -94,9 +94,9 @@
   color: var(--muted);
   transition: border-color var(--motion-fade) var(--ease-out), box-shadow var(--motion-fade) var(--ease-out);
 }
-.project-search > svg { flex: none; width: 19px; height: 19px; }
-.project-search:focus-within { border-color: #9783d8; box-shadow: 0 0 0 2px var(--accent-soft); }
-.project-search input {
+.search-field > svg { flex: none; width: 19px; height: 19px; }
+.search-field:focus-within { border-color: #9783d8; box-shadow: 0 0 0 2px var(--accent-soft); }
+.search-field input {
   min-width: 0;
   flex: 1;
   padding: 0;
@@ -106,8 +106,8 @@
   box-shadow: none;
   font-size: 13px;
 }
-.project-search input::-webkit-search-cancel-button { display: none; }
-.project-search button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; }
+.search-field input::-webkit-search-cancel-button { display: none; }
+.search-field button { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; }
 .segmented-controls {
   --segments: 2;
   --selected-segment: 0;
@@ -655,14 +655,14 @@
 .nav-icon-button > svg { display: block; width: 20px; height: 20px; }
 .nav-icon-button:active, .nav-icon-button[aria-expanded=true] { background: var(--accent-soft); color: var(--accent); }
 .project-heading .nav-icon-button { margin-block: 2px; }
-.project-search .nav-icon-button { width: 44px; height: 44px; }
+.search-field .nav-icon-button { width: 44px; height: 44px; }
 .top-actions .nav-icon-button { width: 44px; }
 .back-button.nav-icon-button { color: var(--ink); }
 
 .project-list-toolbar { min-height: 46px; display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: var(--muted); font-size: .8125rem; }
 .project-list-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .project-search-row { display: flex; align-items: stretch; gap: 8px; }
-.project-search-row .project-search { flex: 1; min-width: 0; }
+.project-search-row .search-field { flex: 1; min-width: 0; }
 .project-search-row .project-management-button { flex: 0 0 46px; min-height: 46px; height: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .project-search-row .project-management-button:active { background: var(--accent-soft); }
 .project-counts { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; line-height: 1.35; }
@@ -1052,10 +1052,6 @@
 .mail-symbol, .mail-row-icon { display: grid; place-items: center; flex: none; color: var(--accent); background: var(--accent-soft); }
 .mail-symbol { width: 52px; height: 52px; border-radius: 16px; }
 .mail-symbol svg { width: 25px; height: 25px; }
-.mail-search { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 9px;
-  min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--muted); }
-.mail-search svg { width: 18px; height: 18px; }
-.mail-search input { min-width: 0; padding: 10px 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: .875rem; }
 .mail-list-controls, .mail-row-meta { display: flex; align-items: center; justify-content: space-between; gap: 7px; min-width: 0; }
 .mail-list-controls small, .mail-row-meta time { color: var(--muted); font-size: .72rem; white-space: nowrap; }
 .mail-filters { display: flex; gap: 4px; padding: 3px; border-radius: 12px; background: var(--surface-pressed); }

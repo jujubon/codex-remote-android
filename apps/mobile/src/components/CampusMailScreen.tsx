@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { RemoteConfig } from '../lib/configStore';
 import { deviceRequest } from '../lib/deviceTools';
 import { AssistantSettingsSheet } from './AssistantSettingsSheet';
-import { ChevronRightIcon, MailIcon, SearchIcon, SettingsIcon, UpdateIcon } from './Icons';
+import { ChevronRightIcon, MailIcon, SettingsIcon, UpdateIcon } from './Icons';
+import { SearchField } from './SearchField';
 
 type Row = { id: string; subject: string; sender: string; receivedAt: number; priority: boolean; summary?: string };
 type Detail = Omit<Row, 'summary'> & { address: string; body: string; truncated: boolean; summaryFailed?: boolean;
@@ -102,8 +103,7 @@ export function CampusMailScreen({ config, connectionUrl, connected, revision, t
         <button className="primary-button" type="button" onClick={() => settingsSheet.current?.showModal()}>查看连接方法</button>
       </section>}
       {inbox?.configured && <>
-        <label className="mail-search"><SearchIcon /><input type="search" value={query} placeholder="搜索主题、发件人或摘要"
-          aria-label="搜索邮件" onChange={event => setQuery(event.target.value)} /></label>
+        <SearchField label="搜索邮件" placeholder="搜索主题、发件人或摘要" value={query} onChange={setQuery} />
         <div className="mail-list-controls">
           <div className="mail-filters" aria-label="筛选邮件">
             <button type="button" aria-pressed={!priorityOnly} onClick={() => setPriorityOnly(false)}>全部</button>
