@@ -124,7 +124,7 @@ export function DeviceTools({ config, status, updateStatus, runningThreadId, con
           {status?.awakeUntil && <span className="computer-status-pill" data-tone="success">挂机中</span>}
         </ComputerCardHeading>}
         {displayControl ? <div className="computer-control-grid">
-          <div className="computer-control-row" role="group" aria-label="开关">
+          <div className="computer-control-row" role="group" aria-label="屏幕与声音">
             <ComputerControlSwitch label="熄屏挂机" checked={displayOff} disabled={controlsDisabled}
               onToggle={() => void run('screen', async () => {
                 const display = await deviceRequest<{ displayOff: boolean }>(config, 'display/power', { displayOff: !displayOff });
@@ -228,7 +228,7 @@ function ComputerControlSwitch({ label, checked, disabled, onToggle }: {
   disabled: boolean;
   onToggle: () => void;
 }) {
-  return <button type="button" className="secondary-button computer-control-switch" role="switch" aria-label={label}
+  return <button type="button" className="computer-control-switch" role="switch"
     aria-checked={checked === true} disabled={disabled || checked === undefined} onClick={onToggle}>
     <span>{label}</span><span className="computer-control-track" aria-hidden="true" />
   </button>;

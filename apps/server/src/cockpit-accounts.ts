@@ -10,7 +10,7 @@ type Operation = { operation: "list"; platform: "codex" } |
   { operation: "quota"; platform: "codex"; accountId: string; refresh: boolean } |
   { operation: "switch"; platform: "codex"; accountId: string };
 type Target = { id: string; key: string; email?: string; label: string; plan?: string };
-type SwitchStatus = { id: string; stage: "switching" | "verified" | "unverified" | "failed"; message?: string };
+type SwitchStatus = { id: string; stage: "switching" | "verified" | "unverified" | "failed"; desktop?: "open" | "unconfirmed"; message?: string };
 type VerifyAccount = () => Promise<boolean>;
 
 function row(value: unknown) {
@@ -122,6 +122,7 @@ export class CockpitAccounts {
 
   constructor(private readonly bridge: Pick<AppServerBridge, "request" | "restart">,
     private readonly acquireIdle: () => boolean, private readonly releaseIdle: (verifyUsageAccount?: VerifyAccount) => void,
+    private readonly ensureDesktopOpen: () => Promise<boolean>,
     codexHome: string, home = homedir()) {
     this.home = home;
     this.supported = process.platform === "win32" && resolve(codexHome).toLowerCase() === resolve(home, ".codex").toLowerCase();
@@ -216,10 +217,13 @@ export class CockpitAccounts {
     try {
       const receipt = row(await automation(this.home, { operation: "switch", platform: "codex", accountId: target.id }));
       if (receipt?.accountId !== target.id || receipt.platform !== "codex") throw conflict("切换回执不完整，请在电脑上核对账号。");
-      const reloaded = await this.bridge.restart().then(() => true, () => false);
+      const [reloaded, opened] = await Promise.all([
+        this.bridge.restart().then(() => true, () => false),
+        this.ensureDesktopOpen().catch(() => false),
+      ]);
       const verified = reloaded && await verifyUsageAccount();
       if (!verified) quotaGuard = verifyUsageAccount;
-      this.operation = { id: operation.id, stage: verified ? "verified" : "unverified" };
+      this.operation = { id: operation.id, stage: verified ? "verified" : "unverified", desktop: opened ? "open" : "unconfirmed" };
     } catch (error) {
       this.operation = { id: operation.id, stage: "failed", message: error instanceof FileTransferError
         ? error.message : "暂未确认切换，请在电脑上核对当前账号。" };

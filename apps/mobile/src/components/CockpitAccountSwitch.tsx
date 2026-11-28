@@ -10,7 +10,7 @@ type Quota = {
   windows: { kind: 'hourly' | 'weekly'; remainingPercent: number; minutes: number | null; resetsAt: number | null }[];
 };
 type Account = { key: string; label: string; plan?: string; current: boolean; quota?: Quota };
-type Operation = { id: string; stage: 'switching' | 'verified' | 'unverified' | 'failed'; message?: string };
+type Operation = { id: string; stage: 'switching' | 'verified' | 'unverified' | 'failed'; desktop?: 'open' | 'unconfirmed'; message?: string };
 
 function AccountQuota({ quota, error, loading }: { quota?: Quota; error?: string; loading: boolean }) {
   const checked = quota?.checkedAt ? formatQuotaTime(quota.checkedAt) : '';
@@ -118,9 +118,11 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
     return () => { active = false; clearTimeout(timer); };
   }, [config, job?.id, refresh, switching]);
 
-  const status = switching ? '正在切换并重新连接 Codex…'
-    : job?.stage === 'verified' ? '手机端已验证新账号。若电脑桌面仍显示旧账号，关闭并重新打开 Codex Desktop。'
-    : job?.stage === 'unverified' ? 'Cockpit 已应用切换。当前账号暂未验证，请重新打开 Codex Desktop 并核对。'
+  const desktopStatus = job?.desktop === 'open' ? 'Codex 桌面已打开。'
+    : job?.desktop === 'unconfirmed' ? '暂未确认桌面打开，可在 Codex 首页点「启动」。' : '';
+  const status = switching ? '正在切换账号并连接 Codex…'
+    : job?.stage === 'verified' ? `新账号已验证。${desktopStatus}`
+    : job?.stage === 'unverified' ? `Cockpit 已应用切换，手机暂未确认新账号。${desktopStatus}请在电脑上核对。`
     : job?.message;
 
   const controlsDisabled = busy || switching || Boolean(quotaReading);
@@ -139,7 +141,7 @@ export function CockpitAccountSwitch({ config: { serverUrl, pairingToken }, onVe
     {expanded && <div className="cockpit-accounts-body">
       {(error || status) && <p className="computer-feedback" data-tone={error || job?.stage === 'failed' ? 'error' : undefined} role="status">{error || status}</p>}
       {selected ? <div className="cockpit-confirm">
-        <p>切换到 <strong>{selected.label}</strong>？请先结束电脑上正在运行的 Codex 任务。</p>
+        <p>切换到 <strong>{selected.label}</strong>？切换后将自动打开 Codex 桌面，请先结束正在运行的任务。</p>
         <div className="startup-update-buttons">
           <button type="button" className="secondary-button" disabled={busy} onClick={() => setSelected(undefined)}>取消</button>
           <button type="button" className="primary-button" disabled={busy} onClick={() => void switchAccount(selected)}>确认切换</button>

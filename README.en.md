@@ -20,7 +20,7 @@ Check a task's progress, answer a question, attach a screenshot, or start someth
 
 | Tab | What you can do from your phone |
 | --- | --- |
-| **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a turn, or stop it. Switch Codex accounts from your phone with a compatible version of Cockpit Tools. |
+| **Codex** | Browse projects and conversations, start tasks, follow tool activity, and check usage. In supported sessions, answer questions, handle approvals, steer a turn, or stop it. Use Cockpit Tools to compare account quotas, switch accounts, and open Codex Desktop automatically. |
 | **Antigravity** | Start and resume chats through the signed-in Windows CLI and check usage. Open the official Google remote panel from the desktop controls for desktop conversations. |
 | **Computer** | Check the connection, share files and plain text, preview received images, lock, mute, or shut down the PC, keep it awake with the screen off, mirror your phone, and install updates. |
 
@@ -50,7 +50,7 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 
 ## Everyday use
 
-- **Control your PC.** Under **Computer → Computer controls** (`电脑控制`), lock the PC, keep it awake with its display off, or mute and unmute the default audio output. Shutting down requires confirmation and disconnects the phone.
+- **Control your PC.** Under **Computer → Computer controls** (`电脑控制`), the top row has display and mute switches. Turn the display switch off to wake the screen. The bottom row has Lock and Shut down. Shutting down requires confirmation and disconnects the phone.
 
 - **Pick up a Codex task.** Search projects, conversations, and messages. Open the elapsed-time row to see a turn's tool activity. Live controls in desktop-created chats depend on the available Codex Desktop connection and the session state. [Desktop connection details (Chinese)](docs/desktop-ipc.md)
 - **Launch or close a desktop app.** Tap **Launch** (`启动`) in the relevant assistant tab. Green means the window is open and amber means it is opening or closing. The **⋯** next to search opens project and conversation management. For the Antigravity desktop panel, enable Remote Control on the PC and sign in to the panel with the same Google account.
@@ -60,10 +60,10 @@ To try the local route manually, enter `http://<PC-LAN-IPv4>:18788` in the manua
 ## Switch Codex accounts with Cockpit Tools
 
 1. Open **Cockpit Tools 1.5.3 or later** under the same Windows user as the companion. Enable its local WebSocket service and add your Codex accounts in Cockpit. [Get Cockpit Tools](https://github.com/jlcodes99/cockpit-tools/releases/latest)
-2. Update Android and the Windows companion to **Codex Remote 1.0.4 or later**. In the **Codex** tab, open the usage ring, choose **Switch accounts** (`切换账号`) under **Cockpit Tools**, select an account, and confirm. Finish running Codex tasks before switching.
-3. The Windows companion calls Cockpit's local automation interface and reloads the Codex connection used by the phone. If Codex Desktop still shows the old account, close and reopen it. Workspaces that share an email address need to be checked on the PC.
+2. Update Android and the Windows companion to **Codex Remote 1.1.1 or later**. Open the usage ring in the **Codex** tab to compare each account's remaining quota and reset times. You can refresh accounts individually. Finish running Codex tasks, then tap **Use** (`选用`) on the account you want and confirm.
+3. After Cockpit confirms the switch, the Windows companion reloads the phone's Codex connection and opens Codex Desktop. The sheet reports account verification and desktop launch separately. If Windows hasn't confirmed a window, tap **Launch** (`启动`) in the Codex tab. Check workspaces that share an email address on the PC.
 
-Cockpit manages account credentials on Windows. The phone receives masked labels, plans, and switch status. The companion connects to Cockpit over loopback. Keep Cockpit's WebSocket port local.
+Cockpit manages account credentials on Windows. The phone receives masked labels, plans, quotas, and operation status. The companion connects to Cockpit over loopback. Keep Cockpit's WebSocket port local.
 
 ## Background operation and updates
 

@@ -1072,11 +1072,17 @@
 .computer-control-grid, .computer-control-row { display: grid; gap: 9px; }
 .computer-control-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .computer-control-row > button { min-height: 47px; border-radius: 11px; white-space: normal; }
-.computer-control-switch { display: flex; align-items: center; justify-content: space-between; gap: 5px; text-align: start; }
-.computer-utility .computer-control-switch[aria-checked=true] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-soft); }
+.computer-control-switch {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 44px;
+  padding: 4px; border: 0; border-radius: 11px; background: transparent; color: var(--ink);
+  font-size: .875rem; font-weight: 650; line-height: 1.3; text-align: start;
+}
+.computer-control-switch:disabled { opacity: .45; }
+.computer-control-switch:active:not(:disabled) { background: var(--surface-subtle); }
+.computer-control-switch[aria-checked=true] { color: var(--accent); }
 .computer-control-track {
-  flex: 0 0 28px;
-  height: 17px;
+  flex: 0 0 34px;
+  height: 20px;
   padding: 2px;
   border-radius: 999px;
   background: var(--line-strong);
@@ -1084,15 +1090,15 @@
 }
 .computer-control-track::before {
   display: block;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--surface);
   transition: transform var(--motion-fade) var(--ease-spring);
   content: '';
 }
 .computer-control-switch[aria-checked=true] .computer-control-track { background: var(--accent); }
-.computer-control-switch[aria-checked=true] .computer-control-track::before { transform: translateX(11px); }
+.computer-control-switch[aria-checked=true] .computer-control-track::before { transform: translateX(14px); }
 .computer-lock-button, .computer-shutdown-button { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .computer-lock-button svg, .computer-shutdown-button svg { flex: 0 0 16px; width: 16px; height: 16px; }
 .computer-hold-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; }

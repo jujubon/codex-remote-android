@@ -22,6 +22,7 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
   let acquireIdle: ReturnType<typeof vi.fn<() => boolean>>;
   let releaseIdle: ReturnType<typeof vi.fn<() => void>>;
   let restart: ReturnType<typeof vi.fn<() => Promise<void>>>;
+  let ensureDesktopOpen: ReturnType<typeof vi.fn<() => Promise<boolean>>>;
   let cockpit: CockpitAccounts;
 
   async function writeStatus(version?: number) {
@@ -69,10 +70,14 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     acquireIdle = vi.fn(() => true);
     releaseIdle = vi.fn();
     restart = vi.fn(async () => { activeEmail = reloadEmail; });
+    ensureDesktopOpen = vi.fn(async () => {
+      expect(sentSwitches).toEqual([target.id]);
+      return true;
+    });
     cockpit = new CockpitAccounts({
       request: async () => ({ account: { type: "chatgpt", email: activeEmail } }),
       restart,
-    }, acquireIdle, releaseIdle, join(home, ".codex"), home);
+    }, acquireIdle, releaseIdle, ensureDesktopOpen, join(home, ".codex"), home);
   });
 
   afterEach(async () => {
@@ -88,9 +93,10 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     expect(JSON.stringify(before)).not.toMatch(/source@example|target@example|source-id|target-id|auth_token/);
     const requested = await cockpit.start(before[1]?.key);
     expect(requested.stage).toBe("switching");
-    await vi.waitFor(() => expect(cockpit.status().operation).toMatchObject({ id: requested.id, stage: "verified" }));
+    await vi.waitFor(() => expect(cockpit.status().operation).toMatchObject({ id: requested.id, stage: "verified", desktop: "open" }));
     expect(sentSwitches).toEqual([target.id]);
     expect(restart).toHaveBeenCalledOnce();
+    expect(ensureDesktopOpen).toHaveBeenCalledOnce();
     expect(releaseIdle).toHaveBeenCalledOnce();
     expect((await cockpit.list()).accounts[1]?.current).toBe(true);
   });
@@ -103,6 +109,7 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     await expect(trying).rejects.toThrow("电脑仍在处理任务");
     expect(sentSwitches).toEqual([]);
     expect(restart).not.toHaveBeenCalled();
+    expect(ensureDesktopOpen).not.toHaveBeenCalled();
   });
 
   it("compares saved quotas by account and refreshes only the chosen account without switching", async () => {
@@ -124,11 +131,19 @@ describe.skipIf(process.platform !== "win32")("Cockpit Tools account automation"
     expect(sentSwitches).toEqual([target.id]);
   });
 
+  it("keeps a verified switch when Windows cannot confirm desktop launch", async () => {
+    ensureDesktopOpen.mockRejectedValueOnce(new Error("launch failed"));
+    await cockpit.start((await cockpit.list()).accounts[1]?.key);
+    await vi.waitFor(() => expect(cockpit.status().operation).toMatchObject({ stage: "verified", desktop: "unconfirmed" }));
+    expect(releaseIdle).toHaveBeenCalledOnce();
+  });
+
   it("rejects a mismatched receipt and a legacy server", async () => {
     receiptId = "different-account";
     await cockpit.start((await cockpit.list()).accounts[1]?.key);
     await vi.waitFor(() => expect(cockpit.status().operation?.stage).toBe("failed"));
     expect(restart).not.toHaveBeenCalled();
+    expect(ensureDesktopOpen).not.toHaveBeenCalled();
     await writeStatus();
     await expect(cockpit.list()).rejects.toThrow("1.5.3");
   });

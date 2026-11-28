@@ -5,6 +5,7 @@ import { extname, isAbsolute, join, parse, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { IncomingMessage } from "node:http";
 import { FileTransferError, sanitizeFileName, type FileTransferManager, type StoredUpload } from "./file-transfer.js";
 
@@ -288,6 +289,16 @@ export class DeviceTools {
       return "starting" as const;
     }).finally(() => { this.codexLaunch = undefined; });
     return this.codexLaunch;
+  }
+
+  async ensureCodexDesktopOpen(): Promise<boolean> {
+    let state = await this.openCodexDesktop();
+    const deadline = this.codexStartingUntil;
+    while (state === "starting" && Date.now() <= deadline) {
+      await delay(500);
+      state = await this.codexDesktopStatus();
+    }
+    return state === "open";
   }
 
   openAntigravityDesktop(): Promise<void> {

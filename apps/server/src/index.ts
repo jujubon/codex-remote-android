@@ -59,7 +59,6 @@ const antigravity = await AntigravitySessions.open(join(dirname(config.promptQue
   .catch(() => { console.warn("[antigravity] could not load saved conversations"); return undefined; });
 const gateway = new MobileGateway(bridge, config, desktopIpc, files, promptQueue, undefined, antigravity);
 const updates = new CompanionUpdates(() => gateway.pauseForHostUpdate(), () => gateway.resumeAfterHostUpdate());
-const cockpit = new CockpitAccounts(bridge, () => gateway.pauseForAccountSwitch(), verify => gateway.resumeAfterAccountSwitch(verify), config.codexHome);
 await updates.restoreGuard().catch(error => console.warn("[updates] Could not restore update guard", error));
 const heartbeat = gateway.startHeartbeat();
 const device = new DeviceTools(
@@ -69,6 +68,8 @@ const device = new DeviceTools(
   (threadId, turnId) => gateway.turnFinishedForPowerHold(threadId, turnId),
   path => inbox.recordShare(path),
 );
+const cockpit = new CockpitAccounts(bridge, () => gateway.pauseForAccountSwitch(), verify => gateway.resumeAfterAccountSwitch(verify),
+  () => device.ensureCodexDesktopOpen(), config.codexHome);
 const fileCleanup = setInterval(() => void Promise.all([files.cleanupExpired(), files.cleanupOrphanedUploads(promptQueue.protectedFilePaths())]).catch((error) => console.warn("[files] cleanup", error)), 60_000);
 fileCleanup.unref();
 const attachmentCleanup = setInterval(() => void gateway.cleanupCompletedAttachments().catch(error => console.warn("[files] attachment cleanup", error)), 30_000);
