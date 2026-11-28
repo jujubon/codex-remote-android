@@ -440,10 +440,27 @@
   flex-direction: column;
   max-height: var(--assistant-sheet-height);
 }
+.assistant-sheet-grip {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  background: var(--surface);
+}
+.assistant-sheet-grip:active { cursor: grabbing; }
+.assistant-sheet-grip::before {
+  content: '';
+  width: 34px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--line-strong);
+}
 .assistant-sheet-header {
   flex: none;
   gap: 12px;
-  padding: 9px max(12px, var(--app-safe-right)) 9px max(18px, var(--app-safe-left));
+  padding: 1px max(12px, var(--app-safe-right)) 9px max(18px, var(--app-safe-left));
   background: var(--surface);
 }
 .assistant-sheet-close.nav-icon-button { flex: 0 0 44px; background: var(--surface-subtle); }
